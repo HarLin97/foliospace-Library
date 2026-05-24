@@ -1,0 +1,28 @@
+FROM node:20-alpine AS web-build
+WORKDIR /src/web
+COPY web/package*.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+FROM golang:1.22-alpine AS go-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+COPY --from=web-build /src/web/dist ./web/dist
+RUN CGO_ENABLED=0 go build -o /out/foliospace-reader ./cmd/foliospace-reader
+
+FROM alpine:3.20
+WORKDIR /app
+RUN addgroup -S foliospace && adduser -S foliospace -G foliospace
+COPY --from=go-build /out/foliospace-reader /app/foliospace-reader
+COPY --from=web-build /src/web/dist /app/web/dist
+RUN mkdir -p /config /library && chown -R foliospace:foliospace /config /app
+USER foliospace
+EXPOSE 8080
+ENV FOLIOSPACE_CONFIG_DIR=/config
+ENV FOLIOSPACE_LIBRARY_DIR=/library
+ENV FOLIOSPACE_ADDR=:8080
+CMD ["/app/foliospace-reader"]

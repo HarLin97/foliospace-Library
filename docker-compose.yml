@@ -1,0 +1,13 @@
+services:
+  foliospace-reader:
+    build: .
+    image: foliospace-reader:dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/config:/config
+      - ./data/library:/library:ro
+    environment:
+      FOLIOSPACE_CONFIG_DIR: /config
+      FOLIOSPACE_LIBRARY_DIR: /library
+      FOLIOSPACE_ADDR: :8080
