@@ -5,18 +5,30 @@ import (
 	"net/http"
 
 	"foliospace-reader/internal/config"
+	"foliospace-reader/internal/db"
+	"foliospace-reader/internal/httpapi"
+	"foliospace-reader/internal/service"
+	"foliospace-reader/internal/store"
 )
 
 func main() {
 	cfg := config.Load()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("FolioSpace Reader"))
-	})
+	conn, err := db.Open(cfg.ConfigDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+
+	appStore := store.New(conn)
+	if _, err := appStore.CreateLibrary("Library", cfg.LibraryDir); err != nil {
+		log.Fatal(err)
+	}
+
+	api := httpapi.New(service.New(appStore), http.FileServer(http.Dir("web/dist")))
 
 	log.Printf("FolioSpace Reader listening on %s", cfg.Addr)
-	if err := http.ListenAndServe(cfg.Addr, mux); err != nil {
+	if err := http.ListenAndServe(cfg.Addr, api.Routes()); err != nil {
 		log.Fatal(err)
 	}
 }

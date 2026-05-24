@@ -37,4 +37,3 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 		t.Fatalf("Addr = %q, want 127.0.0.1:9090", cfg.Addr)
 	}
 }
-
