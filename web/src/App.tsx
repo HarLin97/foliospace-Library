@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { api, Book, FileError, JobEvent, Library, Page, ScanJob, Series } from "./api";
 
 type View = "library" | "reader" | "jobs" | "errors";
@@ -17,12 +18,15 @@ export function App() {
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [pages, setPages] = useState<Page[]>([]);
   const [pageIndex, setPageIndex] = useState(0);
+  const [displayedPageIndex, setDisplayedPageIndex] = useState(0);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("Ready");
   const [activeTask, setActiveTask] = useState<string | null>(null);
-  const [readerImageLoaded, setReaderImageLoaded] = useState(false);
+  const [readerLoadState, setReaderLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [readerRetryKey, setReaderRetryKey] = useState(0);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [newLibraryPath, setNewLibraryPath] = useState("");
+  const imageCache = useRef<Set<string>>(new Set());
 
   async function refreshAll(showProgress = false) {
     if (showProgress) {
@@ -83,7 +87,7 @@ export function App() {
     }
   }
 
-  async function addLibrary(event: React.FormEvent<HTMLFormElement>) {
+  async function addLibrary(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setActiveTask("Adding library");
     try {
@@ -123,11 +127,12 @@ export function App() {
 
   async function openBook(book: Book) {
     setActiveTask(`Opening ${book.title}`);
-    setReaderImageLoaded(false);
     setSelectedBook(book);
+    setPageIndex(0);
+    setDisplayedPageIndex(0);
+    setReaderLoadState("loading");
     try {
       setPages(await api.pages(book.id));
-      setPageIndex(0);
       setView("reader");
     } finally {
       setActiveTask(null);
@@ -137,9 +142,64 @@ export function App() {
   async function setReaderPage(book: Book, nextIndex: number) {
     const clamped = Math.max(0, Math.min(nextIndex, Math.max(0, pages.length - 1)));
     if (clamped !== pageIndex) {
-      setReaderImageLoaded(false);
+      setReaderLoadState("loading");
     }
     setPageIndex(clamped);
+  }
+
+  useEffect(() => {
+    if (!selectedBook || pages.length === 0) return;
+
+    let cancelled = false;
+    const targetIndex = pageIndex;
+    setReaderLoadState("loading");
+
+    preloadPage(selectedBook.id, targetIndex)
+      .then(() => {
+        if (cancelled) return;
+        setDisplayedPageIndex(targetIndex);
+        setReaderLoadState("ready");
+        prefetchNeighborPages(selectedBook.id, targetIndex, pages.length);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReaderLoadState("error");
+        setStatus(`Failed to load page ${targetIndex + 1}`);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBook?.id, pageIndex, pages.length, readerRetryKey]);
+
+  function preloadPage(bookID: number, index: number) {
+    const src = `/api/books/${bookID}/pages/${index}`;
+    if (imageCache.current.has(src)) {
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => {
+        const decode = "decode" in image ? image.decode() : Promise.resolve();
+        decode
+          .catch(() => undefined)
+          .then(() => {
+            imageCache.current.add(src);
+            resolve();
+          });
+      };
+      image.onerror = () => reject(new Error(`Failed to load ${src}`));
+      image.src = src;
+    });
+  }
+
+  function prefetchNeighborPages(bookID: number, index: number, total: number) {
+    for (const next of [index + 1, index - 1]) {
+      if (next >= 0 && next < total) {
+        preloadPage(bookID, next).catch(() => undefined);
+      }
+    }
   }
 
   const filteredSeries = useMemo(() => {
@@ -288,24 +348,22 @@ export function App() {
                   </span>
                 </div>
                 <div className="pageStage">
-                  {!readerImageLoaded && (
-                    <div className="pageLoading" role="status" aria-live="polite">
-                      <div className="pageProgress">
-                        <div />
-                      </div>
+                  {readerLoadState === "loading" && pageIndex !== displayedPageIndex && (
+                    <div className="pageLoading floating" role="status" aria-live="polite">
+                      <div className="pageProgress"><div /></div>
                       <span>Loading page {pageIndex + 1}</span>
                     </div>
                   )}
+                  {readerLoadState === "error" && (
+                    <div className="pageLoading errorState" role="alert">
+                      <strong>Page {pageIndex + 1} failed to load</strong>
+                      <button onClick={() => setReaderRetryKey((value) => value + 1)}>Retry</button>
+                    </div>
+                  )}
                   <img
-                    key={`${selectedBook.id}-${pageIndex}`}
-                    className={readerImageLoaded ? "loaded" : ""}
-                    src={`/api/books/${selectedBook.id}/pages/${pageIndex}`}
-                    alt={pages[pageIndex]?.name ?? ""}
-                    onLoad={() => setReaderImageLoaded(true)}
-                    onError={() => {
-                      setReaderImageLoaded(true);
-                      setStatus(`Failed to load page ${pageIndex + 1}`);
-                    }}
+                    key={`${selectedBook.id}-${displayedPageIndex}`}
+                    src={`/api/books/${selectedBook.id}/pages/${displayedPageIndex}`}
+                    alt={pages[displayedPageIndex]?.name ?? ""}
                   />
                 </div>
                 <div className="readerControls">

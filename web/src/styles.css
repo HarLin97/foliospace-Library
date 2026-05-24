@@ -407,6 +407,27 @@ h1 {
   font-size: 13px;
 }
 
+.pageLoading.floating {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(20, 25, 27, 0.74);
+  padding: 14px 16px;
+  backdrop-filter: blur(8px);
+}
+
+.pageLoading.errorState {
+  width: min(360px, calc(100% - 32px));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(20, 25, 27, 0.86);
+  padding: 18px;
+}
+
+.pageLoading.errorState button {
+  justify-self: center;
+  width: max-content;
+}
+
 .pageProgress {
   height: 5px;
   overflow: hidden;
