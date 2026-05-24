@@ -25,7 +25,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	api := httpapi.New(service.New(appStore), http.FileServer(http.Dir("web/dist")))
+	api := httpapi.NewWithOptions(service.New(appStore), http.FileServer(http.Dir("web/dist")), httpapi.Options{APIToken: cfg.APIToken})
 
 	log.Printf("FolioSpace Reader listening on %s", cfg.Addr)
 	if err := http.ListenAndServe(cfg.Addr, api.Routes()); err != nil {

@@ -16,6 +16,7 @@ export type Series = {
 export type Book = {
   id: number;
   seriesId: number;
+  collectionTitle?: string;
   title: string;
   bookType: "single_volume";
   format: string;
@@ -23,6 +24,11 @@ export type Book = {
   coverStatus: string;
   analyzed: boolean;
   filePath?: string;
+  addedAt: string;
+  updatedAt: string;
+  currentPage: number;
+  progressFraction: number;
+  lastReadAt: string;
 };
 
 export type Page = {
@@ -87,12 +93,38 @@ export type JobEvent = {
   createdAt: string;
 };
 
+export type AuthStatus = {
+  enabled: boolean;
+};
+
+const authTokenKey = "foliospace_api_token";
+
+export function getAuthToken() {
+  return window.localStorage.getItem(authTokenKey) ?? "";
+}
+
+export function setAuthToken(token: string) {
+  window.localStorage.setItem(authTokenKey, token);
+}
+
+export function clearAuthToken() {
+  window.localStorage.removeItem(authTokenKey);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getAuthToken();
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers ?? {}),
+    },
     ...init,
   });
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("Unauthorized");
+    }
     const body = await response.text();
     throw new Error(body || response.statusText);
   }
@@ -100,6 +132,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  authStatus: () => request<AuthStatus>("/api/auth/status"),
+  authCheck: (token: string) =>
+    request<{ ok: boolean }>("/api/auth/check", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  authLogout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   libraries: () => request<Library[]>("/api/libraries"),
   createLibrary: (name: string, rootPath: string) =>
     request<Library>("/api/libraries", {
@@ -110,6 +149,8 @@ export const api = {
   scan: (libraryId: number) => request<ScanJob>(`/api/libraries/${libraryId}/scan`, { method: "POST" }),
   series: () => request<Series[]>("/api/collections"),
   books: (seriesId: number) => request<Book[]>(`/api/collections/${seriesId}/volumes`),
+  continueReading: () => request<Book[]>("/api/books/continue-reading?limit=12"),
+  recentBooks: () => request<Book[]>("/api/books/recent?limit=12"),
   pages: (bookId: number) => request<Page[]>(`/api/books/${bookId}/pages`),
   epubManifest: (bookId: number) => request<EpubManifest>(`/api/books/${bookId}/epub/manifest`),
   jobs: () => request<ScanJob[]>("/api/jobs"),

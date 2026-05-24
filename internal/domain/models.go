@@ -36,15 +36,21 @@ type Series struct {
 }
 
 type Book struct {
-	ID          int64  `json:"id"`
-	SeriesID    int64  `json:"seriesId"`
-	Title       string `json:"title"`
-	BookType    string `json:"bookType"`
-	Format      string `json:"format"`
-	PageCount   int    `json:"pageCount"`
-	CoverStatus string `json:"coverStatus"`
-	Analyzed    bool   `json:"analyzed"`
-	FilePath    string `json:"filePath,omitempty"`
+	ID               int64     `json:"id"`
+	SeriesID         int64     `json:"seriesId"`
+	CollectionTitle  string    `json:"collectionTitle,omitempty"`
+	Title            string    `json:"title"`
+	BookType         string    `json:"bookType"`
+	Format           string    `json:"format"`
+	PageCount        int       `json:"pageCount"`
+	CoverStatus      string    `json:"coverStatus"`
+	Analyzed         bool      `json:"analyzed"`
+	FilePath         string    `json:"filePath,omitempty"`
+	AddedAt          time.Time `json:"addedAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+	CurrentPage      int       `json:"currentPage"`
+	ProgressFraction float64   `json:"progressFraction"`
+	LastReadAt       time.Time `json:"lastReadAt"`
 }
 
 type File struct {

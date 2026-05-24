@@ -25,7 +25,24 @@ go run ./cmd/foliospace-reader
 FOLIOSPACE_CONFIG_DIR=/config
 FOLIOSPACE_LIBRARY_DIR=/library
 FOLIOSPACE_ADDR=:8080
+FOLIOSPACE_API_TOKEN=
 ```
+
+Set `FOLIOSPACE_API_TOKEN` to require API authentication. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
+
+Authentication helpers:
+
+- `GET /api/auth/status`: returns whether token auth is enabled.
+- `POST /api/auth/check`: accepts `{"token":"..."}` and returns `{"ok":true}` for a valid token.
+- `POST /api/auth/logout`: clears the web auth cookie.
+
+## Client API v1
+
+- `GET /api/client/info`: service metadata, supported formats, and capability flags.
+- `GET /api/client/home`: `continueReading`, `recentBooks`, and `collections` in one response.
+- `GET /api/client/books/:id/manifest`: a client-safe open manifest. CBZ/ZIP books include page URLs; EPUB books include spine, TOC, `resourceBaseUrl`, `coverUrl`, and progress.
+
+Client API book and collection responses omit local NAS file paths.
 
 ## Docker
 

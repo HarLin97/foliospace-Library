@@ -11,3 +11,4 @@ services:
       FOLIOSPACE_CONFIG_DIR: /config
       FOLIOSPACE_LIBRARY_DIR: /library
       FOLIOSPACE_ADDR: :8080
+      FOLIOSPACE_API_TOKEN: ""

@@ -178,16 +178,13 @@ func (s *Store) UpsertBook(seriesID int64, title string, format string) (domain.
 }
 
 func (s *Store) BookBySeriesTitle(seriesID int64, title string, format string) (domain.Book, error) {
-	row := s.db.QueryRow(`SELECT b.id, b.series_id, b.title, b.format, b.page_count, b.cover_status, b.analyzed, COALESCE(f.abs_path, '')
-		FROM books b LEFT JOIN files f ON f.book_id = b.id
+	row := s.db.QueryRow(bookSelectSQL()+`
 		WHERE b.series_id = ? AND b.title = ? AND b.format = ?`, seriesID, title, format)
 	return scanBook(row)
 }
 
 func (s *Store) BookByID(id int64) (domain.Book, error) {
-	row := s.db.QueryRow(`SELECT b.id, b.series_id, b.title, b.format, b.page_count, b.cover_status, b.analyzed, COALESCE(f.abs_path, '')
-		FROM books b LEFT JOIN files f ON f.book_id = b.id
-		WHERE b.id = ?`, id)
+	row := s.db.QueryRow(bookSelectSQL()+` WHERE b.id = ?`, id)
 	return scanBook(row)
 }
 
@@ -202,10 +199,56 @@ func (s *Store) UpdateBookIdentity(bookID int64, seriesID int64, title string, f
 }
 
 func (s *Store) ListBooks(seriesID int64) ([]domain.Book, error) {
-	rows, err := s.db.Query(`SELECT b.id, b.series_id, b.title, b.format, b.page_count, b.cover_status, b.analyzed, COALESCE(f.abs_path, '')
-		FROM books b LEFT JOIN files f ON f.book_id = b.id
+	rows, err := s.db.Query(bookSelectSQL()+`
 		WHERE b.series_id = ?
 		ORDER BY b.title`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.Book
+	for rows.Next() {
+		book, err := scanBook(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, book)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListContinueReading(limit int) ([]domain.Book, error) {
+	if limit <= 0 {
+		limit = 12
+	}
+	rows, err := s.db.Query(bookSelectSQL()+`
+		WHERE rp.book_id IS NOT NULL
+		ORDER BY rp.updated_at DESC, b.updated_at DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []domain.Book
+	for rows.Next() {
+		book, err := scanBook(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, book)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListRecentBooks(limit int) ([]domain.Book, error) {
+	if limit <= 0 {
+		limit = 12
+	}
+	rows, err := s.db.Query(bookSelectSQL()+`
+		ORDER BY b.created_at DESC, b.id DESC
+		LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -456,12 +499,43 @@ func scanSeries(row scanner) (domain.Series, error) {
 func scanBook(row scanner) (domain.Book, error) {
 	var book domain.Book
 	var analyzed int
-	if err := row.Scan(&book.ID, &book.SeriesID, &book.Title, &book.Format, &book.PageCount, &book.CoverStatus, &analyzed, &book.FilePath); err != nil {
+	var addedAt string
+	var updatedAt string
+	var lastReadAt string
+	if err := row.Scan(
+		&book.ID,
+		&book.SeriesID,
+		&book.CollectionTitle,
+		&book.Title,
+		&book.Format,
+		&book.PageCount,
+		&book.CoverStatus,
+		&analyzed,
+		&book.FilePath,
+		&addedAt,
+		&updatedAt,
+		&book.CurrentPage,
+		&book.ProgressFraction,
+		&lastReadAt,
+	); err != nil {
 		return book, err
 	}
 	book.BookType = "single_volume"
 	book.Analyzed = analyzed != 0
+	book.AddedAt = parseTime(addedAt)
+	book.UpdatedAt = parseTime(updatedAt)
+	book.LastReadAt = parseTime(lastReadAt)
 	return book, nil
+}
+
+func bookSelectSQL() string {
+	return `SELECT b.id, b.series_id, s.title, b.title, b.format, b.page_count, b.cover_status, b.analyzed,
+			COALESCE(f.abs_path, ''), b.created_at, b.updated_at,
+			COALESCE(rp.page_index, 0), COALESCE(rp.progress_fraction, 0), COALESCE(rp.updated_at, '')
+		FROM books b
+		JOIN series s ON s.id = b.series_id
+		LEFT JOIN files f ON f.book_id = b.id
+		LEFT JOIN read_progress rp ON rp.book_id = b.id`
 }
 
 func scanFile(row scanner) (domain.File, error) {

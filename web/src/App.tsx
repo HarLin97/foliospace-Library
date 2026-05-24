@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, MouseEvent, TouchEvent } from "react";
-import { api, Book, EpubManifest, FileError, JobEvent, Library, Page, ScanJob, Series } from "./api";
+import { api, Book, clearAuthToken, EpubManifest, FileError, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken } from "./api";
 
 type View = "library" | "reader" | "jobs" | "errors";
 type ReaderPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
+type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 
 export function App() {
   const [view, setView] = useState<View>("library");
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [series, setSeries] = useState<Series[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
+  const [continueBooks, setContinueBooks] = useState<Book[]>([]);
+  const [recentBooks, setRecentBooks] = useState<Book[]>([]);
   const [jobs, setJobs] = useState<ScanJob[]>([]);
   const [errors, setErrors] = useState<FileError[]>([]);
   const [jobEvents, setJobEvents] = useState<JobEvent[]>([]);
@@ -23,7 +26,13 @@ export function App() {
   const [pageIndex, setPageIndex] = useState(0);
   const [displayedPageIndex, setDisplayedPageIndex] = useState(0);
   const [query, setQuery] = useState("");
+  const [bookSort, setBookSort] = useState<BookSort>("title");
   const [status, setStatus] = useState("Ready");
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authEnabled, setAuthEnabled] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authInput, setAuthInput] = useState("");
+  const [authError, setAuthError] = useState("");
   const [activeTask, setActiveTask] = useState<string | null>(null);
   const [readerLoadState, setReaderLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [readerRetryKey, setReaderRetryKey] = useState(0);
@@ -46,26 +55,94 @@ export function App() {
     if (showProgress) {
       setActiveTask("Refreshing library");
     }
-    const [nextLibraries, nextSeries, nextJobs, nextErrors] = await Promise.all([
+    const [nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks] = await Promise.all([
       api.libraries(),
       api.series(),
       api.jobs(),
       api.errors(),
+      api.continueReading(),
+      api.recentBooks(),
     ]);
     setLibraries(nextLibraries);
     setSeries(nextSeries);
     setJobs(nextJobs);
     setErrors(nextErrors);
+    setContinueBooks(nextContinueBooks);
+    setRecentBooks(nextRecentBooks);
     if (showProgress) {
       setActiveTask(null);
     }
   }
 
   useEffect(() => {
-    refreshAll(true)
-      .catch((error) => setStatus(error.message))
-      .finally(() => setActiveTask(null));
+    async function bootstrap() {
+      try {
+        const auth = await api.authStatus();
+        setAuthEnabled(auth.enabled);
+        const storedToken = getAuthToken();
+        if (auth.enabled && !storedToken) {
+          setAuthRequired(true);
+          setStatus("Authentication required");
+          return;
+        }
+        if (auth.enabled) {
+          await api.authCheck(storedToken);
+        }
+        await refreshAll(true);
+      } catch (error) {
+        if (isUnauthorized(error)) {
+          clearAuthToken();
+          setAuthRequired(true);
+          setStatus("Authentication required");
+          return;
+        }
+        setStatus(error instanceof Error ? error.message : "Failed to load");
+      } finally {
+        setAuthChecked(true);
+        setActiveTask(null);
+      }
+    }
+
+    bootstrap();
   }, []);
+
+  async function submitAuth(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const token = authInput.trim();
+    if (!token) return;
+    setAuthError("");
+    setActiveTask("Unlocking library");
+    try {
+      await api.authCheck(token);
+      setAuthToken(token);
+      setAuthRequired(false);
+      setAuthInput("");
+      setStatus("Ready");
+      await refreshAll(true);
+    } catch (error) {
+      clearAuthToken();
+      setAuthError(error instanceof Error ? error.message : "Invalid access token");
+    } finally {
+      setActiveTask(null);
+      setAuthChecked(true);
+    }
+  }
+
+  function lockApp() {
+    api.authLogout().catch(() => undefined);
+    clearAuthToken();
+    setAuthRequired(true);
+    setAuthInput("");
+    setStatus("Authentication required");
+  }
+
+  function handleAPIError(error: unknown) {
+    if (isUnauthorized(error)) {
+      lockApp();
+      return;
+    }
+    setStatus(error instanceof Error ? error.message : "Request failed");
+  }
 
   const activeScan = jobs.find((job) => job.status === "running") ?? null;
 
@@ -73,7 +150,7 @@ export function App() {
     if (!activeScan) return;
 
     const timer = window.setInterval(() => {
-      refreshAll().catch((error) => setStatus(error.message));
+      refreshAll().catch(handleAPIError);
     }, 1200);
 
     return () => window.clearInterval(timer);
@@ -84,11 +161,18 @@ export function App() {
     if (selectedBook.format === "epub") return;
 
     const timer = window.setTimeout(() => {
-      api.progress(selectedBook.id, pageIndex).catch(() => undefined);
+      api
+        .progressDetail(
+          selectedBook.id,
+          pageIndex,
+          "",
+          pages.length > 1 ? pageIndex / (pages.length - 1) : 0,
+        )
+        .catch(() => undefined);
     }, 450);
 
     return () => window.clearTimeout(timer);
-  }, [selectedBook, pageIndex]);
+  }, [selectedBook, pageIndex, pages.length]);
 
   useEffect(() => {
     if (!selectedBook || selectedBook.format !== "epub") return;
@@ -424,9 +508,9 @@ export function App() {
 
   const filteredBooks = useMemo(() => {
     const value = query.trim().toLowerCase();
-    if (!value || !selectedSeries) return books;
-    return books.filter((book) => book.title.toLowerCase().includes(value));
-  }, [books, query, selectedSeries]);
+    const matching = !value || !selectedSeries ? books : books.filter((book) => book.title.toLowerCase().includes(value));
+    return [...matching].sort((left, right) => compareBooks(left, right, bookSort));
+  }, [books, bookSort, query, selectedSeries]);
 
   const scanProgressLabel = activeScan
     ? `${activeScan.indexedFiles} indexed · ${activeScan.skippedFiles} skipped · ${activeScan.errorCount} errors`
@@ -449,6 +533,11 @@ export function App() {
         <button className={view === "errors" ? "active" : ""} onClick={() => setView("errors")}>
           Errors
         </button>
+        {authEnabled && !authRequired && (
+          <button className="lockButton" onClick={lockApp}>
+            Lock
+          </button>
+        )}
       </aside>
 
       <section className="workspace">
@@ -478,6 +567,29 @@ export function App() {
 
         {view === "library" && (
           <div className="grid">
+            {(continueBooks.length > 0 || recentBooks.length > 0) && (
+              <section className="homeRows panel wide" aria-label="Reading shortcuts">
+                {continueBooks.length > 0 && (
+                  <BookShelf
+                    title="Continue Reading"
+                    subtitle="Pick up from your latest position"
+                    books={continueBooks}
+                    onOpen={openBook}
+                    meta={continueMeta}
+                  />
+                )}
+                {recentBooks.length > 0 && (
+                  <BookShelf
+                    title="Recently Added"
+                    subtitle="Newest indexed volumes"
+                    books={recentBooks}
+                    onOpen={openBook}
+                    meta={recentMeta}
+                  />
+                )}
+              </section>
+            )}
+
             <section className="panel">
               <h1>Libraries</h1>
               <form className="libraryForm" onSubmit={addLibrary}>
@@ -531,7 +643,21 @@ export function App() {
                       : "Select a collection to browse its single volumes"}
                   </small>
                 </div>
-                {selectedSeries && <span>{selectedSeries.bookCount} indexed</span>}
+                <div className="coverWallTools">
+                  {selectedSeries && <span>{selectedSeries.bookCount} indexed</span>}
+                  {selectedSeries && (
+                    <label>
+                      <span>Sort</span>
+                      <select value={bookSort} onChange={(event) => setBookSort(event.target.value as BookSort)}>
+                        <option value="title">Title</option>
+                        <option value="recently_added">Recently added</option>
+                        <option value="last_read">Last read</option>
+                        <option value="progress">Progress</option>
+                        <option value="unread">Unread first</option>
+                      </select>
+                    </label>
+                  )}
+                </div>
               </div>
               {selectedSeries && filteredBooks.length > 0 ? (
                 <div className="books">
@@ -806,7 +932,69 @@ export function App() {
           </section>
         )}
       </section>
+      {(!authChecked || authRequired) && (
+        <div className="authOverlay" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+          <form className="authPanel" onSubmit={submitAuth}>
+            <div>
+              <h1 id="auth-title">FolioSpace Reader</h1>
+              <small>{authChecked ? "Enter the NAS access token." : "Checking access settings."}</small>
+            </div>
+            {authRequired && (
+              <>
+                <input
+                  autoFocus
+                  type="password"
+                  value={authInput}
+                  onChange={(event) => setAuthInput(event.target.value)}
+                  placeholder="Access token"
+                />
+                {authError && <span className="authError">{authError}</span>}
+                <button disabled={!authInput.trim()}>Unlock</button>
+              </>
+            )}
+          </form>
+        </div>
+      )}
     </main>
+  );
+}
+
+function BookShelf({
+  title,
+  subtitle,
+  books,
+  onOpen,
+  meta,
+}: {
+  title: string;
+  subtitle: string;
+  books: Book[];
+  onOpen: (book: Book) => void;
+  meta: (book: Book) => string;
+}) {
+  return (
+    <div className="bookShelf">
+      <div className="bookShelfHeader">
+        <div>
+          <h1>{title}</h1>
+          <small>{subtitle}</small>
+        </div>
+      </div>
+      <div className="shelfScroller">
+        {books.map((book) => (
+          <button className="shelfBook" key={`${title}-${book.id}`} onClick={() => onOpen(book)} title={book.title}>
+            <span className="shelfCover">
+              <img src={`/api/books/${book.id}/cover`} alt="" loading="lazy" />
+              <span className="coverBadge">{book.format.toUpperCase()}</span>
+            </span>
+            <span>
+              <strong>{book.title}</strong>
+              <small>{meta(book)}</small>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1007,6 +1195,62 @@ function encodeResourcePath(value: string) {
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
+}
+
+function compareBooks(left: Book, right: Book, sort: BookSort) {
+  if (sort === "recently_added") {
+    return compareDatesDesc(left.addedAt, right.addedAt) || left.title.localeCompare(right.title);
+  }
+  if (sort === "last_read") {
+    return compareDatesDesc(left.lastReadAt, right.lastReadAt) || left.title.localeCompare(right.title);
+  }
+  if (sort === "progress") {
+    return right.progressFraction - left.progressFraction || left.title.localeCompare(right.title);
+  }
+  if (sort === "unread") {
+    return readRank(left) - readRank(right) || left.title.localeCompare(right.title);
+  }
+  return left.title.localeCompare(right.title);
+}
+
+function readRank(book: Book) {
+  if (book.progressFraction <= 0 && book.currentPage <= 0) return 0;
+  if (book.progressFraction >= 0.98) return 2;
+  return 1;
+}
+
+function compareDatesDesc(left: string, right: string) {
+  return dateValue(right) - dateValue(left);
+}
+
+function dateValue(value: string) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function continueMeta(book: Book) {
+  const progress = Math.max(0, Math.min(100, Math.round((book.progressFraction || 0) * 100)));
+  const location = book.format === "epub" ? `chapter ${book.currentPage + 1}` : `page ${book.currentPage + 1}`;
+  return `${progress}% · ${location}${book.collectionTitle ? ` · ${book.collectionTitle}` : ""}`;
+}
+
+function recentMeta(book: Book) {
+  const added = formatRelativeDate(book.addedAt);
+  return `${added}${book.collectionTitle ? ` · ${book.collectionTitle}` : ""}`;
+}
+
+function formatRelativeDate(value: string) {
+  const parsed = dateValue(value);
+  if (!parsed) return "Recently added";
+  const days = Math.floor((Date.now() - parsed) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 30) return `${days} days ago`;
+  return new Date(parsed).toLocaleDateString();
+}
+
+function isUnauthorized(error: unknown) {
+  return error instanceof Error && error.message === "Unauthorized";
 }
 
 function formatElapsed(job: ScanJob) {

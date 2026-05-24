@@ -36,7 +36,7 @@ func TestStorePersistsLibraryBookProgressAndErrors(t *testing.T) {
 	if err := s.ReplacePages(book.ID, []domain.Page{{Index: 0, Name: "001.jpg"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveProgress(book.ID, 4); err != nil {
+	if err := s.SaveProgressDetail(book.ID, 4, "", 0.4); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RecordFileError(domain.FileErrorInput{
@@ -71,6 +71,20 @@ func TestStorePersistsLibraryBookProgressAndErrors(t *testing.T) {
 	}
 	if progress.PageIndex != 4 {
 		t.Fatalf("progress = %d, want 4", progress.PageIndex)
+	}
+	continueBooks, err := s.ListContinueReading(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(continueBooks) != 1 || continueBooks[0].CurrentPage != 4 || continueBooks[0].ProgressFraction != 0.4 {
+		t.Fatalf("continue books = %#v, want saved progress", continueBooks)
+	}
+	recentBooks, err := s.ListRecentBooks(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recentBooks) != 1 || recentBooks[0].CollectionTitle != "Series A" || recentBooks[0].AddedAt.IsZero() {
+		t.Fatalf("recent books = %#v, want collection title and added time", recentBooks)
 	}
 
 	errors, err := s.ListFileErrors()

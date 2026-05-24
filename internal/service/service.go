@@ -59,6 +59,14 @@ func (s *Service) ListBooks(seriesID int64) ([]domain.Book, error) {
 	return s.store.ListBooks(seriesID)
 }
 
+func (s *Service) ContinueReading(limit int) ([]domain.Book, error) {
+	return s.store.ListContinueReading(limit)
+}
+
+func (s *Service) RecentBooks(limit int) ([]domain.Book, error) {
+	return s.store.ListRecentBooks(limit)
+}
+
 func (s *Service) Book(id int64) (domain.Book, error) {
 	return s.store.BookByID(id)
 }
