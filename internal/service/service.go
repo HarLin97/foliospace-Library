@@ -3,7 +3,12 @@ package service
 import (
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"foliospace-reader/internal/archive"
 	"foliospace-reader/internal/domain"
@@ -12,18 +17,28 @@ import (
 )
 
 type Service struct {
-	store   *store.Store
-	scanner *scanner.Scanner
+	store     *store.Store
+	scanner   *scanner.Scanner
+	configDir string
 }
 
 func New(store *store.Store) *Service {
+	return NewWithConfig(store, "")
+}
+
+func NewWithConfig(store *store.Store, configDir string) *Service {
 	return &Service{
-		store:   store,
-		scanner: scanner.New(store),
+		store:     store,
+		scanner:   scanner.New(store),
+		configDir: strings.TrimSpace(configDir),
 	}
 }
 
 func (s *Service) CreateLibrary(name string, rootPath string) (domain.Library, error) {
+	return s.CreateLibraryWithType(name, rootPath, "mixed")
+}
+
+func (s *Service) CreateLibraryWithType(name string, rootPath string, assetType string) (domain.Library, error) {
 	name = strings.TrimSpace(name)
 	rootPath = strings.TrimSpace(rootPath)
 	if rootPath == "" {
@@ -32,7 +47,14 @@ func (s *Service) CreateLibrary(name string, rootPath string) (domain.Library, e
 	if name == "" {
 		name = rootPath
 	}
-	return s.store.CreateLibrary(name, rootPath)
+	return s.store.CreateLibraryWithType(name, rootPath, normalizeLibraryAssetType(assetType))
+}
+
+func normalizeLibraryAssetType(value string) string {
+	if oneOf(value, "mixed", "book", "comic", "game") {
+		return value
+	}
+	return "mixed"
 }
 
 func (s *Service) ListLibraries() ([]domain.Library, error) {
@@ -52,11 +74,42 @@ func (s *Service) ScanLibrary(id int64) (domain.ScanJob, error) {
 }
 
 func (s *Service) ListSeries() ([]domain.Series, error) {
-	return s.store.ListSeries()
+	series, err := s.store.ListSeries()
+	if err != nil {
+		return nil, err
+	}
+	gameCollections, err := s.store.ListGamePlatformCollections()
+	if err != nil {
+		return nil, err
+	}
+	return append(series, gameCollections...), nil
 }
 
 func (s *Service) ListBooks(seriesID int64) ([]domain.Book, error) {
 	return s.store.ListBooks(seriesID)
+}
+
+func (s *Service) CollectionAssets(seriesID int64) (domain.CollectionAssets, error) {
+	if platform := store.PlatformFromGamePlatformCollectionID(seriesID); platform != "" {
+		games, err := s.store.ListGamesByPlatform(platform)
+		if err != nil {
+			return domain.CollectionAssets{}, err
+		}
+		return domain.CollectionAssets{Books: []domain.Book{}, Games: games}, nil
+	}
+	series, err := s.store.SeriesByID(seriesID)
+	if err != nil {
+		return domain.CollectionAssets{}, err
+	}
+	books, err := s.store.ListBooks(seriesID)
+	if err != nil {
+		return domain.CollectionAssets{}, err
+	}
+	games, err := s.store.ListGamesByROMSet(series.Title)
+	if err != nil {
+		return domain.CollectionAssets{}, err
+	}
+	return domain.CollectionAssets{Books: books, Games: games}, nil
 }
 
 func (s *Service) ListBooksPage(options domain.BookListOptions) (domain.BookListPage, error) {
@@ -136,12 +189,166 @@ func (s *Service) RecentBooks(limit int) ([]domain.Book, error) {
 	return s.store.ListRecentBooks(limit)
 }
 
+func (s *Service) RecentGames(limit int) ([]domain.GameAsset, error) {
+	return s.store.ListRecentGames(limit)
+}
+
+func (s *Service) ListGamesPage(options domain.GameListOptions) (domain.GameListPage, error) {
+	return s.store.ListGamesPage(options)
+}
+
+func (s *Service) Game(id int64) (domain.GameAsset, error) {
+	return s.store.GameByID(id)
+}
+
+func (s *Service) OpenGameCover(id int64) (PageStream, error) {
+	game, err := s.store.GameByID(id)
+	if err != nil {
+		return PageStream{}, err
+	}
+	urls := libretroBoxartCandidates(game)
+	if len(urls) == 0 {
+		return PageStream{}, fmt.Errorf("game cover source not available")
+	}
+	cachePath, err := s.gameCoverCachePath(id)
+	if err != nil {
+		return PageStream{}, err
+	}
+	if file, err := os.Open(cachePath); err == nil {
+		return PageStream{Body: file, ContentType: "image/png"}, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		return PageStream{}, err
+	}
+	for _, sourceURL := range urls {
+		if err := downloadGameCover(sourceURL, cachePath); err == nil {
+			file, err := os.Open(cachePath)
+			if err != nil {
+				return PageStream{}, err
+			}
+			return PageStream{Body: file, ContentType: "image/png"}, nil
+		}
+	}
+	return PageStream{}, fmt.Errorf("game cover not found")
+}
+
+func (s *Service) gameCoverCachePath(id int64) (string, error) {
+	base := s.configDir
+	if base == "" {
+		base = filepath.Join(os.TempDir(), "foliospace-reader")
+	}
+	return filepath.Join(base, "cache", "game-covers", fmt.Sprintf("%d.png", id)), nil
+}
+
+func (s *Service) OpenGameFile(id int64) (PageStream, error) {
+	game, err := s.store.GameByID(id)
+	if err != nil {
+		return PageStream{}, err
+	}
+	if game.FilePath == "" {
+		return PageStream{}, fmt.Errorf("game has no indexed file")
+	}
+	body, err := os.Open(game.FilePath)
+	if err != nil {
+		return PageStream{}, err
+	}
+	return PageStream{Body: body, ContentType: "application/octet-stream"}, nil
+}
+
 func (s *Service) FavoriteBooks(limit int) ([]domain.Book, error) {
 	return s.store.ListFavoriteBooks(limit)
 }
 
 func (s *Service) BooksByPrivateStatus(status string, limit int) ([]domain.Book, error) {
 	return s.store.ListBooksByPrivateStatus(status, limit)
+}
+
+func libretroBoxartCandidates(game domain.GameAsset) []string {
+	playlist, ok := libretroPlaylist(game.Platform)
+	if !ok {
+		return nil
+	}
+	title := strings.TrimSpace(game.Title)
+	if title == "" {
+		return nil
+	}
+	names := []string{title}
+	if game.Region != "" {
+		names = append(names, fmt.Sprintf("%s (%s)", title, strings.TrimSpace(game.Region)))
+	}
+	if game.Region == "" {
+		names = append(names, title+" (USA)", title+" (World)", title+" (Japan)")
+	}
+	out := make([]string, 0, len(names))
+	seen := make(map[string]bool)
+	for _, name := range names {
+		name = sanitizeLibretroName(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Boxarts/%s.png", urlPathEscape(playlist), urlPathEscape(name)))
+	}
+	return out
+}
+
+func libretroPlaylist(platform string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "nes":
+		return "Nintendo - Nintendo Entertainment System", true
+	case "snes":
+		return "Nintendo - Super Nintendo Entertainment System", true
+	case "gb":
+		return "Nintendo - Game Boy", true
+	case "gbc":
+		return "Nintendo - Game Boy Color", true
+	case "gba":
+		return "Nintendo - Game Boy Advance", true
+	case "genesis", "mega-drive", "megadrive":
+		return "Sega - Mega Drive - Genesis", true
+	default:
+		return "", false
+	}
+}
+
+func sanitizeLibretroName(name string) string {
+	replacer := strings.NewReplacer("&", "_", "*", "_", ":", "_", "`", "_", "<", "_", ">", "_", "?", "_", `\`, "_", "|", "_", `"`, "_")
+	return strings.TrimSpace(replacer.Replace(name))
+}
+
+func urlPathEscape(value string) string {
+	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
+}
+
+func downloadGameCover(sourceURL string, cachePath string) error {
+	client := http.Client{Timeout: 8 * time.Second}
+	response, err := client.Get(sourceURL)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("cover source returned %d", response.StatusCode)
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "" && !strings.HasPrefix(contentType, "image/") {
+		return fmt.Errorf("cover source returned %s", contentType)
+	}
+	tmpPath := cachePath + ".tmp"
+	file, err := os.Create(tmpPath)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(file, io.LimitReader(response.Body, 8<<20))
+	closeErr := file.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmpPath)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return closeErr
+	}
+	return os.Rename(tmpPath, cachePath)
 }
 
 func (s *Service) Book(id int64) (domain.Book, error) {

@@ -2,6 +2,7 @@ export type Library = {
   id: number;
   name: string;
   rootPath: string;
+  assetType: "mixed" | "book" | "comic" | "game";
 };
 
 export type Series = {
@@ -9,7 +10,7 @@ export type Series = {
   libraryId: number;
   title: string;
   directoryPath: string;
-  collectionType: "directory";
+  collectionType: "directory" | "game_platform";
   bookCount: number;
 };
 
@@ -44,6 +45,23 @@ export type BookPrivateState = {
   summary: string;
 };
 
+export type GameAsset = {
+  id: number;
+  assetType?: "game";
+  title: string;
+  platform: string;
+  romSetName?: string;
+  region?: string;
+  format: string;
+  size: number;
+  crc32: string;
+  sha1: string;
+  emulatorHint: string;
+  compatibility: string;
+  coverUrl?: string;
+  manifestUrl?: string;
+};
+
 export type SearchResponse = {
   query: string;
   books: Book[];
@@ -65,11 +83,29 @@ export type BookListPage = {
   hasMore: boolean;
 };
 
+export type GameListPage = {
+  items: GameAsset[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
+export type CollectionAssets = {
+  books: Book[];
+  games: GameAsset[];
+};
+
 export type BookListOptions = {
   limit?: number;
   offset?: number;
   q?: string;
   sort?: string;
+};
+
+export type GameListOptions = BookListOptions & {
+  platform?: string;
+  format?: string;
 };
 
 export type Page = {
@@ -141,15 +177,27 @@ export type AuthStatus = {
 const authTokenKey = "foliospace_api_token";
 
 export function getAuthToken() {
-  return window.localStorage.getItem(authTokenKey) ?? "";
+  try {
+    return window.localStorage.getItem(authTokenKey) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export function setAuthToken(token: string) {
-  window.localStorage.setItem(authTokenKey, token);
+  try {
+    window.localStorage.setItem(authTokenKey, token);
+  } catch {
+    // Ignore storage failures in restricted browser contexts.
+  }
 }
 
 export function clearAuthToken() {
-  window.localStorage.removeItem(authTokenKey);
+  try {
+    window.localStorage.removeItem(authTokenKey);
+  } catch {
+    // Ignore storage failures in restricted browser contexts.
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -187,15 +235,16 @@ export const api = {
       body: JSON.stringify(preferences),
     }),
   libraries: () => request<Library[]>("/api/libraries"),
-  createLibrary: (name: string, rootPath: string) =>
+  createLibrary: (name: string, rootPath: string, assetType = "mixed") =>
     request<Library>("/api/libraries", {
       method: "POST",
-      body: JSON.stringify({ name, rootPath }),
+      body: JSON.stringify({ name, rootPath, assetType }),
     }),
   deleteLibrary: (libraryId: number) => request<{ ok: boolean }>(`/api/libraries/${libraryId}`, { method: "DELETE" }),
   scan: (libraryId: number) => request<ScanJob>(`/api/libraries/${libraryId}/scan`, { method: "POST" }),
   series: () => request<Series[]>("/api/collections"),
   books: (seriesId: number) => request<Book[]>(`/api/collections/${seriesId}/volumes`),
+  collectionAssets: (seriesId: number) => request<CollectionAssets>(`/api/collections/${seriesId}/assets`),
   booksPage: (seriesId: number, options: BookListOptions) => {
     const params = new URLSearchParams();
     if (options.limit) params.set("limit", String(options.limit));
@@ -206,6 +255,17 @@ export const api = {
   },
   continueReading: () => request<Book[]>("/api/books/continue-reading?limit=12"),
   recentBooks: () => request<Book[]>("/api/books/recent?limit=12"),
+  recentGames: () => request<GameAsset[]>("/api/games/recent?limit=12"),
+  clientGames: (options: GameListOptions = {}) => {
+    const params = new URLSearchParams();
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.offset) params.set("offset", String(options.offset));
+    if (options.q) params.set("q", options.q);
+    if (options.platform) params.set("platform", options.platform);
+    if (options.format) params.set("format", options.format);
+    if (options.sort) params.set("sort", options.sort);
+    return request<GameListPage>(`/api/client/games?${params.toString()}`);
+  },
   favoriteBooks: () => request<Book[]>("/api/books/favorites?limit=12"),
   privateStatusBooks: (status: string) => request<Book[]>(`/api/books/private-status/${encodeURIComponent(status)}?limit=12`),
   search: (q: string, limit = 12) =>

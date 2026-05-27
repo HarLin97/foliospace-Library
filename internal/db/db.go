@@ -36,6 +36,7 @@ func Migrate(conn *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
 			root_path TEXT NOT NULL UNIQUE,
+			asset_type TEXT NOT NULL DEFAULT 'mixed',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -77,6 +78,26 @@ func Migrate(conn *sql.DB) error {
 			ext TEXT NOT NULL,
 			hash TEXT NOT NULL DEFAULT '',
 			hash_status TEXT NOT NULL DEFAULT 'pending',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS games (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+			title TEXT NOT NULL,
+			platform TEXT NOT NULL DEFAULT '',
+			rom_set_name TEXT NOT NULL DEFAULT '',
+			region TEXT NOT NULL DEFAULT '',
+			format TEXT NOT NULL,
+			file_path TEXT NOT NULL UNIQUE,
+			rel_path TEXT NOT NULL,
+			size INTEGER NOT NULL,
+			mtime TEXT NOT NULL,
+			crc32 TEXT NOT NULL DEFAULT '',
+			sha1 TEXT NOT NULL DEFAULT '',
+			emulator_hint TEXT NOT NULL DEFAULT '',
+			compatibility TEXT NOT NULL DEFAULT 'unknown',
+			last_played_at TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -170,6 +191,9 @@ func Migrate(conn *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "books", "summary", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "libraries", "asset_type", "TEXT NOT NULL DEFAULT 'mixed'"); err != nil {
 		return err
 	}
 	return nil

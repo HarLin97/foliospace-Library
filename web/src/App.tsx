@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, MouseEvent, TouchEvent } from "react";
-import { api, Book, BookPrivateState, clearAuthToken, ClientPreferences, EpubManifest, FileError, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientPreferences, EpubManifest, FileError, GameAsset, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken } from "./api";
 
 type View = "library" | "reader" | "jobs" | "errors";
 type ReaderPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
+type LibraryAssetType = "mixed" | "book" | "comic" | "game";
 const bookPageSize = 60;
 
 export function App() {
@@ -19,6 +20,8 @@ export function App() {
   const [recentBooks, setRecentBooks] = useState<Book[]>([]);
   const [favoriteBooks, setFavoriteBooks] = useState<Book[]>([]);
   const [wantBooks, setWantBooks] = useState<Book[]>([]);
+  const [gameShelf, setGameShelf] = useState<GameAsset[]>([]);
+  const [collectionGames, setCollectionGames] = useState<GameAsset[]>([]);
   const [jobs, setJobs] = useState<ScanJob[]>([]);
   const [errors, setErrors] = useState<FileError[]>([]);
   const [jobEvents, setJobEvents] = useState<JobEvent[]>([]);
@@ -56,6 +59,7 @@ export function App() {
   const [epubTocOpen, setEpubTocOpen] = useState(false);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [newLibraryPath, setNewLibraryPath] = useState("");
+  const [newLibraryAssetType, setNewLibraryAssetType] = useState<LibraryAssetType>("mixed");
   const [privateDraft, setPrivateDraft] = useState<BookPrivateState>(emptyPrivateState());
   const [privateSaving, setPrivateSaving] = useState(false);
   const [locale, setLocale] = useState<Locale>(initialPreferences.locale);
@@ -82,7 +86,7 @@ export function App() {
     if (showProgress) {
       setActiveTask("Refreshing library");
     }
-    const [preferences, nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks] = await Promise.all([
+    const [preferences, nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf] = await Promise.all([
       api.clientPreferences(),
       api.libraries(),
       api.series(),
@@ -92,17 +96,19 @@ export function App() {
       api.recentBooks(),
       api.favoriteBooks(),
       api.privateStatusBooks("want"),
+      api.recentGames(),
     ]);
     applyClientPreferences(preferences);
     preferencesLoaded.current = true;
-    setLibraries(nextLibraries);
-    setSeries(nextSeries);
-    setJobs(nextJobs);
-    setErrors(nextErrors);
-    setContinueBooks(nextContinueBooks);
-    setRecentBooks(nextRecentBooks);
-    setFavoriteBooks(nextFavoriteBooks);
-    setWantBooks(nextWantBooks);
+    setLibraries(arrayOrEmpty(nextLibraries));
+    setSeries(arrayOrEmpty(nextSeries));
+    setJobs(arrayOrEmpty(nextJobs));
+    setErrors(arrayOrEmpty(nextErrors));
+    setContinueBooks(arrayOrEmpty(nextContinueBooks));
+    setRecentBooks(arrayOrEmpty(nextRecentBooks));
+    setFavoriteBooks(arrayOrEmpty(nextFavoriteBooks));
+    setWantBooks(arrayOrEmpty(nextWantBooks));
+    setGameShelf(arrayOrEmpty(nextGameShelf));
     if (showProgress) {
       setActiveTask(null);
     }
@@ -328,10 +334,11 @@ export function App() {
     event.preventDefault();
     setActiveTask("Adding library");
     try {
-      const library = await api.createLibrary(newLibraryName, newLibraryPath);
+      const library = await api.createLibrary(newLibraryName, newLibraryPath, newLibraryAssetType);
       setStatus(`Library added: ${library.rootPath}`);
       setNewLibraryName("");
       setNewLibraryPath("");
+      setNewLibraryAssetType("mixed");
       await refreshAll();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to add library");
@@ -357,6 +364,7 @@ export function App() {
     setSelectedSeries(item);
     setQuery("");
     setBooks([]);
+    setCollectionGames([]);
     setBookTotal(0);
     setBookHasMore(false);
   }
@@ -401,10 +409,29 @@ export function App() {
   useEffect(() => {
     if (!selectedSeries) return;
     setBooks([]);
+    setCollectionGames([]);
     setBookTotal(0);
     setBookHasMore(false);
     void loadBooksPage(selectedSeries, 0, true);
   }, [loadBooksPage, selectedSeries]);
+
+  useEffect(() => {
+    if (!selectedSeries) return;
+    let cancelled = false;
+    api.collectionAssets(selectedSeries.id)
+      .then((assets) => {
+        if (cancelled) return;
+        setCollectionGames(arrayOrEmpty(assets.games));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStatus(error instanceof Error ? error.message : "Failed to load games");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSeries]);
 
   useEffect(() => {
     const node = bookLoadMoreRef.current;
@@ -795,7 +822,7 @@ export function App() {
               </section>
             )}
 
-            {(continueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || recentBooks.length > 0) && (
+            {(continueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || recentBooks.length > 0) && (
               <section className="homeRows panel wide" aria-label="Reading shortcuts">
                 {continueBooks.length > 0 && (
                   <BookShelf
@@ -825,6 +852,14 @@ export function App() {
                     meta={(book) => privateShelfMeta(book, t)}
                   />
                 )}
+                {gameShelf.length > 0 && (
+                  <GameShelf
+                    title={t.gameShelf}
+                    subtitle={t.gameShelfSubtitle}
+                    games={gameShelf}
+                    meta={(game) => gameMeta(game, t)}
+                  />
+                )}
                 {recentBooks.length > 0 && (
                   <BookShelf
                     title={t.recentlyAddedTitle}
@@ -850,13 +885,19 @@ export function App() {
                   onChange={(event) => setNewLibraryPath(event.target.value)}
                   placeholder="/volume2/ComicCenter"
                 />
+                <select value={newLibraryAssetType} onChange={(event) => setNewLibraryAssetType(event.target.value as LibraryAssetType)} aria-label={t.libraryAssetType}>
+                  <option value="mixed">{t.assetTypeMixed}</option>
+                  <option value="comic">{t.assetTypeComic}</option>
+                  <option value="book">{t.assetTypeBook}</option>
+                  <option value="game">{t.assetTypeGame}</option>
+                </select>
                 <button disabled={!newLibraryPath.trim()}>{t.add}</button>
               </form>
               {libraries.map((library) => (
                 <div className="row" key={library.id}>
                   <div>
                     <strong>{library.name}</strong>
-                    <small>{library.rootPath}</small>
+                    <small>{library.rootPath} · {libraryAssetTypeLabel(library.assetType, t)}</small>
                   </div>
                   <div className="rowActions">
                     <button onClick={() => scan(library)}>{t.scan}</button>
@@ -873,7 +914,7 @@ export function App() {
                   <button className="listItem" key={item.id} onClick={() => openSeries(item)}>
                     <span>{item.title}</span>
                     <small>
-                      {item.directoryPath || "."} · {item.bookCount} volumes
+                      {item.directoryPath || "."} · {collectionCountLabel(item)}
                     </small>
                   </button>
                 ))}
@@ -885,13 +926,11 @@ export function App() {
                 <div>
                   <h1>{selectedSeries ? selectedSeries.title : t.volumeWall}</h1>
                   <small>
-                    {selectedSeries
-                      ? `${books.length} of ${bookTotal || selectedSeries.bookCount} volumes`
-                      : t.selectCollection}
+                    {selectedSeries ? loadedCollectionCountLabel(selectedSeries, books.length, collectionGames.length) : t.selectCollection}
                   </small>
                 </div>
                 <div className="coverWallTools">
-                  {selectedSeries && <span>{selectedSeries.bookCount} indexed</span>}
+                  {selectedSeries && <span>{collectionCountLabel(selectedSeries)}</span>}
                   {selectedSeries && (
                     <label>
                       <span>{t.sort}</span>
@@ -906,8 +945,11 @@ export function App() {
                   )}
                 </div>
               </div>
-              {selectedSeries && books.length > 0 ? (
+              {selectedSeries && (books.length > 0 || collectionGames.length > 0) ? (
                 <div className="books">
+                  {[...collectionGames].sort(compareGamesByPlatform).map((game) => (
+                    <GameTile key={`collection-game-${game.id}`} game={game} meta={gameMeta(game, t)} />
+                  ))}
                   {books.map((book) => (
                     <button className="book" key={book.id} onClick={() => openBook(book)} title={book.title}>
                       <span className="coverFrame">
@@ -1313,6 +1355,123 @@ function BookShelf({
   );
 }
 
+function GameShelf({
+  title,
+  subtitle,
+  games,
+  meta,
+}: {
+  title: string;
+  subtitle: string;
+  games: GameAsset[];
+  meta: (game: GameAsset) => string;
+}) {
+  const sortedGames = [...games].sort(compareGamesByPlatform);
+
+  return (
+    <div className="bookShelf gameShelf">
+      <div className="bookShelfHeader">
+        <div>
+          <h1>{title}</h1>
+          <small>{subtitle}</small>
+        </div>
+      </div>
+      <div className="shelfScroller">
+        {sortedGames.map((game) => (
+          <GameTile className="shelfBook" key={`game-${game.id}`} game={game} meta={meta(game)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function GameTile({ game, meta, className = "book" }: { game: GameAsset; meta: string; className?: string }) {
+  const [coverFailed, setCoverFailed] = useState(false);
+  const hasCover = Boolean(game.coverUrl && !coverFailed);
+
+  return (
+    <button className={`${className} gameCard`} title={game.title}>
+      <span className={`shelfCover gameCover${hasCover ? " hasCover" : ""}`}>
+        {hasCover ? <img src={game.coverUrl} alt="" loading="lazy" onError={() => setCoverFailed(true)} /> : null}
+        <span className="gameCoverPlatform">{gamePlatformLabel(game)}</span>
+        <span className="gameCoverTitle">Now Printing</span>
+        <span className="gameCoverFormat">{game.format.toUpperCase()}</span>
+      </span>
+      <strong>{game.title}</strong>
+      <small>{meta}</small>
+    </button>
+  );
+}
+
+function compareGamesByPlatform(a: GameAsset, b: GameAsset) {
+  const platformDelta = platformSortRank(a.platform) - platformSortRank(b.platform);
+  if (platformDelta !== 0) return platformDelta;
+  const platformNameDelta = (a.platform || "").localeCompare(b.platform || "");
+  if (platformNameDelta !== 0) return platformNameDelta;
+  return a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true });
+}
+
+function platformSortRank(platform: string) {
+  switch ((platform || "").toLowerCase()) {
+    case "nes":
+      return 10;
+    case "snes":
+      return 20;
+    case "gb":
+      return 30;
+    case "gbc":
+      return 40;
+    case "gba":
+      return 50;
+    case "md":
+    case "genesis":
+    case "mega-drive":
+    case "megadrive":
+      return 60;
+    case "32x":
+      return 65;
+    case "saturn":
+      return 70;
+    case "neogeo":
+      return 80;
+    case "model3":
+      return 85;
+    case "naomi":
+      return 86;
+    case "arcade":
+      return 90;
+    default:
+      return 999;
+  }
+}
+
+function gamePlatformLabel(game: GameAsset) {
+  switch ((game.platform || "").toLowerCase()) {
+    case "md":
+      return "MEGA DRIVE";
+    case "neogeo":
+      return "NEO GEO";
+    case "model3":
+      return "MODEL 3";
+    default:
+      return (game.platform || game.format || "game").toUpperCase();
+  }
+}
+
+function collectionCountLabel(item: Series) {
+  return item.collectionType === "game_platform" ? `${item.bookCount} games` : `${item.bookCount} volumes`;
+}
+
+function loadedCollectionCountLabel(item: Series, bookCount: number, gameCount: number) {
+  if (item.collectionType === "game_platform") {
+    return `${gameCount} games`;
+  }
+  if (gameCount > 0) {
+    return `${bookCount} volumes · ${gameCount} games`;
+  }
+  return `${bookCount} of ${item.bookCount} volumes`;
+}
+
 function EpubFrame({
   book,
   manifest,
@@ -1567,7 +1726,14 @@ const translations = {
     continueSubtitle: "点击后直接回到上次阅读位置",
     favoriteSubtitle: "你的私人收藏",
     wantSubtitle: "稍后再读",
+    gameShelf: "游戏库",
+    gameShelfSubtitle: "本地 ROM 与 ROM set",
     recentSubtitle: "最近入库",
+    libraryAssetType: "目录类型",
+    assetTypeMixed: "自动",
+    assetTypeBook: "书籍",
+    assetTypeComic: "漫画",
+    assetTypeGame: "游戏",
     libraries: "书库目录",
     name: "名称",
     add: "添加",
@@ -1661,7 +1827,14 @@ const translations = {
     continueSubtitle: "點擊後直接回到上次閱讀位置",
     favoriteSubtitle: "你的私人收藏",
     wantSubtitle: "稍後再讀",
+    gameShelf: "遊戲庫",
+    gameShelfSubtitle: "本地 ROM 與 ROM set",
     recentSubtitle: "最近入庫",
+    libraryAssetType: "目錄類型",
+    assetTypeMixed: "自動",
+    assetTypeBook: "書籍",
+    assetTypeComic: "漫畫",
+    assetTypeGame: "遊戲",
     libraries: "書庫目錄",
     name: "名稱",
     add: "新增",
@@ -1755,7 +1928,14 @@ const translations = {
     continueSubtitle: "One click resumes at your saved page",
     favoriteSubtitle: "Private picks",
     wantSubtitle: "Queued for later",
+    gameShelf: "Game Shelf",
+    gameShelfSubtitle: "Local ROMs and ROM sets",
     recentSubtitle: "Newest indexed volumes",
+    libraryAssetType: "Library type",
+    assetTypeMixed: "Auto",
+    assetTypeBook: "Books",
+    assetTypeComic: "Comics",
+    assetTypeGame: "Games",
     libraries: "Libraries",
     name: "Name",
     add: "Add",
@@ -1849,7 +2029,14 @@ const translations = {
     continueSubtitle: "保存した位置からすぐ再開",
     favoriteSubtitle: "お気に入り",
     wantSubtitle: "あとで読む",
+    gameShelf: "ゲーム棚",
+    gameShelfSubtitle: "ローカル ROM と ROM set",
     recentSubtitle: "最近追加",
+    libraryAssetType: "ライブラリ種別",
+    assetTypeMixed: "自動",
+    assetTypeBook: "書籍",
+    assetTypeComic: "漫画",
+    assetTypeGame: "ゲーム",
     libraries: "ライブラリ",
     name: "名前",
     add: "追加",
@@ -1943,7 +2130,14 @@ const translations = {
     continueSubtitle: "저장된 위치에서 바로 이어서 읽기",
     favoriteSubtitle: "개인 즐겨찾기",
     wantSubtitle: "나중에 읽기",
+    gameShelf: "게임 선반",
+    gameShelfSubtitle: "로컬 ROM 및 ROM set",
     recentSubtitle: "최근 인덱싱된 항목",
+    libraryAssetType: "라이브러리 유형",
+    assetTypeMixed: "자동",
+    assetTypeBook: "도서",
+    assetTypeComic: "만화",
+    assetTypeGame: "게임",
     libraries: "라이브러리",
     name: "이름",
     add: "추가",
@@ -2019,7 +2213,7 @@ const translations = {
 };
 
 function readLocalPreferences(): ClientPreferences {
-  const stored = window.localStorage.getItem("foliospace_preferences");
+  const stored = readLocalStorage("foliospace_preferences");
   if (stored) {
     try {
       return normalizeClientPreferences(JSON.parse(stored));
@@ -2027,14 +2221,30 @@ function readLocalPreferences(): ClientPreferences {
       // Fall through to legacy locale migration.
     }
   }
-  const legacyLocale = window.localStorage.getItem("foliospace_locale");
+  const legacyLocale = readLocalStorage("foliospace_locale");
   return normalizeClientPreferences({ ...defaultClientPreferences(), locale: isLocale(legacyLocale) ? legacyLocale : "zh" });
 }
 
 function writeLocalPreferences(preferences: ClientPreferences) {
   const normalized = normalizeClientPreferences(preferences);
-  window.localStorage.setItem("foliospace_preferences", JSON.stringify(normalized));
-  window.localStorage.setItem("foliospace_locale", normalized.locale);
+  writeLocalStorage("foliospace_preferences", JSON.stringify(normalized));
+  writeLocalStorage("foliospace_locale", normalized.locale);
+}
+
+function readLocalStorage(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalStorage(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures in restricted browser contexts.
+  }
 }
 
 function defaultClientPreferences(): ClientPreferences {
@@ -2065,6 +2275,10 @@ function normalizeClientPreferences(value: Partial<ClientPreferences>): ClientPr
 
 function isLocale(value: string | null | undefined): value is Locale {
   return value === "zh" || value === "zht" || value === "en" || value === "ja" || value === "ko";
+}
+
+function arrayOrEmpty<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
 }
 
 function emptyPrivateState(): BookPrivateState {
@@ -2134,6 +2348,25 @@ function privateShelfMeta(book: Book, t: Translation) {
   const meta = privateMeta(book, t);
   const location = book.collectionTitle ? book.collectionTitle : t.library;
   return meta ? `${meta} · ${location}` : location;
+}
+
+function gameMeta(game: GameAsset, t: Translation) {
+  return [game.platform || game.format, game.region, game.romSetName, game.compatibility]
+    .filter(Boolean)
+    .join(" · ") || t.assetTypeGame;
+}
+
+function libraryAssetTypeLabel(value: string | undefined, t: Translation) {
+  switch (value) {
+    case "book":
+      return t.assetTypeBook;
+    case "comic":
+      return t.assetTypeComic;
+    case "game":
+      return t.assetTypeGame;
+    default:
+      return t.assetTypeMixed;
+  }
 }
 
 function recentMeta(book: Book, t: Translation) {

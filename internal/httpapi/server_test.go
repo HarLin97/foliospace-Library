@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"foliospace-reader/internal/db"
+	"foliospace-reader/internal/domain"
 	"foliospace-reader/internal/service"
 	"foliospace-reader/internal/store"
 )
@@ -187,6 +188,13 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	romPath := filepath.Join(root, "SNES", "Super Mario World (USA).sfc")
+	if err := os.MkdirAll(filepath.Dir(romPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(romPath, []byte("rom-body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ts := httptest.NewServer(New(service.New(st), nil).Routes())
 	defer ts.Close()
@@ -231,6 +239,9 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	if !strings.Contains(homeBody, `"continueReading"`) || !strings.Contains(homeBody, `"recentBooks"`) || !strings.Contains(homeBody, `"collections"`) {
 		t.Fatalf("client home response %q is missing expected sections", homeBody)
 	}
+	if !strings.Contains(homeBody, `"gameShelf"`) || !strings.Contains(homeBody, `"Super Mario World"`) || strings.Contains(homeBody, "Super Mario World (USA).sfc") {
+		t.Fatalf("client home response %q is missing safe game shelf", homeBody)
+	}
 	if !strings.Contains(homeBody, `"/api/books/`+itoa(cbzBookID)+`/cover"`) {
 		t.Fatalf("client home response %q does not include cover URL", homeBody)
 	}
@@ -249,6 +260,75 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 	if !strings.Contains(epubManifestBody, `"format":"epub"`) || !strings.Contains(epubManifestBody, `"resourceBaseUrl":"/api/books/`+itoa(epubBookID)+`/epub/resources/"`) {
 		t.Fatalf("epub client manifest response %q is missing epub open data", epubManifestBody)
+	}
+
+	games, err := st.ListRecentGames(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("games = %#v, want one indexed game", games)
+	}
+	gameManifestBody := get(t, ts.URL+"/api/client/games/"+itoa(games[0].ID)+"/manifest")
+	if strings.Contains(gameManifestBody, root) || strings.Contains(gameManifestBody, "filePath") {
+		t.Fatalf("game client manifest leaked file path: %q", gameManifestBody)
+	}
+	if !strings.Contains(gameManifestBody, `"assetType":"game"`) || !strings.Contains(gameManifestBody, `"platform":"snes"`) || !strings.Contains(gameManifestBody, `"/api/client/games/`+itoa(games[0].ID)+`/file"`) {
+		t.Fatalf("game client manifest response %q is missing launch metadata", gameManifestBody)
+	}
+}
+
+func TestAPIClientGamesPage(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, game := range []domain.GameAsset{
+		{LibraryID: lib.ID, Title: "Super Contra", Platform: "nes", ROMSetName: "NES", Region: "Japan", Format: "nes", FilePath: "/library/nes/Super Contra.nes", RelPath: "nes/Super Contra.nes", Size: 262160, MTime: time.Unix(30, 0), CRC32: "9bb6059e", SHA1: "5de393e3ad83e6e185e6d338684d7a4475b7d2ce", EmulatorHint: "nes", Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Advance Wars", Platform: "gba", ROMSetName: "GBA", Region: "USA", Format: "gba", FilePath: "/library/gba/Advance Wars.gba", RelPath: "gba/Advance Wars.gba", Size: 1024, MTime: time.Unix(31, 0), CRC32: "11111111", SHA1: "1111111111111111111111111111111111111111", EmulatorHint: "gba", Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Metal Slug", Platform: "arcade", ROMSetName: "MAME", Region: "World", Format: "zip", FilePath: "/library/arcade/mslug.zip", RelPath: "arcade/mslug.zip", Size: 2048, MTime: time.Unix(32, 0), CRC32: "22222222", SHA1: "2222222222222222222222222222222222222222", EmulatorHint: "arcade", Compatibility: "unknown"},
+	} {
+		if _, err := st.UpsertGame(game); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	unauthorized, err := http.Get(ts.URL + "/api/client/games?limit=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want 401", unauthorized.StatusCode)
+	}
+
+	body := authGet(t, ts.URL+"/api/client/games?limit=2&offset=0&sort=title", "secret")
+	if strings.Contains(body, "/library") || strings.Contains(body, "filePath") || strings.Contains(body, "relPath") {
+		t.Fatalf("client games leaked internal path: %q", body)
+	}
+	if !strings.Contains(body, `"total":3`) || !strings.Contains(body, `"limit":2`) || !strings.Contains(body, `"hasMore":true`) || !strings.Contains(body, `"title":"Advance Wars"`) {
+		t.Fatalf("client games page %q missing pagination metadata or title sort", body)
+	}
+	if !strings.Contains(body, `"/api/client/games/`) || !strings.Contains(body, `/manifest"`) {
+		t.Fatalf("client games page %q missing manifestUrl", body)
+	}
+
+	filtered := authGet(t, ts.URL+"/api/client/games?limit=500&q=japan&platform=nes&format=nes", "secret")
+	if !strings.Contains(filtered, `"title":"Super Contra"`) || !strings.Contains(filtered, `"total":1`) || !strings.Contains(filtered, `"limit":200`) || !strings.Contains(filtered, `"hasMore":false`) {
+		t.Fatalf("filtered client games page = %q, want clamped one-item response", filtered)
+	}
+
+	empty := authGet(t, ts.URL+"/api/client/games?q=missing", "secret")
+	if !strings.Contains(empty, `"items":[]`) || !strings.Contains(empty, `"total":0`) {
+		t.Fatalf("empty client games page = %q, want empty list response", empty)
 	}
 }
 
@@ -394,6 +474,41 @@ func TestClientAPIPreferences(t *testing.T) {
 	}
 }
 
+func TestAPICreatesGameTypedLibraryForZipROMSets(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Arcade", "mslug.zip"), map[string]string{"mslug.rom": "rom"})
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	ts := httptest.NewServer(New(service.New(st), nil).Routes())
+	defer ts.Close()
+
+	body := postJSONBody(t, ts.URL+"/api/libraries", `{"name":"Arcade","rootPath":"`+root+`","assetType":"game"}`)
+	if !strings.Contains(body, `"assetType":"game"`) {
+		t.Fatalf("library response %q does not include game asset type", body)
+	}
+	libs, err := st.ListLibraries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(libs) != 1 || libs[0].AssetType != "game" {
+		t.Fatalf("libraries = %#v, want game typed library", libs)
+	}
+
+	post(t, ts.URL+"/api/libraries/"+itoa(libs[0].ID)+"/scan", "")
+	waitFor(t, func() bool {
+		jobs, err := st.ListScanJobs()
+		return err == nil && len(jobs) > 0 && jobs[0].Status == "completed"
+	})
+	gamesBody := get(t, ts.URL+"/api/games/recent")
+	if !strings.Contains(gamesBody, `"title":"mslug"`) || !strings.Contains(gamesBody, `"format":"zip"`) || strings.Contains(gamesBody, root) {
+		t.Fatalf("games response %q is missing safe zip ROM set", gamesBody)
+	}
+}
+
 func TestAPIRequiresBearerTokenWhenConfigured(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
@@ -473,6 +588,28 @@ func get(t *testing.T, url string) string {
 	return string(data)
 }
 
+func authGet(t *testing.T, url string, token string) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode >= 400 {
+		t.Fatalf("GET %s status %d: %s", url, resp.StatusCode, data)
+	}
+	return string(data)
+}
+
 func post(t *testing.T, url string, body string) {
 	t.Helper()
 	resp, err := http.Post(url, "application/json", strings.NewReader(body))
@@ -484,6 +621,23 @@ func post(t *testing.T, url string, body string) {
 		data, _ := io.ReadAll(resp.Body)
 		t.Fatalf("POST %s status %d: %s", url, resp.StatusCode, data)
 	}
+}
+
+func postJSONBody(t *testing.T, url string, body string) string {
+	t.Helper()
+	resp, err := http.Post(url, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode >= 400 {
+		t.Fatalf("POST %s status %d: %s", url, resp.StatusCode, data)
+	}
+	return string(data)
 }
 
 func putJSON(t *testing.T, url string, body string) {

@@ -44,6 +44,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/client/preferences", s.handleClientPreferences)
 	mux.HandleFunc("/api/client/home", s.handleClientHome)
 	mux.HandleFunc("/api/client/search", s.handleClientSearch)
+	mux.HandleFunc("/api/client/games", s.handleClientGames)
+	mux.HandleFunc("/api/client/games/", s.handleClientGameAction)
 	mux.HandleFunc("/api/client/books/favorites", s.handleClientFavoriteBooks)
 	mux.HandleFunc("/api/client/books/private-status/", s.handleClientPrivateStatusBooks)
 	mux.HandleFunc("/api/client/books/", s.handleClientBookAction)
@@ -58,6 +60,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/books/favorites", s.handleFavoriteBooks)
 	mux.HandleFunc("/api/books/private-status/", s.handlePrivateStatusBooks)
 	mux.HandleFunc("/api/books/", s.handleBookAction)
+	mux.HandleFunc("/api/games/", s.handleGameAction)
+	mux.HandleFunc("/api/games/recent", s.handleRecentGames)
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/jobs", s.handleJobs)
 	mux.HandleFunc("/api/jobs/", s.handleJobAction)
@@ -134,13 +138,15 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, clientInfoResponse{
 		ServiceName:      "FolioSpace Library",
 		APIVersion:       "v1",
-		SupportedFormats: []string{"cbz", "zip", "epub"},
+		SupportedFormats: []string{"cbz", "zip", "epub", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"},
 		Capabilities: clientCapabilities{
 			ClientHome:       true,
 			UnifiedManifest:  true,
 			ProgressSync:     true,
 			EPUBStreaming:    true,
 			PageStreaming:    true,
+			GameShelf:        true,
+			GameCatalog:      true,
 			PrivateState:     true,
 			Search:           true,
 			Preferences:      true,
@@ -178,6 +184,11 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	gameShelf, err := s.service.RecentGames(queryLimit(r, 12))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	collections, err := s.service.ListSeries()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -188,6 +199,7 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		RecentBooks:     clientBooks(recentBooks),
 		FavoriteBooks:   clientBooks(favoriteBooks),
 		WantToRead:      clientBooks(wantBooks),
+		GameShelf:       clientGames(gameShelf),
 		Collections:     clientCollections(collections),
 	})
 }
@@ -247,6 +259,84 @@ func (s *Server) handleClientBookAction(w http.ResponseWriter, r *http.Request) 
 			Book:         clientBookItem(book),
 			PrivateState: privateStateFromBook(book),
 		})
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	id, tail, ok := parseIDTail(r.URL.Path, "/api/client/games/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if tail == "manifest" && r.Method == http.MethodGet {
+		game, err := s.service.Game(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSON(w, clientGameManifest(game))
+		return
+	}
+	if tail == "cover" && r.Method == http.MethodGet {
+		s.streamGameCover(w, id)
+		return
+	}
+	if tail == "file" && r.Method == http.MethodGet {
+		stream, err := s.service.OpenGameFile(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		defer stream.Body.Close()
+		w.Header().Set("Content-Type", stream.ContentType)
+		_, _ = io.Copy(w, stream.Body)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleClientGames(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	page, err := s.service.ListGamesPage(domain.GameListOptions{
+		Limit:    queryInt(r, "limit", 50, 200),
+		Offset:   queryInt(r, "offset", 0, 0),
+		Query:    r.URL.Query().Get("q"),
+		Platform: r.URL.Query().Get("platform"),
+		Format:   r.URL.Query().Get("format"),
+		Sort:     r.URL.Query().Get("sort"),
+	})
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	writeJSON(w, clientGameListResponse{
+		Items:   clientGames(page.Items),
+		Total:   page.Total,
+		Limit:   page.Limit,
+		Offset:  page.Offset,
+		HasMore: page.HasMore,
+	})
+}
+
+func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
+	id, tail, ok := parseIDTail(r.URL.Path, "/api/games/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if tail == "cover" && r.Method == http.MethodGet {
+		s.streamGameCover(w, id)
 		return
 	}
 	http.NotFound(w, r)
@@ -434,14 +524,15 @@ func (s *Server) handleLibraries(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, items, err)
 	case http.MethodPost:
 		var req struct {
-			Name     string `json:"name"`
-			RootPath string `json:"rootPath"`
+			Name      string `json:"name"`
+			RootPath  string `json:"rootPath"`
+			AssetType string `json:"assetType"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		lib, err := s.service.CreateLibrary(req.Name, req.RootPath)
+		lib, err := s.service.CreateLibraryWithType(req.Name, req.RootPath, req.AssetType)
 		writeJSONOrError(w, lib, err)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -495,12 +586,20 @@ func (s *Server) handleSeriesAction(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCollectionAction(w http.ResponseWriter, r *http.Request) {
 	id, action, ok := parseIDAction(r.URL.Path, "/api/collections/")
-	if !ok || action != "volumes" {
+	if !ok || (action != "volumes" && action != "assets") {
 		http.NotFound(w, r)
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if action == "assets" {
+		assets, err := s.service.CollectionAssets(id)
+		writeJSONOrError(w, map[string]any{
+			"books": assets.Books,
+			"games": games(assets.Games),
+		}, err)
 		return
 	}
 	if hasBookListQuery(r) {
@@ -534,6 +633,27 @@ func (s *Server) handleRecentBooks(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.service.RecentBooks(queryLimit(r, 12))
 	writeJSONOrError(w, items, err)
+}
+
+func (s *Server) handleRecentGames(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	items, err := s.service.RecentGames(queryLimit(r, 12))
+	writeJSONOrError(w, games(items), err)
+}
+
+func (s *Server) streamGameCover(w http.ResponseWriter, gameID int64) {
+	stream, err := s.service.OpenGameCover(gameID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	defer stream.Body.Close()
+	w.Header().Set("Content-Type", stream.ContentType)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = io.Copy(w, stream.Body)
 }
 
 func (s *Server) handleFavoriteBooks(w http.ResponseWriter, r *http.Request) {
@@ -849,6 +969,8 @@ type clientCapabilities struct {
 	ProgressSync     bool `json:"progressSync"`
 	EPUBStreaming    bool `json:"epubStreaming"`
 	PageStreaming    bool `json:"pageStreaming"`
+	GameShelf        bool `json:"gameShelf"`
+	GameCatalog      bool `json:"gameCatalog"`
 	PrivateState     bool `json:"privateState"`
 	Search           bool `json:"search"`
 	Preferences      bool `json:"preferences"`
@@ -861,6 +983,7 @@ type clientHomeResponse struct {
 	RecentBooks     []clientBook       `json:"recentBooks"`
 	FavoriteBooks   []clientBook       `json:"favoriteBooks"`
 	WantToRead      []clientBook       `json:"wantToRead"`
+	GameShelf       []clientGame       `json:"gameShelf"`
 	Collections     []clientCollection `json:"collections"`
 }
 
@@ -907,6 +1030,36 @@ type clientBookManifestResponse struct {
 	Progress clientProgress      `json:"progress"`
 	Pages    []clientPageRef     `json:"pages,omitempty"`
 	EPUB     *clientEPUBOpenInfo `json:"epub,omitempty"`
+}
+
+type clientGame struct {
+	ID            int64  `json:"id"`
+	AssetType     string `json:"assetType"`
+	Title         string `json:"title"`
+	Platform      string `json:"platform"`
+	ROMSetName    string `json:"romSetName,omitempty"`
+	Region        string `json:"region,omitempty"`
+	Format        string `json:"format"`
+	Size          int64  `json:"size"`
+	CRC32         string `json:"crc32"`
+	SHA1          string `json:"sha1"`
+	EmulatorHint  string `json:"emulatorHint"`
+	Compatibility string `json:"compatibility"`
+	CoverURL      string `json:"coverUrl,omitempty"`
+	ManifestURL   string `json:"manifestUrl"`
+}
+
+type clientGameManifestResponse struct {
+	Game    clientGame `json:"game"`
+	FileURL string     `json:"fileUrl"`
+}
+
+type clientGameListResponse struct {
+	Items   []clientGame `json:"items"`
+	Total   int64        `json:"total"`
+	Limit   int          `json:"limit"`
+	Offset  int          `json:"offset"`
+	HasMore bool         `json:"hasMore"`
 }
 
 type clientPrivateStateResponse struct {
@@ -956,6 +1109,60 @@ func clientBooks(books []domain.Book) []clientBook {
 		out = append(out, clientBookItem(book))
 	}
 	return out
+}
+
+func games(items []domain.GameAsset) []domain.GameAsset {
+	out := make([]domain.GameAsset, 0, len(items))
+	for _, item := range items {
+		item.FilePath = ""
+		item.RelPath = ""
+		item.CoverURL = gameCoverURL(item.ID, item.Platform)
+		out = append(out, item)
+	}
+	return out
+}
+
+func clientGames(items []domain.GameAsset) []clientGame {
+	out := make([]clientGame, 0, len(items))
+	for _, item := range items {
+		out = append(out, clientGameItem(item))
+	}
+	return out
+}
+
+func clientGameItem(game domain.GameAsset) clientGame {
+	return clientGame{
+		ID:            game.ID,
+		AssetType:     "game",
+		Title:         game.Title,
+		Platform:      game.Platform,
+		ROMSetName:    game.ROMSetName,
+		Region:        game.Region,
+		Format:        game.Format,
+		Size:          game.Size,
+		CRC32:         game.CRC32,
+		SHA1:          game.SHA1,
+		EmulatorHint:  game.EmulatorHint,
+		Compatibility: game.Compatibility,
+		CoverURL:      gameCoverURL(game.ID, game.Platform),
+		ManifestURL:   fmt.Sprintf("/api/client/games/%d/manifest", game.ID),
+	}
+}
+
+func gameCoverURL(gameID int64, platform string) string {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "nes", "snes", "gb", "gbc", "gba", "genesis", "mega-drive", "megadrive":
+		return fmt.Sprintf("/api/games/%d/cover", gameID)
+	default:
+		return ""
+	}
+}
+
+func clientGameManifest(game domain.GameAsset) clientGameManifestResponse {
+	return clientGameManifestResponse{
+		Game:    clientGameItem(game),
+		FileURL: fmt.Sprintf("/api/client/games/%d/file", game.ID),
+	}
 }
 
 func clientBookItem(book domain.Book) clientBook {

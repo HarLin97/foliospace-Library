@@ -1,9 +1,15 @@
 package scanner
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
+	"hash/crc32"
+	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -57,7 +63,8 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".cbz" && ext != ".zip" && ext != ".epub" {
+		kind := classifyFileKind(library, path, ext)
+		if kind == "" {
 			return nil
 		}
 		job.CurrentPath = path
@@ -78,6 +85,42 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 			_ = s.store.UpdateScanJob(job)
 			return nil
 		}
+		if kind == "game" {
+			relPath, err := filepath.Rel(library.RootPath, path)
+			if err != nil {
+				job.ErrorCount++
+				_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+				_ = s.store.AddJobEvent(job.ID, "error", "relative path failed: "+path)
+				_ = s.store.UpdateScanJob(job)
+				return nil
+			}
+			expectedPlatform := inferGamePlatform(ext, relPath)
+			if s.store.CanSkipGame(path, info.Size(), info.ModTime(), expectedPlatform) {
+				job.SkippedFiles++
+				_ = s.store.AddJobEvent(job.ID, "debug", "skipped unchanged game: "+path)
+				_ = s.store.UpdateScanJob(job)
+				return nil
+			}
+			if err := s.indexGameFile(library, path, info, ext); err != nil {
+				job.ErrorCount++
+				_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+				_ = s.store.AddJobEvent(job.ID, "error", "game metadata failed: "+path)
+				_ = s.store.UpdateScanJob(job)
+				return nil
+			}
+			job.IndexedFiles++
+			_ = s.store.AddJobEvent(job.ID, "info", "indexed game: "+path)
+			_ = s.store.UpdateScanJob(job)
+			return nil
+		}
+		if err := s.store.DeleteGameByPath(path); err != nil {
+			job.ErrorCount++
+			_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+			_ = s.store.AddJobEvent(job.ID, "error", "game cleanup failed: "+path)
+			_ = s.store.UpdateScanJob(job)
+			return nil
+		}
+
 		if s.canSkipUnchanged(path, info, ext) {
 			if _, err := s.indexFileMetadata(library, path, info, ext); err != nil {
 				job.ErrorCount++
@@ -131,6 +174,39 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 	return job, nil
 }
 
+func classifyFileKind(library domain.Library, path string, ext string) string {
+	if library.AssetType == "game" {
+		if isGameExt(ext) || isGamePackageExt(ext) {
+			return "game"
+		}
+		return ""
+	}
+	if isBookExt(ext) {
+		return "book"
+	}
+	if isGameExt(ext) {
+		return "game"
+	}
+	return ""
+}
+
+func isBookExt(ext string) bool {
+	return ext == ".cbz" || ext == ".zip" || ext == ".epub" || ext == ".7z"
+}
+
+func isGamePackageExt(ext string) bool {
+	return ext == ".zip" || ext == ".7z"
+}
+
+func isGameExt(ext string) bool {
+	switch ext {
+	case ".nes", ".sfc", ".smc", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".chd", ".iso", ".bin", ".cue":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Scanner) canSkipUnchanged(path string, info fs.FileInfo, ext string) bool {
 	index, err := s.store.FileIndexByPath(path)
 	if err != nil {
@@ -157,6 +233,36 @@ func (s *Scanner) indexFile(library domain.Library, jobID int64, path string, in
 		return err
 	}
 	return nil
+}
+
+func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.FileInfo, ext string) error {
+	relPath, err := filepath.Rel(library.RootPath, path)
+	if err != nil {
+		return fmt.Errorf("relative path: %w", err)
+	}
+	checksums, err := fileChecksums(path)
+	if err != nil {
+		return err
+	}
+	title := gameTitle(path)
+	platform := inferGamePlatform(ext, relPath)
+	_, err = s.store.UpsertGame(domain.GameAsset{
+		LibraryID:     library.ID,
+		Title:         title,
+		Platform:      platform,
+		ROMSetName:    inferROMSetName(relPath),
+		Region:        inferRegion(path),
+		Format:        strings.TrimPrefix(ext, "."),
+		FilePath:      path,
+		RelPath:       filepath.ToSlash(relPath),
+		Size:          info.Size(),
+		MTime:         info.ModTime(),
+		CRC32:         checksums.crc32,
+		SHA1:          checksums.sha1,
+		EmulatorHint:  platform,
+		Compatibility: "unknown",
+	})
+	return err
 }
 
 func listBookPages(path string, ext string) ([]domain.Page, error) {
@@ -222,6 +328,196 @@ func seriesIdentityForRelPath(rootPath string, relPath string) (string, string) 
 	}
 	directoryPath := filepath.ToSlash(dir)
 	return directoryPath, directoryPath
+}
+
+type checksumPair struct {
+	crc32 string
+	sha1  string
+}
+
+func fileChecksums(path string) (checksumPair, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return checksumPair{}, err
+	}
+	defer file.Close()
+
+	crc := crc32.NewIEEE()
+	sha := sha1.New()
+	if _, err := io.Copy(io.MultiWriter(crc, sha), file); err != nil {
+		return checksumPair{}, err
+	}
+	return checksumPair{
+		crc32: fmt.Sprintf("%08x", crc.Sum32()),
+		sha1:  hex.EncodeToString(sha.Sum(nil)),
+	}, nil
+}
+
+func gameTitle(path string) string {
+	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	title = regexp.MustCompile(`\s*\([^)]*\)`).ReplaceAllString(title, "")
+	title = regexp.MustCompile(`\s*\[[^]]*]`).ReplaceAllString(title, "")
+	return strings.TrimSpace(title)
+}
+
+func inferGamePlatform(ext string, relPath string) string {
+	path := strings.ToLower(filepath.ToSlash(relPath))
+	if platform := inferFBNeoPlatform(path); platform != "" {
+		return platform
+	}
+	for _, part := range strings.Split(path, "/") {
+		switch part {
+		case "snes", "super nintendo":
+			return "snes"
+		case "nes", "famicom":
+			return "nes"
+		case "md", "megadrive", "mega drive", "mega-drive":
+			return "md"
+		case "gba", "game boy advance":
+			return "gba"
+		case "gbc", "game boy color":
+			return "gbc"
+		case "gb", "game boy":
+			return "gb"
+		case "nds", "nintendo ds":
+			return "nds"
+		case "3ds", "nintendo 3ds":
+			return "3ds"
+		case "arcade", "mame":
+			return "arcade"
+		case "neogeo", "neo geo", "neo-geo":
+			return "neogeo"
+		case "naomi":
+			return "naomi"
+		case "model3", "model3roms", "model 3", "sega model 3":
+			return "model3"
+		case "32x", "sega 32x":
+			return "32x"
+		case "ss", "saturn", "sega saturn":
+			return "saturn"
+		case "ps1", "psx", "playstation":
+			return "ps1"
+		}
+	}
+	switch ext {
+	case ".sfc", ".smc":
+		return "snes"
+	case ".nes":
+		return "nes"
+	case ".gba":
+		return "gba"
+	case ".gbc":
+		return "gbc"
+	case ".gb":
+		return "gb"
+	case ".nds":
+		return "nds"
+	case ".3ds", ".cia":
+		return "3ds"
+	case ".chd", ".iso", ".bin", ".cue":
+		return "disc"
+	case ".zip", ".7z":
+		return "arcade"
+	default:
+		return "unknown"
+	}
+}
+
+func inferFBNeoPlatform(path string) string {
+	parts := strings.Split(path, "/")
+	for index, part := range parts {
+		if part != "fbneo" || index+1 >= len(parts) {
+			continue
+		}
+		system := parts[index+1]
+		switch system {
+		case "megadrive", "mega drive", "mega-drive", "md":
+			return "md"
+		case "snes", "super nintendo":
+			return "snes"
+		case "nes", "famicom":
+			return "nes"
+		case "neogeo", "neo geo", "neo-geo":
+			return "neogeo"
+		case "naomi":
+			return "naomi"
+		case "model3", "model 3", "sega model 3":
+			return "model3"
+		case "32x", "sega 32x":
+			return "32x"
+		case "arcade":
+			if index+2 < len(parts) {
+				shortName := strings.TrimSuffix(parts[index+2], filepath.Ext(parts[index+2]))
+				if isFBNeoMegaDriveShortName(shortName) {
+					return "md"
+				}
+				if isNeoGeoShortName(shortName) {
+					return "neogeo"
+				}
+			}
+			return "arcade"
+		}
+	}
+	return ""
+}
+
+func isFBNeoMegaDriveShortName(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	prefixes := []string{
+		"shinobi3",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func isNeoGeoShortName(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "neogeo" || name == "mslug" {
+		return true
+	}
+	prefixes := []string{
+		"mslug", "kof", "samsho", "samsh", "aof", "fatfur", "fatfury", "rbff", "garou",
+		"lastblad", "svc", "sengoku", "bstars", "blazstar", "pulstar", "shocktro",
+		"magdrop", "wjammers", "breakers", "matrim", "preisle2", "kizuna", "kabukikl",
+		"ninjamas", "neobombe", "neodrift", "neomrdo", "tws96", "goalx3", "lresort",
+		"viewpoin", "nam1975", "cyberlip", "superspy", "roboarmy", "eightman",
+		"burningf", "crsword", "socbrawl", "mutnat", "mutation", "kotm", "alpham2",
+		"androdun", "zedblade", "strhoop", "turfmast", "puzzledp", "joyjoy", "2020bb",
+		"3countb", "tophuntr", "spinmast", "pbobblen", "popbounc", "panicbom", "nitd",
+		"zupapa", "ganryu", "bangbead", "flipshot", "ssideki", "overtop", "ghostlop",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func inferROMSetName(relPath string) string {
+	parts := strings.Split(filepath.ToSlash(relPath), "/")
+	if len(parts) > 1 {
+		return parts[0]
+	}
+	return ""
+}
+
+func inferRegion(path string) string {
+	lower := strings.ToLower(filepath.Base(path))
+	switch {
+	case strings.Contains(lower, "(usa)") || strings.Contains(lower, "[usa]"):
+		return "USA"
+	case strings.Contains(lower, "(japan)") || strings.Contains(lower, "[japan]"):
+		return "Japan"
+	case strings.Contains(lower, "(europe)") || strings.Contains(lower, "[europe]"):
+		return "Europe"
+	default:
+		return ""
+	}
 }
 
 func classifyWalkError(err error) domain.ErrorCode {

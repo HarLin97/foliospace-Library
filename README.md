@@ -53,11 +53,16 @@ Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/clien
 - `GET /api/client/info`: service metadata, supported formats, and capability flags.
 - `GET /api/client/home`: `continueReading`, `recentBooks`, and `collections` in one response.
 - `GET /api/client/books/:id/manifest`: a client-safe open manifest. CBZ/ZIP books include page URLs; EPUB books include spine, TOC, `resourceBaseUrl`, `coverUrl`, and progress.
+- `GET /api/client/games/:id/manifest`: a client-safe game launch manifest with platform, checksums, emulator hint, and an opaque file URL.
 - `GET/PUT /api/client/books/:id/private-state`: client-safe private status, favorite, rating, tags, and note sync.
 - `GET/PUT /api/client/preferences`: client UI language and reader preference sync.
 - `GET /api/client/search`, `/api/client/books/favorites`, and `/api/client/books/private-status/:status`: private-state-aware discovery shelves.
 
 Client API book and collection responses omit local NAS file paths.
+
+## MCP
+
+Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, preferences, private reader state, progress, scan jobs, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
 
 ## Product Direction
 
@@ -97,8 +102,10 @@ Open `http://localhost:8080`, scan the configured library, then browse collectio
 ## Current MVP Support
 
 - P0 reading formats: `.cbz`, `.zip`, `.epub`.
+- P0 game formats: `.nes`, `.sfc`, `.smc`, `.gba`, `.gb`, `.gbc`, `.nds`, `.3ds`, `.cia`, `.chd`, `.iso`, `.bin`, `.cue`; `.zip` and `.7z` are treated as ROM sets only when the library type is `game`.
 - Series derivation: immediate parent directory, with root-level files grouped under `Unsorted`.
 - Reading: backend streams one ZIP image entry or EPUB resource at a time.
+- Games: backend indexes local ROM metadata and checksums, exposes client-safe launch manifests without NAS paths, and lazily caches supported Libretro boxart under `/config/cache/game-covers`.
 - Errors: empty files, archive open failures, walk errors, and unsupported future categories are recorded as structured rows.
 
 Near-term expansion priority:

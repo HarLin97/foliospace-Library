@@ -79,6 +79,7 @@ Public. Clears the web auth cookie.
 8. Sync progress with `GET /api/books/{bookId}/progress` and `PUT /api/books/{bookId}/progress`.
 9. Sync private state with `GET/PUT /api/client/books/{bookId}/private-state`.
 10. Sync UI language and reader defaults with `GET/PUT /api/client/preferences`.
+11. Open a game with `GET /api/client/games/{gameId}/manifest`, then use `fileUrl` only through the service.
 
 ## Client Endpoints
 
@@ -92,13 +93,15 @@ Response:
 {
   "serviceName": "FolioSpace Library",
   "apiVersion": "v1",
-  "supportedFormats": ["cbz", "zip", "epub"],
+  "supportedFormats": ["cbz", "zip", "epub", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"],
   "capabilities": {
     "clientHome": true,
     "unifiedManifest": true,
     "progressSync": true,
     "epubStreaming": true,
     "pageStreaming": true,
+    "gameShelf": true,
+    "gameCatalog": true,
     "privateState": true,
     "search": true,
     "preferences": true,
@@ -157,6 +160,7 @@ Returns the data needed for a native home screen in one request.
 Query:
 
 - `limit`: optional, default `12`, max `50`. Applies to `continueReading`, `recentBooks`, `favoriteBooks`, and `wantToRead`.
+- `gameShelf` uses the same limit and returns recent local ROM assets.
 
 Response:
 
@@ -185,6 +189,24 @@ Response:
   "recentBooks": [],
   "favoriteBooks": [],
   "wantToRead": [],
+  "gameShelf": [
+    {
+      "id": 12,
+      "assetType": "game",
+      "title": "Super Mario World",
+      "platform": "snes",
+      "romSetName": "SNES",
+      "region": "USA",
+      "format": "sfc",
+      "size": 524288,
+      "crc32": "b19ed489",
+      "sha1": "0123456789abcdef0123456789abcdef01234567",
+      "emulatorHint": "snes",
+      "compatibility": "unknown",
+      "coverUrl": "/api/games/12/cover",
+      "manifestUrl": "/api/client/games/12/manifest"
+    }
+  ],
   "collections": [
     {
       "id": 7,
@@ -197,6 +219,52 @@ Response:
 ```
 
 The client DTO intentionally omits local NAS paths such as `filePath`, `rootPath`, and `directoryPath`.
+
+### `GET /api/client/games`
+
+Returns a paginated client-safe ROM catalog for Vision Pro, iPad, and GameEMU native clients. Use this endpoint for full game directory browsing instead of the limited `gameShelf` on `/api/client/home`.
+
+Query:
+
+- `limit`: optional, default `50`, max `200`. Values above max are clamped and the response returns the actual limit.
+- `offset`: optional, default `0`.
+- `q`: optional search against `title`, `romSetName`, `region`, `platform`, and `format`.
+- `platform`: optional exact platform filter, for example `nes`, `snes`, `gba`, `md`, `neogeo`, `arcade`, or `3ds`.
+- `format`: optional exact format filter, for example `nes`, `sfc`, `gba`, `zip`, or `3ds`.
+- `sort`: optional. Supported values are `recent`, `title`, and `platform`. Unknown values fall back to `recent`.
+
+FBNeo console ROM sets are normalized by source system instead of being merged into `arcade`: `FBNeo/megadrive` returns `md`, `FBNeo/snes` returns `snes`, `FBNeo/nes` returns `nes`, and known Neo Geo shortnames in FBNeo return `neogeo`.
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "id": 18,
+      "assetType": "game",
+      "title": "Super Contra",
+      "platform": "nes",
+      "romSetName": "NES",
+      "region": "Japan",
+      "format": "nes",
+      "size": 262160,
+      "crc32": "9bb6059e",
+      "sha1": "5de393e3ad83e6e185e6d338684d7a4475b7d2ce",
+      "emulatorHint": "nes",
+      "compatibility": "unknown",
+      "coverUrl": "/api/games/18/cover",
+      "manifestUrl": "/api/client/games/18/manifest"
+    }
+  ],
+  "total": 128,
+  "limit": 50,
+  "offset": 0,
+  "hasMore": true
+}
+```
+
+Empty results return `items: []` with `total: 0`; the endpoint does not return 404 for an empty catalog. The `items` DTO is the same client-safe game DTO used by `gameShelf`, and never includes NAS paths, local file paths, or Docker volume paths.
 
 ### `GET /api/client/books/{bookId}/manifest`
 
@@ -306,6 +374,35 @@ Example:
 ```text
 /api/books/84/epub/resources/OPS/text/chapter1.xhtml
 ```
+
+### `GET /api/client/games/{gameId}/manifest`
+
+Returns client-safe game launch metadata. It does not expose the real NAS path.
+
+```json
+{
+  "game": {
+    "id": 12,
+    "assetType": "game",
+    "title": "Super Mario World",
+    "platform": "snes",
+    "romSetName": "SNES",
+    "region": "USA",
+    "format": "sfc",
+    "size": 524288,
+    "crc32": "b19ed489",
+    "sha1": "0123456789abcdef0123456789abcdef01234567",
+    "emulatorHint": "snes",
+    "compatibility": "unknown",
+    "coverUrl": "/api/games/12/cover",
+    "manifestUrl": "/api/client/games/12/manifest"
+  },
+  "fileUrl": "/api/client/games/12/file"
+}
+```
+
+`fileUrl` streams the local file through FolioSpace Library and still requires bearer auth when auth is enabled. Native clients should treat it as an opaque service URL, not as a file path.
+`coverUrl` is optional. For supported retro platforms it streams a cached Libretro boxart image through FolioSpace Library; clients should fall back to their own placeholder when it is absent or returns 404.
 
 ## Private State
 
@@ -560,6 +657,8 @@ For image or EPUB resource loading, make sure the same bearer header is applied.
 ## MCP Opportunities
 
 MCP is useful for assistant-driven operations, diagnostics, and library management. It should not sit in the hot path of the Vision Pro reading UI; the native app should use the HTTP API directly for reading.
+
+The first stdio MCP server is available at `cmd/foliospace-mcp`; usage and integration reference are in [`docs/mcp/usage.md`](../mcp/usage.md).
 
 Good MCP tools:
 

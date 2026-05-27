@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,8 +19,13 @@ func New(db *sql.DB) *Store {
 }
 
 func (s *Store) CreateLibrary(name string, rootPath string) (domain.Library, error) {
-	_, err := s.db.Exec(`INSERT INTO libraries(name, root_path) VALUES(?, ?)
-		ON CONFLICT(root_path) DO UPDATE SET name = excluded.name, updated_at = CURRENT_TIMESTAMP`, name, rootPath)
+	return s.CreateLibraryWithType(name, rootPath, "mixed")
+}
+
+func (s *Store) CreateLibraryWithType(name string, rootPath string, assetType string) (domain.Library, error) {
+	assetType = normalizeLibraryAssetType(assetType)
+	_, err := s.db.Exec(`INSERT INTO libraries(name, root_path, asset_type) VALUES(?, ?, ?)
+		ON CONFLICT(root_path) DO UPDATE SET name = excluded.name, asset_type = excluded.asset_type, updated_at = CURRENT_TIMESTAMP`, name, rootPath, assetType)
 	if err != nil {
 		return domain.Library{}, err
 	}
@@ -27,23 +33,23 @@ func (s *Store) CreateLibrary(name string, rootPath string) (domain.Library, err
 }
 
 func (s *Store) LibraryByID(id int64) (domain.Library, error) {
-	row := s.db.QueryRow(`SELECT id, name, root_path, created_at, updated_at FROM libraries WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, name, root_path, asset_type, created_at, updated_at FROM libraries WHERE id = ?`, id)
 	return scanLibrary(row)
 }
 
 func (s *Store) LibraryByRoot(rootPath string) (domain.Library, error) {
-	row := s.db.QueryRow(`SELECT id, name, root_path, created_at, updated_at FROM libraries WHERE root_path = ?`, rootPath)
+	row := s.db.QueryRow(`SELECT id, name, root_path, asset_type, created_at, updated_at FROM libraries WHERE root_path = ?`, rootPath)
 	return scanLibrary(row)
 }
 
 func (s *Store) ListLibraries() ([]domain.Library, error) {
-	rows, err := s.db.Query(`SELECT id, name, root_path, created_at, updated_at FROM libraries ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, root_path, asset_type, created_at, updated_at FROM libraries ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var out []domain.Library
+	out := make([]domain.Library, 0)
 	for rows.Next() {
 		lib, err := scanLibrary(rows)
 		if err != nil {
@@ -98,6 +104,9 @@ func (s *Store) DeleteLibrary(id int64) error {
 	if _, err := tx.Exec(`DELETE FROM scan_jobs WHERE library_id = ?`, id); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM games WHERE library_id = ?`, id); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM files WHERE library_id = ?`, id); err != nil {
 		return err
 	}
@@ -132,6 +141,18 @@ func (s *Store) UpsertSeries(libraryID int64, title string, directoryPath string
 	return scanSeries(row)
 }
 
+func (s *Store) SeriesByID(id int64) (domain.Series, error) {
+	row := s.db.QueryRow(`SELECT s.id, s.library_id, s.title,
+			COALESCE(NULLIF(s.directory_path, ''), ''),
+			s.collection_type,
+			COUNT(DISTINCT b.id)
+		FROM series s
+		LEFT JOIN books b ON b.series_id = s.id
+		WHERE s.id = ?
+		GROUP BY s.id, s.library_id, s.title`, id)
+	return scanSeries(row)
+}
+
 func (s *Store) ListSeries() ([]domain.Series, error) {
 	rows, err := s.db.Query(`SELECT s.id, s.library_id, s.title,
 			COALESCE(NULLIF(s.directory_path, ''), MIN(CASE
@@ -151,7 +172,7 @@ func (s *Store) ListSeries() ([]domain.Series, error) {
 	}
 	defer rows.Close()
 
-	var out []domain.Series
+	out := make([]domain.Series, 0)
 	for rows.Next() {
 		series, err := scanSeries(rows)
 		if err != nil {
@@ -160,6 +181,46 @@ func (s *Store) ListSeries() ([]domain.Series, error) {
 		out = append(out, series)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListGamePlatformCollections() ([]domain.Series, error) {
+	rows, err := s.db.Query(`SELECT platform, COUNT(*) FROM games GROUP BY platform`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.Series, 0)
+	for rows.Next() {
+		var platform string
+		var count int64
+		if err := rows.Scan(&platform, &count); err != nil {
+			return nil, err
+		}
+		platform = strings.TrimSpace(platform)
+		if platform == "" {
+			platform = "unknown"
+		}
+		out = append(out, domain.Series{
+			ID:             GamePlatformCollectionID(platform),
+			Title:          "Games / " + GamePlatformLabel(platform),
+			DirectoryPath:  "Games",
+			CollectionType: "game_platform",
+			BookCount:      count,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		left := GamePlatformSortRank(platformFromGameCollectionTitle(out[i].Title))
+		right := GamePlatformSortRank(platformFromGameCollectionTitle(out[j].Title))
+		if left != right {
+			return left < right
+		}
+		return out[i].Title < out[j].Title
+	})
+	return out, nil
 }
 
 func (s *Store) DeleteEmptySeries(libraryID int64) error {
@@ -264,7 +325,7 @@ func (s *Store) ListBooks(seriesID int64) ([]domain.Book, error) {
 	}
 	defer rows.Close()
 
-	var out []domain.Book
+	out := make([]domain.Book, 0)
 	for rows.Next() {
 		book, err := scanBook(rows)
 		if err != nil {
@@ -415,7 +476,7 @@ func (s *Store) ListContinueReading(limit int) ([]domain.Book, error) {
 	}
 	defer rows.Close()
 
-	var out []domain.Book
+	out := make([]domain.Book, 0)
 	for rows.Next() {
 		book, err := scanBook(rows)
 		if err != nil {
@@ -438,7 +499,7 @@ func (s *Store) ListRecentBooks(limit int) ([]domain.Book, error) {
 	}
 	defer rows.Close()
 
-	var out []domain.Book
+	out := make([]domain.Book, 0)
 	for rows.Next() {
 		book, err := scanBook(rows)
 		if err != nil {
@@ -483,6 +544,266 @@ func normalizeShelfLimit(limit int) int {
 		return 50
 	}
 	return limit
+}
+
+func (s *Store) UpsertGame(game domain.GameAsset) (domain.GameAsset, error) {
+	game.Platform = strings.TrimSpace(game.Platform)
+	game.ROMSetName = strings.TrimSpace(game.ROMSetName)
+	game.Region = strings.TrimSpace(game.Region)
+	game.Format = strings.TrimSpace(game.Format)
+	game.EmulatorHint = strings.TrimSpace(game.EmulatorHint)
+	if strings.TrimSpace(game.Compatibility) == "" {
+		game.Compatibility = "unknown"
+	}
+	_, err := s.db.Exec(`INSERT INTO games(library_id, title, platform, rom_set_name, region, format, file_path, rel_path, size, mtime, crc32, sha1, emulator_hint, compatibility)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(file_path) DO UPDATE SET library_id = excluded.library_id,
+			title = excluded.title,
+			platform = excluded.platform,
+			rom_set_name = excluded.rom_set_name,
+			region = excluded.region,
+			format = excluded.format,
+			rel_path = excluded.rel_path,
+			size = excluded.size,
+			mtime = excluded.mtime,
+			crc32 = excluded.crc32,
+			sha1 = excluded.sha1,
+			emulator_hint = excluded.emulator_hint,
+			compatibility = excluded.compatibility,
+			updated_at = CURRENT_TIMESTAMP`,
+		game.LibraryID, game.Title, game.Platform, game.ROMSetName, game.Region, game.Format, game.FilePath, game.RelPath, game.Size, game.MTime.Format(time.RFC3339Nano), game.CRC32, game.SHA1, game.EmulatorHint, game.Compatibility)
+	if err != nil {
+		return domain.GameAsset{}, err
+	}
+	return s.GameByPath(game.FilePath)
+}
+
+func (s *Store) GameByID(id int64) (domain.GameAsset, error) {
+	row := s.db.QueryRow(gameSelectSQL()+` WHERE id = ?`, id)
+	return scanGame(row)
+}
+
+func (s *Store) GameByPath(filePath string) (domain.GameAsset, error) {
+	row := s.db.QueryRow(gameSelectSQL()+` WHERE file_path = ?`, filePath)
+	return scanGame(row)
+}
+
+func (s *Store) DeleteGameByPath(filePath string) error {
+	_, err := s.db.Exec(`DELETE FROM games WHERE file_path = ?`, filePath)
+	return err
+}
+
+func (s *Store) ListRecentGames(limit int) ([]domain.GameAsset, error) {
+	limit = normalizeShelfLimit(limit)
+	rows, err := s.db.Query(gameSelectSQL()+` ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanGames(rows)
+}
+
+func (s *Store) ListGamesPage(options domain.GameListOptions) (domain.GameListPage, error) {
+	limit := options.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := options.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	where, args := gameListWhere(options)
+	var total int64
+	countQuery := `SELECT COUNT(*) FROM games` + where
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return domain.GameListPage{}, err
+	}
+
+	queryArgs := append([]any{}, args...)
+	queryArgs = append(queryArgs, limit, offset)
+	rows, err := s.db.Query(gameSelectSQL()+where+gameListOrderBy(options.Sort)+` LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return domain.GameListPage{}, err
+	}
+	defer rows.Close()
+	items, err := scanGames(rows)
+	if err != nil {
+		return domain.GameListPage{}, err
+	}
+	return domain.GameListPage{
+		Items:   items,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+		HasMore: int64(offset+len(items)) < total,
+	}, nil
+}
+
+func (s *Store) ListGamesByROMSet(romSetName string) ([]domain.GameAsset, error) {
+	rows, err := s.db.Query(gameSelectSQL()+` WHERE rom_set_name = ? ORDER BY platform, title`, strings.TrimSpace(romSetName))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanGames(rows)
+}
+
+func (s *Store) ListGamesByPlatform(platform string) ([]domain.GameAsset, error) {
+	rows, err := s.db.Query(gameSelectSQL()+` WHERE platform = ? ORDER BY title`, strings.TrimSpace(platform))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanGames(rows)
+}
+
+func gameListWhere(options domain.GameListOptions) (string, []any) {
+	clauses := make([]string, 0, 3)
+	args := make([]any, 0, 8)
+	if query := strings.TrimSpace(options.Query); query != "" {
+		like := "%" + strings.ToLower(query) + "%"
+		clauses = append(clauses, `(LOWER(title) LIKE ? OR LOWER(rom_set_name) LIKE ? OR LOWER(region) LIKE ? OR LOWER(platform) LIKE ? OR LOWER(format) LIKE ?)`)
+		args = append(args, like, like, like, like, like)
+	}
+	if platform := strings.TrimSpace(options.Platform); platform != "" {
+		clauses = append(clauses, `LOWER(platform) = LOWER(?)`)
+		args = append(args, platform)
+	}
+	if format := strings.TrimSpace(options.Format); format != "" {
+		clauses = append(clauses, `LOWER(format) = LOWER(?)`)
+		args = append(args, format)
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func gameListOrderBy(sort string) string {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "title":
+		return ` ORDER BY LOWER(title), platform, id`
+	case "platform":
+		return ` ORDER BY LOWER(platform), LOWER(title), id`
+	default:
+		return ` ORDER BY updated_at DESC, id DESC`
+	}
+}
+
+func GamePlatformCollectionID(platform string) int64 {
+	return -1000 - int64(GamePlatformSortRank(platform))
+}
+
+func PlatformFromGamePlatformCollectionID(id int64) string {
+	switch id {
+	case GamePlatformCollectionID("nes"):
+		return "nes"
+	case GamePlatformCollectionID("snes"):
+		return "snes"
+	case GamePlatformCollectionID("gb"):
+		return "gb"
+	case GamePlatformCollectionID("gbc"):
+		return "gbc"
+	case GamePlatformCollectionID("gba"):
+		return "gba"
+	case GamePlatformCollectionID("md"):
+		return "md"
+	case GamePlatformCollectionID("neogeo"):
+		return "neogeo"
+	case GamePlatformCollectionID("32x"):
+		return "32x"
+	case GamePlatformCollectionID("model3"):
+		return "model3"
+	case GamePlatformCollectionID("naomi"):
+		return "naomi"
+	case GamePlatformCollectionID("saturn"):
+		return "saturn"
+	case GamePlatformCollectionID("arcade"):
+		return "arcade"
+	default:
+		return ""
+	}
+}
+
+func GamePlatformSortRank(platform string) int {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "nes":
+		return 10
+	case "snes":
+		return 20
+	case "gb":
+		return 30
+	case "gbc":
+		return 40
+	case "gba":
+		return 50
+	case "md", "genesis", "mega-drive", "megadrive":
+		return 60
+	case "32x":
+		return 65
+	case "saturn":
+		return 70
+	case "neogeo":
+		return 80
+	case "model3":
+		return 85
+	case "naomi":
+		return 86
+	case "arcade":
+		return 90
+	default:
+		return 999
+	}
+}
+
+func GamePlatformLabel(platform string) string {
+	value := strings.ToLower(strings.TrimSpace(platform))
+	switch value {
+	case "nes", "snes", "gb", "gbc", "gba":
+		return strings.ToUpper(value)
+	case "md":
+		return "Mega Drive"
+	case "genesis", "mega-drive", "megadrive":
+		return "Mega Drive"
+	case "32x":
+		return "32X"
+	case "neogeo":
+		return "Neo Geo"
+	case "model3":
+		return "Model 3"
+	case "naomi":
+		return "NAOMI"
+	case "saturn":
+		return "Saturn"
+	case "arcade":
+		return "Arcade"
+	default:
+		if value == "" {
+			return "Unknown"
+		}
+		return strings.ToUpper(value[:1]) + value[1:]
+	}
+}
+
+func platformFromGameCollectionTitle(title string) string {
+	return strings.ToLower(strings.TrimPrefix(title, "Games / "))
+}
+
+func (s *Store) CanSkipGame(path string, size int64, mtime time.Time, platform string) bool {
+	game, err := s.GameByPath(path)
+	if err != nil {
+		return false
+	}
+	return game.Size == size &&
+		game.MTime.Equal(mtime) &&
+		game.Platform == platform &&
+		game.EmulatorHint == platform &&
+		game.CRC32 != "" &&
+		game.SHA1 != ""
 }
 
 func scanBooks(rows *sql.Rows) ([]domain.Book, error) {
@@ -559,7 +880,7 @@ func (s *Store) ListPages(bookID int64) ([]domain.Page, error) {
 	}
 	defer rows.Close()
 
-	var out []domain.Page
+	out := make([]domain.Page, 0)
 	for rows.Next() {
 		var page domain.Page
 		if err := rows.Scan(&page.Index, &page.Name); err != nil {
@@ -597,7 +918,7 @@ func (s *Store) ListScanJobs() ([]domain.ScanJob, error) {
 	}
 	defer rows.Close()
 
-	var out []domain.ScanJob
+	out := make([]domain.ScanJob, 0)
 	for rows.Next() {
 		job, err := scanJob(rows)
 		if err != nil {
@@ -620,7 +941,7 @@ func (s *Store) ListJobEvents(jobID int64) ([]domain.JobEvent, error) {
 	}
 	defer rows.Close()
 
-	var out []domain.JobEvent
+	out := make([]domain.JobEvent, 0)
 	for rows.Next() {
 		var event domain.JobEvent
 		var created string
@@ -680,7 +1001,7 @@ func (s *Store) ListFileErrorsByJob(jobID int64) ([]domain.FileError, error) {
 	}
 	defer rows.Close()
 
-	var out []domain.FileError
+	out := make([]domain.FileError, 0)
 	for rows.Next() {
 		var item domain.FileError
 		var code string
@@ -705,12 +1026,22 @@ func scanLibrary(row scanner) (domain.Library, error) {
 	var lib domain.Library
 	var created string
 	var updated string
-	if err := row.Scan(&lib.ID, &lib.Name, &lib.RootPath, &created, &updated); err != nil {
+	if err := row.Scan(&lib.ID, &lib.Name, &lib.RootPath, &lib.AssetType, &created, &updated); err != nil {
 		return lib, err
 	}
+	lib.AssetType = normalizeLibraryAssetType(lib.AssetType)
 	lib.CreatedAt = parseTime(created)
 	lib.UpdatedAt = parseTime(updated)
 	return lib, nil
+}
+
+func normalizeLibraryAssetType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "book", "comic", "game":
+		return strings.TrimSpace(value)
+	default:
+		return "mixed"
+	}
 }
 
 func scanSeries(row scanner) (domain.Series, error) {
@@ -817,6 +1148,57 @@ func scanFile(row scanner) (domain.File, error) {
 	}
 	file.MTime = parseTime(mtime)
 	return file, nil
+}
+
+func gameSelectSQL() string {
+	return `SELECT id, library_id, title, platform, rom_set_name, region, format, file_path, rel_path, size, mtime, crc32, sha1, emulator_hint, compatibility, last_played_at, created_at, updated_at FROM games`
+}
+
+func scanGames(rows *sql.Rows) ([]domain.GameAsset, error) {
+	out := make([]domain.GameAsset, 0)
+	for rows.Next() {
+		game, err := scanGame(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, game)
+	}
+	return out, rows.Err()
+}
+
+func scanGame(row scanner) (domain.GameAsset, error) {
+	var game domain.GameAsset
+	var mtime string
+	var lastPlayedAt string
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(
+		&game.ID,
+		&game.LibraryID,
+		&game.Title,
+		&game.Platform,
+		&game.ROMSetName,
+		&game.Region,
+		&game.Format,
+		&game.FilePath,
+		&game.RelPath,
+		&game.Size,
+		&mtime,
+		&game.CRC32,
+		&game.SHA1,
+		&game.EmulatorHint,
+		&game.Compatibility,
+		&lastPlayedAt,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return game, err
+	}
+	game.MTime = parseTime(mtime)
+	game.LastPlayedAt = parseTime(lastPlayedAt)
+	game.CreatedAt = parseTime(createdAt)
+	game.UpdatedAt = parseTime(updatedAt)
+	return game, nil
 }
 
 func scanJob(row scanner) (domain.ScanJob, error) {

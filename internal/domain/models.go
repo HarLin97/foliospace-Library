@@ -22,6 +22,7 @@ type Library struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
 	RootPath  string    `json:"rootPath"`
+	AssetType string    `json:"assetType"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -74,6 +75,28 @@ type ClientPreferences struct {
 	EPUBFontSize   int    `json:"epubFontSize"`
 }
 
+type GameAsset struct {
+	ID            int64     `json:"id"`
+	LibraryID     int64     `json:"libraryId"`
+	Title         string    `json:"title"`
+	Platform      string    `json:"platform"`
+	ROMSetName    string    `json:"romSetName"`
+	Region        string    `json:"region"`
+	Format        string    `json:"format"`
+	FilePath      string    `json:"filePath,omitempty"`
+	RelPath       string    `json:"relPath,omitempty"`
+	Size          int64     `json:"size"`
+	MTime         time.Time `json:"mtime"`
+	CRC32         string    `json:"crc32"`
+	SHA1          string    `json:"sha1"`
+	EmulatorHint  string    `json:"emulatorHint"`
+	Compatibility string    `json:"compatibility"`
+	CoverURL      string    `json:"coverUrl,omitempty"`
+	LastPlayedAt  time.Time `json:"lastPlayedAt,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
 type BookListOptions struct {
 	SeriesID int64
 	Limit    int
@@ -88,6 +111,28 @@ type BookListPage struct {
 	Limit   int    `json:"limit"`
 	Offset  int    `json:"offset"`
 	HasMore bool   `json:"hasMore"`
+}
+
+type GameListOptions struct {
+	Limit    int
+	Offset   int
+	Query    string
+	Platform string
+	Format   string
+	Sort     string
+}
+
+type GameListPage struct {
+	Items   []GameAsset `json:"items"`
+	Total   int64       `json:"total"`
+	Limit   int         `json:"limit"`
+	Offset  int         `json:"offset"`
+	HasMore bool        `json:"hasMore"`
+}
+
+type CollectionAssets struct {
+	Books []Book      `json:"books"`
+	Games []GameAsset `json:"games"`
 }
 
 type File struct {

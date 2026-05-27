@@ -132,6 +132,95 @@ func TestStorePersistsClientPreferences(t *testing.T) {
 	}
 }
 
+func TestStorePersistsAndListsGameAssets(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := s.UpsertGame(domain.GameAsset{
+		LibraryID:     lib.ID,
+		Title:         "Super Mario World",
+		Platform:      "snes",
+		Format:        "sfc",
+		FilePath:      "/library/SNES/Super Mario World.sfc",
+		RelPath:       "SNES/Super Mario World.sfc",
+		Size:          1024,
+		MTime:         time.Unix(20, 0),
+		CRC32:         "b19ed489",
+		SHA1:          "0123456789abcdef0123456789abcdef01234567",
+		Region:        "USA",
+		ROMSetName:    "No-Intro",
+		EmulatorHint:  "snes",
+		Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GameByID(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "Super Mario World" || got.Platform != "snes" || got.CRC32 != "b19ed489" || got.SHA1 == "" {
+		t.Fatalf("game = %#v, want persisted game metadata", got)
+	}
+
+	recent, err := s.ListRecentGames(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 1 || recent[0].ID != game.ID || recent[0].FilePath == "" {
+		t.Fatalf("recent games = %#v, want indexed game with internal path", recent)
+	}
+}
+
+func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedGames := []domain.GameAsset{
+		{LibraryID: lib.ID, Title: "Super Contra", Platform: "nes", ROMSetName: "NES", Region: "Japan", Format: "nes", FilePath: "/library/nes/super-contra.nes", RelPath: "nes/super-contra.nes", Size: 262160, MTime: time.Unix(30, 0), CRC32: "9bb6059e", SHA1: "5de393e3ad83e6e185e6d338684d7a4475b7d2ce", EmulatorHint: "nes", Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Advance Wars", Platform: "gba", ROMSetName: "GBA", Region: "USA", Format: "gba", FilePath: "/library/gba/advance-wars.gba", RelPath: "gba/advance-wars.gba", Size: 1024, MTime: time.Unix(31, 0), CRC32: "11111111", SHA1: "1111111111111111111111111111111111111111", EmulatorHint: "gba", Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Metal Slug", Platform: "arcade", ROMSetName: "MAME", Region: "World", Format: "zip", FilePath: "/library/arcade/mslug.zip", RelPath: "arcade/mslug.zip", Size: 2048, MTime: time.Unix(32, 0), CRC32: "22222222", SHA1: "2222222222222222222222222222222222222222", EmulatorHint: "arcade", Compatibility: "unknown"},
+	}
+	for _, game := range seedGames {
+		if _, err := s.UpsertGame(game); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page, err := s.ListGamesPage(domain.GameListOptions{Limit: 2, Offset: 0, Sort: "title"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 || page.Total != 3 || !page.HasMore || page.Items[0].Title != "Advance Wars" || page.Limit != 2 {
+		t.Fatalf("page = %#v, want title-sorted first page with total and hasMore", page)
+	}
+
+	filtered, err := s.ListGamesPage(domain.GameListOptions{Limit: 50, Query: "japan", Platform: "nes", Format: "nes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Items) != 1 || filtered.Items[0].Title != "Super Contra" || filtered.HasMore {
+		t.Fatalf("filtered page = %#v, want Super Contra only", filtered)
+	}
+}
+
 func TestStoreListsBooksPageWithSearchAndSort(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

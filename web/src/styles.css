@@ -13,6 +13,27 @@ body {
   margin: 0;
 }
 
+.bootError {
+  display: grid;
+  min-height: 100vh;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px;
+  background: #f7f4f4;
+  color: #301f1f;
+}
+
+.bootError pre {
+  max-width: min(720px, 100%);
+  overflow: auto;
+  border: 1px solid #dfc8c8;
+  border-radius: 8px;
+  background: #fffafa;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
 button,
 input,
 select {
@@ -432,18 +453,76 @@ h1 {
 
 .libraryForm {
   display: grid;
-  grid-template-columns: minmax(90px, 0.45fr) minmax(160px, 1fr) auto;
+  grid-template-columns: minmax(90px, 0.45fr) minmax(160px, 1fr) minmax(92px, 0.4fr) auto;
   gap: 8px;
   border-bottom: 1px solid #eef2f3;
   padding-bottom: 12px;
   margin-bottom: 4px;
 }
 
-.libraryForm input {
+.libraryForm input,
+.libraryForm select {
   min-width: 0;
   border: 1px solid #ccd4d8;
   border-radius: 6px;
   padding: 8px 9px;
+}
+
+.gameCover {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 3 / 4.15;
+  background:
+    linear-gradient(135deg, rgba(51, 127, 146, 0.92), rgba(31, 42, 46, 0.95)),
+    #337f92;
+  color: #ffffff;
+  text-align: center;
+}
+
+.gameCover img {
+  grid-area: 1 / 1;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gameCover span {
+  grid-area: 1 / 1;
+  z-index: 1;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.gameCoverTitle {
+  grid-area: 1 / 1;
+  align-self: center;
+  justify-self: center;
+  max-width: 86%;
+  min-height: auto;
+  color: #ffffff;
+  font-size: 16px;
+  letter-spacing: 0;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: normal;
+}
+
+.gameCoverPlatform {
+  align-self: start;
+  margin-top: 18px;
+}
+
+.gameCoverFormat {
+  align-self: end;
+  margin-bottom: 18px;
+  opacity: 0.82;
 }
 
 .row,
