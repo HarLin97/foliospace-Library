@@ -111,6 +111,27 @@ type GameAsset struct {
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
+type VideoAsset struct {
+	ID              int64     `json:"id"`
+	LibraryID       int64     `json:"libraryId"`
+	Title           string    `json:"title"`
+	Format          string    `json:"format"`
+	FilePath        string    `json:"filePath,omitempty"`
+	RelPath         string    `json:"relPath,omitempty"`
+	Size            int64     `json:"size"`
+	MTime           time.Time `json:"mtime"`
+	DurationSeconds float64   `json:"durationSeconds"`
+	Width           int       `json:"width"`
+	Height          int       `json:"height"`
+	VideoCodec      string    `json:"videoCodec"`
+	AudioCodec      string    `json:"audioCodec"`
+	ThumbnailStatus string    `json:"thumbnailStatus"`
+	ThumbnailURL    string    `json:"thumbnailUrl,omitempty"`
+	LastPlayedAt    time.Time `json:"lastPlayedAt,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
 type BookListOptions struct {
 	SeriesID int64
 	Limit    int
@@ -144,9 +165,26 @@ type GameListPage struct {
 	HasMore bool        `json:"hasMore"`
 }
 
+type VideoListOptions struct {
+	Limit  int
+	Offset int
+	Query  string
+	Format string
+	Sort   string
+}
+
+type VideoListPage struct {
+	Items   []VideoAsset `json:"items"`
+	Total   int64        `json:"total"`
+	Limit   int          `json:"limit"`
+	Offset  int          `json:"offset"`
+	HasMore bool         `json:"hasMore"`
+}
+
 type CollectionAssets struct {
-	Books []Book      `json:"books"`
-	Games []GameAsset `json:"games"`
+	Books  []Book       `json:"books"`
+	Games  []GameAsset  `json:"games"`
+	Videos []VideoAsset `json:"videos"`
 }
 
 type File struct {

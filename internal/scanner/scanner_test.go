@@ -413,6 +413,60 @@ func TestScanLibraryIndexesGameROMMetadata(t *testing.T) {
 	}
 }
 
+func TestScanLibraryIndexesVideoMetadata(t *testing.T) {
+	root := t.TempDir()
+	videoPath := filepath.Join(root, "Movies", "Demo.Movie.mp4")
+	if err := os.MkdirAll(filepath.Dir(videoPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(videoPath, []byte("video-body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Movies", root, "video")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.IndexedFiles != 1 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want one indexed video and no errors", job)
+	}
+
+	videos, err := st.ListRecentVideos(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(videos) != 1 {
+		t.Fatalf("videos len = %d, want 1", len(videos))
+	}
+	video := videos[0]
+	if video.Title != "Demo Movie" || video.Format != "mp4" || video.Size != int64(len("video-body")) || video.ThumbnailStatus != "placeholder" {
+		t.Fatalf("video = %#v, want inferred video metadata", video)
+	}
+	if video.FilePath == "" {
+		t.Fatalf("video file path is empty, scanner should keep internal path")
+	}
+
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.SkippedFiles != 1 || secondJob.IndexedFiles != 0 {
+		t.Fatalf("second job = %#v, want unchanged video skipped", secondJob)
+	}
+}
+
 func TestScanLibraryTreatsZipAsGameWhenLibraryIsGameTyped(t *testing.T) {
 	root := t.TempDir()
 	makeZip(t, filepath.Join(root, "Arcade", "mslug.zip"), map[string]string{"mslug.rom": "rom"})

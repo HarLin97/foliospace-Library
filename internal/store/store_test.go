@@ -320,6 +320,62 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	}
 }
 
+func TestStorePersistsAndListsVideoAssets(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibraryWithType("Movies", "/library", "video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	video, err := s.UpsertVideo(domain.VideoAsset{
+		LibraryID:       lib.ID,
+		Title:           "Demo Movie",
+		Format:          "mp4",
+		FilePath:        "/library/Movies/Demo Movie.mp4",
+		RelPath:         "Movies/Demo Movie.mp4",
+		Size:            4096,
+		MTime:           time.Unix(40, 0),
+		DurationSeconds: 120.5,
+		Width:           1920,
+		Height:          1080,
+		VideoCodec:      "h264",
+		AudioCodec:      "aac",
+		ThumbnailStatus: "placeholder",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.VideoByID(video.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "Demo Movie" || got.Format != "mp4" || got.Width != 1920 || got.FilePath == "" {
+		t.Fatalf("video = %#v, want persisted video metadata", got)
+	}
+
+	recent, err := s.ListRecentVideos(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 1 || recent[0].ID != video.ID {
+		t.Fatalf("recent videos = %#v, want indexed video", recent)
+	}
+
+	page, err := s.ListVideosPage(domain.VideoListOptions{Limit: 1, Query: "demo", Format: "mp4", Sort: "title"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Total != 1 || page.HasMore {
+		t.Fatalf("video page = %#v, want one matching video", page)
+	}
+}
+
 func TestStoreListsBooksPageWithSearchAndSort(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

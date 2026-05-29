@@ -27,6 +27,8 @@ func TestServerListsTools(t *testing.T) {
 	if !strings.Contains(body, "foliospace.client_info") ||
 		!strings.Contains(body, "foliospace.list_games") ||
 		!strings.Contains(body, "foliospace.open_game_manifest") ||
+		!strings.Contains(body, "foliospace.list_videos") ||
+		!strings.Contains(body, "foliospace.open_video_manifest") ||
 		!strings.Contains(body, "foliospace.list_favorites") ||
 		!strings.Contains(body, "foliospace.get_scan_settings") ||
 		!strings.Contains(body, "foliospace.save_scan_settings") ||
@@ -106,6 +108,38 @@ func TestServerCallsClientGamesTool(t *testing.T) {
 	}
 	if gotPath != "/api/client/games?format=nes&limit=50&offset=100&platform=nes&q=contra&sort=title" {
 		t.Fatalf("path = %s, want client games query", gotPath)
+	}
+}
+
+func TestServerCallsClientVideosTools(t *testing.T) {
+	var paths []string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.RequestURI())
+		if strings.Contains(r.URL.Path, "/manifest") {
+			return jsonResponse(`{"video":{"id":21},"fileUrl":"/api/client/videos/21/file"}`), nil
+		}
+		return jsonResponse(`{"items":[],"total":0,"limit":50,"offset":0,"hasMore":false}`), nil
+	})}
+
+	listResponse := server.Handle(context.Background(), toolCall(t, "foliospace.list_videos", map[string]any{
+		"limit":  50,
+		"offset": 100,
+		"q":      "movie",
+		"format": "mp4",
+		"sort":   "title",
+	}))
+	if listResponse.Error != nil {
+		t.Fatalf("list videos error = %#v", listResponse.Error)
+	}
+	manifestResponse := server.Handle(context.Background(), toolCall(t, "foliospace.open_video_manifest", map[string]any{"videoId": 21}))
+	if manifestResponse.Error != nil {
+		t.Fatalf("open video manifest error = %#v", manifestResponse.Error)
+	}
+
+	want := "/api/client/videos?format=mp4&limit=50&offset=100&q=movie&sort=title\n/api/client/videos/21/manifest"
+	if got := strings.Join(paths, "\n"); got != want {
+		t.Fatalf("paths = %q, want %q", got, want)
 	}
 }
 

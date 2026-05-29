@@ -3,7 +3,7 @@ import type { FormEvent, MouseEvent, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, FileError, GameAsset, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken, SetupStatus, ScanSettings } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, FileError, GameAsset, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken, SetupStatus, ScanSettings, VideoAsset } from "./api";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -12,7 +12,7 @@ type ReaderPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
-type LibraryAssetType = "mixed" | "book" | "comic" | "game";
+type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
 const bookPageSize = 60;
 
 export function App() {
@@ -26,6 +26,7 @@ export function App() {
   const [favoriteBooks, setFavoriteBooks] = useState<Book[]>([]);
   const [wantBooks, setWantBooks] = useState<Book[]>([]);
   const [gameShelf, setGameShelf] = useState<GameAsset[]>([]);
+  const [videoShelf, setVideoShelf] = useState<VideoAsset[]>([]);
   const [collectionGames, setCollectionGames] = useState<GameAsset[]>([]);
   const [jobs, setJobs] = useState<ScanJob[]>([]);
   const [errors, setErrors] = useState<FileError[]>([]);
@@ -111,7 +112,7 @@ export function App() {
     if (showProgress) {
       setActiveTask("Refreshing library");
     }
-    const [preferences, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf] = await Promise.all([
+    const [preferences, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf] = await Promise.all([
       api.clientPreferences(),
       api.scanSettings(),
       api.libraries(),
@@ -123,6 +124,7 @@ export function App() {
       api.favoriteBooks(),
       api.privateStatusBooks("want"),
       api.recentGames(),
+      api.recentVideos(),
     ]);
     applyClientPreferences(preferences);
     preferencesLoaded.current = true;
@@ -137,6 +139,7 @@ export function App() {
     setFavoriteBooks(arrayOrEmpty(nextFavoriteBooks));
     setWantBooks(arrayOrEmpty(nextWantBooks));
     setGameShelf(arrayOrEmpty(nextGameShelf));
+    setVideoShelf(arrayOrEmpty(nextVideoShelf));
     if (showProgress) {
       setActiveTask(null);
     }
@@ -1080,6 +1083,7 @@ export function App() {
                   <option value="comic">{t.assetTypeComic}</option>
                   <option value="book">{t.assetTypeBook}</option>
                   <option value="game">{t.assetTypeGame}</option>
+                  <option value="video">{t.assetTypeVideo}</option>
                 </select>
                 <button disabled={!newLibraryPath.trim()}>{t.add}</button>
               </form>
@@ -1099,7 +1103,7 @@ export function App() {
               </div>
             </section>
 
-            {(continueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || recentBooks.length > 0) && (
+            {(continueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || videoShelf.length > 0 || recentBooks.length > 0) && (
               <section className="homeRows quickShelfPanel panel wide" aria-label="Reading shortcuts">
                 <div className="quickShelfColumn">
                   {continueBooks.length > 0 && (
@@ -1139,6 +1143,14 @@ export function App() {
                       subtitle={t.gameShelfSubtitle}
                       games={gameShelf.slice(0, 4)}
                       meta={(game) => gameMeta(game, t)}
+                    />
+                  )}
+                  {videoShelf.length > 0 && (
+                    <VideoShelf
+                      title={t.videoShelf}
+                      subtitle={t.videoShelfSubtitle}
+                      videos={videoShelf.slice(0, 4)}
+                      meta={(video) => videoMeta(video, t)}
                     />
                   )}
                   {recentBooks.length > 0 && (
@@ -1649,6 +1661,7 @@ export function App() {
                 <option value="comic">{t.assetTypeComic}</option>
                 <option value="book">{t.assetTypeBook}</option>
                 <option value="game">{t.assetTypeGame}</option>
+                <option value="video">{t.assetTypeVideo}</option>
               </select>
             </label>
             <label>
@@ -1983,6 +1996,47 @@ function GameTile({ game, meta, className = "book" }: { game: GameAsset; meta: s
         <span className="gameCoverFormat">{game.format.toUpperCase()}</span>
       </span>
       <strong>{game.title}</strong>
+      <small>{meta}</small>
+    </button>
+  );
+}
+
+function VideoShelf({
+  title,
+  subtitle,
+  videos,
+  meta,
+}: {
+  title: string;
+  subtitle: string;
+  videos: VideoAsset[];
+  meta: (video: VideoAsset) => string;
+}) {
+  return (
+    <div className="bookShelf videoShelf">
+      <div className="bookShelfHeader">
+        <div>
+          <h1>{title}</h1>
+          <small>{subtitle}</small>
+        </div>
+      </div>
+      <div className="shelfScroller">
+        {videos.map((video) => (
+          <VideoTile className="shelfBook" key={`video-${video.id}`} video={video} meta={meta(video)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VideoTile({ video, meta, className = "book" }: { video: VideoAsset; meta: string; className?: string }) {
+  return (
+    <button className={`${className} videoCard`} title={video.title}>
+      <span className="shelfCover videoCover">
+        <img src={video.thumbnailUrl} alt="" loading="lazy" />
+        <span className="videoCoverFormat">{video.format.toUpperCase()}</span>
+      </span>
+      <strong>{video.title}</strong>
       <small>{meta}</small>
     </button>
   );
@@ -2334,12 +2388,15 @@ const translations = {
     wantSubtitle: "稍后再读",
     gameShelf: "游戏库",
     gameShelfSubtitle: "本地 ROM 与 ROM set",
+    videoShelf: "视频库",
+    videoShelfSubtitle: "本地视频文件与空间媒体入口",
     recentSubtitle: "最近入库",
     libraryAssetType: "目录类型",
     assetTypeMixed: "自动",
     assetTypeBook: "书籍",
     assetTypeComic: "漫画",
     assetTypeGame: "游戏",
+    assetTypeVideo: "视频",
     comicCollections: "漫画",
     bookCollections: "书籍",
     gameCollections: "游戏",
@@ -2455,12 +2512,15 @@ const translations = {
     wantSubtitle: "稍後再讀",
     gameShelf: "遊戲庫",
     gameShelfSubtitle: "本地 ROM 與 ROM set",
+    videoShelf: "影片庫",
+    videoShelfSubtitle: "本地影片檔與空間媒體入口",
     recentSubtitle: "最近入庫",
     libraryAssetType: "目錄類型",
     assetTypeMixed: "自動",
     assetTypeBook: "書籍",
     assetTypeComic: "漫畫",
     assetTypeGame: "遊戲",
+    assetTypeVideo: "影片",
     comicCollections: "漫畫",
     bookCollections: "書籍",
     gameCollections: "遊戲",
@@ -2576,12 +2636,15 @@ const translations = {
     wantSubtitle: "Queued for later",
     gameShelf: "Game Shelf",
     gameShelfSubtitle: "Local ROMs and ROM sets",
+    videoShelf: "Video Shelf",
+    videoShelfSubtitle: "Local video files and spatial media entry points",
     recentSubtitle: "Newest indexed volumes",
     libraryAssetType: "Library type",
     assetTypeMixed: "Auto",
     assetTypeBook: "Books",
     assetTypeComic: "Comics",
     assetTypeGame: "Games",
+    assetTypeVideo: "Videos",
     comicCollections: "Comics",
     bookCollections: "Books",
     gameCollections: "Games",
@@ -2697,12 +2760,15 @@ const translations = {
     wantSubtitle: "あとで読む",
     gameShelf: "ゲーム棚",
     gameShelfSubtitle: "ローカル ROM と ROM set",
+    videoShelf: "ビデオ棚",
+    videoShelfSubtitle: "ローカル動画と空間メディアの入口",
     recentSubtitle: "最近追加",
     libraryAssetType: "ライブラリ種別",
     assetTypeMixed: "自動",
     assetTypeBook: "書籍",
     assetTypeComic: "漫画",
     assetTypeGame: "ゲーム",
+    assetTypeVideo: "ビデオ",
     comicCollections: "漫画",
     bookCollections: "書籍",
     gameCollections: "ゲーム",
@@ -2818,12 +2884,15 @@ const translations = {
     wantSubtitle: "나중에 읽기",
     gameShelf: "게임 선반",
     gameShelfSubtitle: "로컬 ROM 및 ROM set",
+    videoShelf: "비디오 선반",
+    videoShelfSubtitle: "로컬 비디오 파일과 공간 미디어 진입점",
     recentSubtitle: "최근 인덱싱된 항목",
     libraryAssetType: "라이브러리 유형",
     assetTypeMixed: "자동",
     assetTypeBook: "도서",
     assetTypeComic: "만화",
     assetTypeGame: "게임",
+    assetTypeVideo: "비디오",
     comicCollections: "만화",
     bookCollections: "도서",
     gameCollections: "게임",
@@ -3087,6 +3156,26 @@ function gameMeta(game: GameAsset, t: Translation) {
     .join(" · ") || t.assetTypeGame;
 }
 
+function videoMeta(video: VideoAsset, t: Translation) {
+  const parts = [video.format.toUpperCase()];
+  if (video.width > 0 && video.height > 0) {
+    parts.push(`${video.width}x${video.height}`);
+  }
+  if (video.durationSeconds > 0) {
+    parts.push(formatDuration(video.durationSeconds));
+  }
+  return parts.join(" · ") || t.assetTypeVideo;
+}
+
+function formatDuration(seconds: number) {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
 function libraryAssetTypeLabel(value: string | undefined, t: Translation) {
   switch (value) {
     case "book":
@@ -3095,6 +3184,8 @@ function libraryAssetTypeLabel(value: string | undefined, t: Translation) {
       return t.assetTypeComic;
     case "game":
       return t.assetTypeGame;
+    case "video":
+      return t.assetTypeVideo;
     default:
       return t.assetTypeMixed;
   }

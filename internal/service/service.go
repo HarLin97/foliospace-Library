@@ -460,12 +460,24 @@ func (s *Service) RecentGames(limit int) ([]domain.GameAsset, error) {
 	return s.store.ListRecentGames(limit)
 }
 
+func (s *Service) RecentVideos(limit int) ([]domain.VideoAsset, error) {
+	return s.store.ListRecentVideos(limit)
+}
+
 func (s *Service) ListGamesPage(options domain.GameListOptions) (domain.GameListPage, error) {
 	return s.store.ListGamesPage(options)
 }
 
+func (s *Service) ListVideosPage(options domain.VideoListOptions) (domain.VideoListPage, error) {
+	return s.store.ListVideosPage(options)
+}
+
 func (s *Service) Game(id int64) (domain.GameAsset, error) {
 	return s.store.GameByID(id)
+}
+
+func (s *Service) Video(id int64) (domain.VideoAsset, error) {
+	return s.store.VideoByID(id)
 }
 
 func (s *Service) OpenGameCover(id int64) (PageStream, error) {
@@ -520,6 +532,17 @@ func (s *Service) OpenGameFile(id int64) (PageStream, error) {
 		return PageStream{}, err
 	}
 	return PageStream{Body: body, ContentType: "application/octet-stream"}, nil
+}
+
+func (s *Service) VideoFilePath(id int64) (string, error) {
+	video, err := s.store.VideoByID(id)
+	if err != nil {
+		return "", err
+	}
+	if video.FilePath == "" {
+		return "", fmt.Errorf("video has no indexed file")
+	}
+	return video.FilePath, nil
 }
 
 func (s *Service) FavoriteBooks(limit int) ([]domain.Book, error) {

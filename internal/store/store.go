@@ -123,6 +123,9 @@ func (s *Store) DeleteLibrary(id int64) error {
 	if _, err := tx.Exec(`DELETE FROM games WHERE library_id = ?`, id); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM videos WHERE library_id = ?`, id); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM files WHERE library_id = ?`, id); err != nil {
 		return err
 	}
@@ -154,7 +157,7 @@ func (s *Store) UpsertSeries(libraryID int64, title string, directoryPath string
 		return domain.Series{}, err
 	}
 	row := s.db.QueryRow(`SELECT s.id, s.library_id, s.title, s.directory_path, s.collection_type,
-			CASE WHEN l.asset_type IN ('book', 'comic', 'game') THEN l.asset_type ELSE 'comic' END,
+			CASE WHEN l.asset_type IN ('book', 'comic', 'game', 'video') THEN l.asset_type ELSE 'comic' END,
 			0
 		FROM series s
 		JOIN libraries l ON l.id = s.library_id
@@ -167,7 +170,7 @@ func (s *Store) SeriesByID(id int64) (domain.Series, error) {
 			COALESCE(NULLIF(s.directory_path, ''), ''),
 			s.collection_type,
 			CASE
-				WHEN l.asset_type IN ('book', 'comic', 'game') THEN l.asset_type
+				WHEN l.asset_type IN ('book', 'comic', 'game', 'video') THEN l.asset_type
 				WHEN SUM(CASE WHEN b.format IN ('epub', 'pdf') THEN 1 ELSE 0 END) > SUM(CASE WHEN b.format IN ('cbz', 'zip', 'cbr', 'rar', '7z') THEN 1 ELSE 0 END) THEN 'book'
 				ELSE 'comic'
 			END,
@@ -189,7 +192,7 @@ func (s *Store) ListSeries() ([]domain.Series, error) {
 			END), ''),
 			s.collection_type,
 			CASE
-				WHEN l.asset_type IN ('book', 'comic', 'game') THEN l.asset_type
+				WHEN l.asset_type IN ('book', 'comic', 'game', 'video') THEN l.asset_type
 				WHEN SUM(CASE WHEN b.format IN ('epub', 'pdf') THEN 1 ELSE 0 END) > SUM(CASE WHEN b.format IN ('cbz', 'zip', 'cbr', 'rar', '7z') THEN 1 ELSE 0 END) THEN 'book'
 				ELSE 'comic'
 			END,
@@ -317,6 +320,17 @@ func (s *Store) DeleteSkippedDirectoryEntries(libraryID int64, names []string) (
 		return 0, err
 	}
 
+	videoConditions, videoArgs := skippedDirectoryConditions("rel_path", names)
+	videoArgs = append([]any{libraryID}, videoArgs...)
+	videoRes, err := tx.Exec(`DELETE FROM videos WHERE library_id = ? AND (`+videoConditions+`)`, videoArgs...)
+	if err != nil {
+		return 0, err
+	}
+	deletedVideos, err := videoRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
 	errorConditions, errorArgs := skippedDirectoryConditions("path", names)
 	errorArgs = append([]any{libraryID}, errorArgs...)
 	if _, err := tx.Exec(`DELETE FROM file_errors WHERE library_id = ? AND (`+errorConditions+`)`, errorArgs...); err != nil {
@@ -344,7 +358,7 @@ func (s *Store) DeleteSkippedDirectoryEntries(libraryID int64, names []string) (
 		AND id NOT IN (SELECT DISTINCT series_id FROM books)`, libraryID); err != nil {
 		return 0, err
 	}
-	return deletedFiles + deletedGames, tx.Commit()
+	return deletedFiles + deletedGames + deletedVideos, tx.Commit()
 }
 
 func skippedDirectoryConditions(column string, names []string) (string, []any) {
@@ -839,6 +853,106 @@ func (s *Store) ListGamesByPlatform(platform string) ([]domain.GameAsset, error)
 	return scanGames(rows)
 }
 
+func (s *Store) UpsertVideo(video domain.VideoAsset) (domain.VideoAsset, error) {
+	video.Format = strings.TrimSpace(video.Format)
+	video.VideoCodec = strings.TrimSpace(video.VideoCodec)
+	video.AudioCodec = strings.TrimSpace(video.AudioCodec)
+	if strings.TrimSpace(video.ThumbnailStatus) == "" {
+		video.ThumbnailStatus = "placeholder"
+	}
+	_, err := s.db.Exec(`INSERT INTO videos(library_id, title, format, file_path, rel_path, size, mtime, duration_seconds, width, height, video_codec, audio_codec, thumbnail_status)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(file_path) DO UPDATE SET library_id = excluded.library_id,
+			title = excluded.title,
+			format = excluded.format,
+			rel_path = excluded.rel_path,
+			size = excluded.size,
+			mtime = excluded.mtime,
+			duration_seconds = excluded.duration_seconds,
+			width = excluded.width,
+			height = excluded.height,
+			video_codec = excluded.video_codec,
+			audio_codec = excluded.audio_codec,
+			thumbnail_status = excluded.thumbnail_status,
+			updated_at = CURRENT_TIMESTAMP`,
+		video.LibraryID, video.Title, video.Format, video.FilePath, video.RelPath, video.Size, video.MTime.Format(time.RFC3339Nano), video.DurationSeconds, video.Width, video.Height, video.VideoCodec, video.AudioCodec, video.ThumbnailStatus)
+	if err != nil {
+		return domain.VideoAsset{}, err
+	}
+	return s.VideoByPath(video.FilePath)
+}
+
+func (s *Store) VideoByID(id int64) (domain.VideoAsset, error) {
+	row := s.db.QueryRow(videoSelectSQL()+` WHERE id = ?`, id)
+	return scanVideo(row)
+}
+
+func (s *Store) VideoByPath(filePath string) (domain.VideoAsset, error) {
+	row := s.db.QueryRow(videoSelectSQL()+` WHERE file_path = ?`, filePath)
+	return scanVideo(row)
+}
+
+func (s *Store) DeleteVideoByPath(filePath string) error {
+	_, err := s.db.Exec(`DELETE FROM videos WHERE file_path = ?`, filePath)
+	return err
+}
+
+func (s *Store) CanSkipVideo(path string, size int64, mtime time.Time) bool {
+	video, err := s.VideoByPath(path)
+	if err != nil {
+		return false
+	}
+	return video.Size == size && video.MTime.Equal(mtime)
+}
+
+func (s *Store) ListRecentVideos(limit int) ([]domain.VideoAsset, error) {
+	limit = normalizeShelfLimit(limit)
+	rows, err := s.db.Query(videoSelectSQL()+` ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanVideos(rows)
+}
+
+func (s *Store) ListVideosPage(options domain.VideoListOptions) (domain.VideoListPage, error) {
+	limit := options.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := options.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	where, args := videoListWhere(options)
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM videos`+where, args...).Scan(&total); err != nil {
+		return domain.VideoListPage{}, err
+	}
+	queryArgs := append([]any{}, args...)
+	queryArgs = append(queryArgs, limit, offset)
+	rows, err := s.db.Query(videoSelectSQL()+where+videoListOrderBy(options.Sort)+` LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return domain.VideoListPage{}, err
+	}
+	defer rows.Close()
+	items, err := scanVideos(rows)
+	if err != nil {
+		return domain.VideoListPage{}, err
+	}
+	return domain.VideoListPage{
+		Items:   items,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+		HasMore: int64(offset+len(items)) < total,
+	}, nil
+}
+
 func gameListWhere(options domain.GameListOptions) (string, []any) {
 	clauses := make([]string, 0, 3)
 	args := make([]any, 0, 8)
@@ -859,6 +973,33 @@ func gameListWhere(options domain.GameListOptions) (string, []any) {
 		return "", args
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func videoListWhere(options domain.VideoListOptions) (string, []any) {
+	clauses := make([]string, 0, 2)
+	args := make([]any, 0, 5)
+	if query := strings.TrimSpace(options.Query); query != "" {
+		like := "%" + strings.ToLower(query) + "%"
+		clauses = append(clauses, `(LOWER(title) LIKE ? OR LOWER(rel_path) LIKE ? OR LOWER(format) LIKE ?)`)
+		args = append(args, like, like, like)
+	}
+	if format := strings.TrimSpace(options.Format); format != "" {
+		clauses = append(clauses, `LOWER(format) = LOWER(?)`)
+		args = append(args, format)
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func videoListOrderBy(sort string) string {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "title":
+		return ` ORDER BY LOWER(title), id`
+	default:
+		return ` ORDER BY updated_at DESC, id DESC`
+	}
 }
 
 func gameListOrderBy(sort string) string {
@@ -1300,7 +1441,7 @@ func scanLibrary(row scanner) (domain.Library, error) {
 
 func normalizeLibraryAssetType(value string) string {
 	switch strings.TrimSpace(value) {
-	case "book", "comic", "game":
+	case "book", "comic", "game", "video":
 		return strings.TrimSpace(value)
 	default:
 		return "mixed"
@@ -1326,7 +1467,7 @@ func scanSeries(row scanner) (domain.Series, error) {
 
 func normalizeCollectionPrimaryType(value string) string {
 	switch strings.TrimSpace(value) {
-	case "book", "comic", "game":
+	case "book", "comic", "game", "video":
 		return strings.TrimSpace(value)
 	default:
 		return "comic"
@@ -1475,6 +1616,56 @@ func scanGame(row scanner) (domain.GameAsset, error) {
 	game.CreatedAt = parseTime(createdAt)
 	game.UpdatedAt = parseTime(updatedAt)
 	return game, nil
+}
+
+func videoSelectSQL() string {
+	return `SELECT id, library_id, title, format, file_path, rel_path, size, mtime, duration_seconds, width, height, video_codec, audio_codec, thumbnail_status, last_played_at, created_at, updated_at FROM videos`
+}
+
+func scanVideos(rows *sql.Rows) ([]domain.VideoAsset, error) {
+	out := make([]domain.VideoAsset, 0)
+	for rows.Next() {
+		video, err := scanVideo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, video)
+	}
+	return out, rows.Err()
+}
+
+func scanVideo(row scanner) (domain.VideoAsset, error) {
+	var video domain.VideoAsset
+	var mtime string
+	var lastPlayedAt string
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(
+		&video.ID,
+		&video.LibraryID,
+		&video.Title,
+		&video.Format,
+		&video.FilePath,
+		&video.RelPath,
+		&video.Size,
+		&mtime,
+		&video.DurationSeconds,
+		&video.Width,
+		&video.Height,
+		&video.VideoCodec,
+		&video.AudioCodec,
+		&video.ThumbnailStatus,
+		&lastPlayedAt,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return video, err
+	}
+	video.MTime = parseTime(mtime)
+	video.LastPlayedAt = parseTime(lastPlayedAt)
+	video.CreatedAt = parseTime(createdAt)
+	video.UpdatedAt = parseTime(updatedAt)
+	return video, nil
 }
 
 func scanJob(row scanner) (domain.ScanJob, error) {

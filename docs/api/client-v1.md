@@ -108,7 +108,7 @@ Request:
 }
 ```
 
-`assetType` can be `mixed`, `book`, `comic`, or `game`.
+`assetType` can be `mixed`, `book`, `comic`, `game`, or `video`.
 
 Response is the created library:
 
@@ -148,6 +148,7 @@ This endpoint reports container paths, not host/NAS paths. Docker volume mapping
 9. Sync private state with `GET/PUT /api/client/books/{bookId}/private-state`.
 10. Sync UI language and reader defaults with `GET/PUT /api/client/preferences`.
 11. Open a game with `GET /api/client/games/{gameId}/manifest`, then use `fileUrl` only through the service.
+12. Open a video with `GET /api/client/videos/{videoId}/manifest`, then stream `fileUrl` through the service with HTTP Range requests.
 
 ## Client Endpoints
 
@@ -162,7 +163,7 @@ Response:
   "serviceName": "FolioSpace Library",
   "serviceVersion": "0.82",
   "apiVersion": "v1",
-  "supportedFormats": ["cbz", "zip", "epub", "pdf", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"],
+  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"],
   "capabilities": {
     "clientHome": true,
     "unifiedManifest": true,
@@ -173,6 +174,7 @@ Response:
     "pageStreaming": true,
     "gameShelf": true,
     "gameCatalog": true,
+    "videoCatalog": true,
     "privateState": true,
     "search": true,
     "preferences": true,
@@ -237,6 +239,7 @@ Query:
 
 - `limit`: optional, default `12`, max `50`. Applies to `continueReading`, `recentBooks`, `favoriteBooks`, and `wantToRead`.
 - `gameShelf` uses the same limit and returns recent local ROM assets.
+- `videoShelf` uses the same limit and returns recent local video assets.
 
 Response:
 
@@ -281,6 +284,21 @@ Response:
       "compatibility": "unknown",
       "coverUrl": "/api/games/12/cover",
       "manifestUrl": "/api/client/games/12/manifest"
+    }
+  ],
+  "videoShelf": [
+    {
+      "id": 21,
+      "assetType": "video",
+      "title": "Demo Movie",
+      "format": "mp4",
+      "size": 104857600,
+      "durationSeconds": 0,
+      "width": 0,
+      "height": 0,
+      "thumbnailStatus": "placeholder",
+      "thumbnailUrl": "/api/videos/21/thumbnail",
+      "manifestUrl": "/api/client/videos/21/manifest"
     }
   ],
   "collections": [
@@ -341,6 +359,73 @@ Response:
 ```
 
 Empty results return `items: []` with `total: 0`; the endpoint does not return 404 for an empty catalog. The `items` DTO is the same client-safe game DTO used by `gameShelf`, and never includes NAS paths, local file paths, or Docker volume paths.
+
+### `GET /api/client/videos`
+
+Returns a paginated client-safe video catalog. This is intentionally lightweight in the first version: FolioSpace indexes file metadata and serves a placeholder thumbnail without requiring ffmpeg/ffprobe.
+
+Query:
+
+- `limit`: optional, default `50`, max `200`.
+- `offset`: optional, default `0`.
+- `q`: optional search against `title`, `relPath`, and `format`.
+- `format`: optional exact format filter, for example `mp4`, `mov`, or `mkv`.
+- `sort`: optional. Supported values are `recent` and `title`. Unknown values fall back to `recent`.
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "id": 21,
+      "assetType": "video",
+      "title": "Demo Movie",
+      "format": "mp4",
+      "size": 104857600,
+      "durationSeconds": 0,
+      "width": 0,
+      "height": 0,
+      "thumbnailStatus": "placeholder",
+      "thumbnailUrl": "/api/videos/21/thumbnail",
+      "manifestUrl": "/api/client/videos/21/manifest"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0,
+  "hasMore": false
+}
+```
+
+### `GET /api/client/videos/{videoId}/manifest`
+
+Returns client-safe video playback metadata. It does not expose the real NAS path.
+
+```json
+{
+  "video": {
+    "id": 21,
+    "assetType": "video",
+    "title": "Demo Movie",
+    "format": "mp4",
+    "size": 104857600,
+    "durationSeconds": 0,
+    "width": 0,
+    "height": 0,
+    "thumbnailStatus": "placeholder",
+    "thumbnailUrl": "/api/videos/21/thumbnail",
+    "manifestUrl": "/api/client/videos/21/manifest"
+  },
+  "fileUrl": "/api/client/videos/21/file"
+}
+```
+
+`fileUrl` streams the local file through FolioSpace Library using `http.ServeFile`, so clients can use HTTP Range requests while keeping NAS paths hidden.
+
+### `GET /api/videos/{videoId}/thumbnail`
+
+Returns an SVG placeholder thumbnail in the first implementation. A future media metadata pass can replace this with extracted thumbnails without changing the client DTO shape.
 
 ### `GET /api/client/books/{bookId}/manifest`
 
@@ -816,6 +901,7 @@ Good MCP tools:
 - `foliospace.search_books`: search/filter books by title, collection, format, progress, or unread state.
 - `foliospace.open_book_manifest`: return the client manifest for a book.
 - `foliospace.list_games` and `foliospace.open_game_manifest`: browse and open local ROM assets through client-safe DTOs.
+- `foliospace.list_videos` and `foliospace.open_video_manifest`: browse and open local video assets through client-safe DTOs.
 - `foliospace.get_private_state` and `foliospace.save_private_state`: inspect or update status, favorite, rating, tags, and notes.
 - `foliospace.list_favorites` and `foliospace.list_private_status`: browse private shelves such as favorites and want-to-read.
 - `foliospace.get_preferences` and `foliospace.save_preferences`: inspect or update UI language and reader defaults.

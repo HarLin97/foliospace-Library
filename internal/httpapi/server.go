@@ -51,6 +51,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/client/search", s.handleClientSearch)
 	mux.HandleFunc("/api/client/games", s.handleClientGames)
 	mux.HandleFunc("/api/client/games/", s.handleClientGameAction)
+	mux.HandleFunc("/api/client/videos", s.handleClientVideos)
+	mux.HandleFunc("/api/client/videos/", s.handleClientVideoAction)
 	mux.HandleFunc("/api/client/books/favorites", s.handleClientFavoriteBooks)
 	mux.HandleFunc("/api/client/books/private-status/", s.handleClientPrivateStatusBooks)
 	mux.HandleFunc("/api/client/books/", s.handleClientBookAction)
@@ -68,6 +70,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/books/", s.handleBookAction)
 	mux.HandleFunc("/api/games/", s.handleGameAction)
 	mux.HandleFunc("/api/games/recent", s.handleRecentGames)
+	mux.HandleFunc("/api/videos/", s.handleVideoAction)
+	mux.HandleFunc("/api/videos/recent", s.handleRecentVideos)
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/api/jobs", s.handleJobs)
 	mux.HandleFunc("/api/jobs/", s.handleJobAction)
@@ -227,7 +231,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		ServiceName:      "FolioSpace Library",
 		ServiceVersion:   serviceVersion,
 		APIVersion:       "v1",
-		SupportedFormats: []string{"cbz", "zip", "epub", "pdf", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"},
+		SupportedFormats: []string{"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"},
 		Capabilities: clientCapabilities{
 			ClientHome:        true,
 			UnifiedManifest:   true,
@@ -238,6 +242,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			PageStreaming:     true,
 			GameShelf:         true,
 			GameCatalog:       true,
+			VideoCatalog:      true,
 			PrivateState:      true,
 			Search:            true,
 			Preferences:       true,
@@ -283,6 +288,11 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	videoShelf, err := s.service.RecentVideos(queryLimit(r, 12))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	collections, err := s.service.ListSeries()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -294,6 +304,7 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		FavoriteBooks:   clientBooks(favoriteBooks),
 		WantToRead:      clientBooks(wantBooks),
 		GameShelf:       clientGames(gameShelf),
+		VideoShelf:      clientVideos(videoShelf),
 		Collections:     clientCollections(collections),
 	})
 }
@@ -423,6 +434,64 @@ func (s *Server) handleClientGames(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleClientVideoAction(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	id, tail, ok := parseIDTail(r.URL.Path, "/api/client/videos/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if tail == "manifest" && r.Method == http.MethodGet {
+		video, err := s.service.Video(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSON(w, clientVideoManifest(video))
+		return
+	}
+	if tail == "file" && r.Method == http.MethodGet {
+		path, err := s.service.VideoFilePath(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		http.ServeFile(w, r, path)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleClientVideos(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	page, err := s.service.ListVideosPage(domain.VideoListOptions{
+		Limit:  queryInt(r, "limit", 50, 200),
+		Offset: queryInt(r, "offset", 0, 0),
+		Query:  r.URL.Query().Get("q"),
+		Format: r.URL.Query().Get("format"),
+		Sort:   r.URL.Query().Get("sort"),
+	})
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	writeJSON(w, clientVideoListResponse{
+		Items:   clientVideos(page.Items),
+		Total:   page.Total,
+		Limit:   page.Limit,
+		Offset:  page.Offset,
+		HasMore: page.HasMore,
+	})
+}
+
 func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 	id, tail, ok := parseIDTail(r.URL.Path, "/api/games/")
 	if !ok {
@@ -431,6 +500,19 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if tail == "cover" && r.Method == http.MethodGet {
 		s.streamGameCover(w, id)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func (s *Server) handleVideoAction(w http.ResponseWriter, r *http.Request) {
+	id, tail, ok := parseIDTail(r.URL.Path, "/api/videos/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if tail == "thumbnail" && r.Method == http.MethodGet {
+		s.streamVideoThumbnail(w, id)
 		return
 	}
 	http.NotFound(w, r)
@@ -785,6 +867,15 @@ func (s *Server) handleRecentGames(w http.ResponseWriter, r *http.Request) {
 	writeJSONOrError(w, games(items), err)
 }
 
+func (s *Server) handleRecentVideos(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	items, err := s.service.RecentVideos(queryLimit(r, 12))
+	writeJSONOrError(w, clientVideos(items), err)
+}
+
 func (s *Server) streamGameCover(w http.ResponseWriter, gameID int64) {
 	stream, err := s.service.OpenGameCover(gameID)
 	if err != nil {
@@ -795,6 +886,17 @@ func (s *Server) streamGameCover(w http.ResponseWriter, gameID int64) {
 	w.Header().Set("Content-Type", stream.ContentType)
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	_, _ = io.Copy(w, stream.Body)
+}
+
+func (s *Server) streamVideoThumbnail(w http.ResponseWriter, videoID int64) {
+	video, err := s.service.Video(videoID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = io.WriteString(w, videoThumbnailPlaceholder(video))
 }
 
 func (s *Server) handleFavoriteBooks(w http.ResponseWriter, r *http.Request) {
@@ -1167,6 +1269,7 @@ type clientCapabilities struct {
 	PageStreaming     bool `json:"pageStreaming"`
 	GameShelf         bool `json:"gameShelf"`
 	GameCatalog       bool `json:"gameCatalog"`
+	VideoCatalog      bool `json:"videoCatalog"`
 	PrivateState      bool `json:"privateState"`
 	Search            bool `json:"search"`
 	Preferences       bool `json:"preferences"`
@@ -1183,6 +1286,7 @@ type clientHomeResponse struct {
 	FavoriteBooks   []clientBook       `json:"favoriteBooks"`
 	WantToRead      []clientBook       `json:"wantToRead"`
 	GameShelf       []clientGame       `json:"gameShelf"`
+	VideoShelf      []clientVideo      `json:"videoShelf"`
 	Collections     []clientCollection `json:"collections"`
 }
 
@@ -1262,6 +1366,35 @@ type clientGameListResponse struct {
 	Limit   int          `json:"limit"`
 	Offset  int          `json:"offset"`
 	HasMore bool         `json:"hasMore"`
+}
+
+type clientVideo struct {
+	ID              int64   `json:"id"`
+	AssetType       string  `json:"assetType"`
+	Title           string  `json:"title"`
+	Format          string  `json:"format"`
+	Size            int64   `json:"size"`
+	DurationSeconds float64 `json:"durationSeconds"`
+	Width           int     `json:"width"`
+	Height          int     `json:"height"`
+	VideoCodec      string  `json:"videoCodec,omitempty"`
+	AudioCodec      string  `json:"audioCodec,omitempty"`
+	ThumbnailStatus string  `json:"thumbnailStatus"`
+	ThumbnailURL    string  `json:"thumbnailUrl"`
+	ManifestURL     string  `json:"manifestUrl"`
+}
+
+type clientVideoManifestResponse struct {
+	Video   clientVideo `json:"video"`
+	FileURL string      `json:"fileUrl"`
+}
+
+type clientVideoListResponse struct {
+	Items   []clientVideo `json:"items"`
+	Total   int64         `json:"total"`
+	Limit   int           `json:"limit"`
+	Offset  int           `json:"offset"`
+	HasMore bool          `json:"hasMore"`
 }
 
 type clientPrivateStateResponse struct {
@@ -1366,6 +1499,66 @@ func clientGameManifest(game domain.GameAsset) clientGameManifestResponse {
 		Game:    clientGameItem(game),
 		FileURL: fmt.Sprintf("/api/client/games/%d/file", game.ID),
 	}
+}
+
+func clientVideos(items []domain.VideoAsset) []clientVideo {
+	out := make([]clientVideo, 0, len(items))
+	for _, item := range items {
+		out = append(out, clientVideoItem(item))
+	}
+	return out
+}
+
+func clientVideoItem(video domain.VideoAsset) clientVideo {
+	return clientVideo{
+		ID:              video.ID,
+		AssetType:       "video",
+		Title:           video.Title,
+		Format:          video.Format,
+		Size:            video.Size,
+		DurationSeconds: video.DurationSeconds,
+		Width:           video.Width,
+		Height:          video.Height,
+		VideoCodec:      video.VideoCodec,
+		AudioCodec:      video.AudioCodec,
+		ThumbnailStatus: video.ThumbnailStatus,
+		ThumbnailURL:    fmt.Sprintf("/api/videos/%d/thumbnail", video.ID),
+		ManifestURL:     fmt.Sprintf("/api/client/videos/%d/manifest", video.ID),
+	}
+}
+
+func clientVideoManifest(video domain.VideoAsset) clientVideoManifestResponse {
+	return clientVideoManifestResponse{
+		Video:   clientVideoItem(video),
+		FileURL: fmt.Sprintf("/api/client/videos/%d/file", video.ID),
+	}
+}
+
+func videoThumbnailPlaceholder(video domain.VideoAsset) string {
+	title := htmlEscape(strings.TrimSpace(video.Title))
+	if title == "" {
+		title = "Video"
+	}
+	format := strings.ToUpper(htmlEscape(strings.TrimSpace(video.Format)))
+	if format == "" {
+		format = "VIDEO"
+	}
+	return fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180">
+<defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#172326"/><stop offset="1" stop-color="#33565c"/></linearGradient></defs>
+<rect width="320" height="180" rx="14" fill="url(#g)"/>
+<circle cx="160" cy="82" r="32" fill="rgba(255,255,255,.16)"/>
+<path d="M151 66v32l28-16z" fill="#fff"/>
+<text x="20" y="142" fill="#f3fbfb" font-family="Arial, sans-serif" font-size="20" font-weight="700">%s</text>
+<text x="20" y="164" fill="#b8d2d5" font-family="Arial, sans-serif" font-size="13">%s</text>
+</svg>`, title, format)
+}
+
+func htmlEscape(value string) string {
+	value = strings.ReplaceAll(value, "&", "&amp;")
+	value = strings.ReplaceAll(value, "<", "&lt;")
+	value = strings.ReplaceAll(value, ">", "&gt;")
+	value = strings.ReplaceAll(value, `"`, "&quot;")
+	return value
 }
 
 func clientBookItem(book domain.Book) clientBook {

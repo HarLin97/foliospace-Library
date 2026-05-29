@@ -110,6 +110,8 @@ Open the manifest for book 12 and tell me whether it is EPUB or CBZ.
 - `foliospace.open_book_manifest`: open a CBZ/ZIP/EPUB/PDF client manifest by `bookId`. PDF manifests expose the opaque PDF stream URL; clients should use HTTP Range capable reads against that URL.
 - `foliospace.list_games`: list paginated client-safe ROM assets with `limit`, `offset`, `q`, `platform`, `format`, and `sort`.
 - `foliospace.open_game_manifest`: open a ROM client manifest by `gameId`.
+- `foliospace.list_videos`: list paginated client-safe video assets with `limit`, `offset`, `q`, `format`, and `sort`.
+- `foliospace.open_video_manifest`: open a video client manifest by `videoId`; the returned `fileUrl` is an opaque Range-capable service URL.
 - `foliospace.get_preferences`: read client preferences such as interface language.
 - `foliospace.save_preferences`: save client preferences.
 - `foliospace.get_scan_settings`: read scan runtime settings such as worker count.
@@ -164,16 +166,22 @@ Open a game manifest:
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"foliospace.open_game_manifest","arguments":{"gameId":12}}}
 ```
 
+List local videos:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"foliospace.list_videos","arguments":{"q":"movie","format":"mp4","limit":20}}}
+```
+
 List want-to-read books:
 
 ```json
-{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"foliospace.list_private_status","arguments":{"status":"want","limit":12}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"foliospace.list_private_status","arguments":{"status":"want","limit":12}}}
 ```
 
 Pause a running scan job:
 
 ```json
-{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"foliospace.pause_job","arguments":{"jobId":42}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"foliospace.pause_job","arguments":{"jobId":42}}}
 ```
 
 Save interface language preference:

@@ -142,10 +142,35 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 			_ = s.store.UpdateScanJob(job)
 			return nil
 		}
+		if kind == "video" {
+			if s.store.CanSkipVideo(path, info.Size(), info.ModTime()) {
+				job.SkippedFiles++
+				_ = s.store.UpdateScanJob(job)
+				return nil
+			}
+			if err := s.indexVideoFile(library, path, info, ext); err != nil {
+				job.ErrorCount++
+				_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+				_ = s.store.AddJobEvent(job.ID, "error", "video metadata failed: "+path)
+				_ = s.store.UpdateScanJob(job)
+				return nil
+			}
+			job.IndexedFiles++
+			_ = s.store.AddJobEvent(job.ID, "info", "indexed video: "+path)
+			_ = s.store.UpdateScanJob(job)
+			return nil
+		}
 		if err := s.store.DeleteGameByPath(path); err != nil {
 			job.ErrorCount++
 			_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
 			_ = s.store.AddJobEvent(job.ID, "error", "game cleanup failed: "+path)
+			_ = s.store.UpdateScanJob(job)
+			return nil
+		}
+		if err := s.store.DeleteVideoByPath(path); err != nil {
+			job.ErrorCount++
+			_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+			_ = s.store.AddJobEvent(job.ID, "error", "video cleanup failed: "+path)
 			_ = s.store.UpdateScanJob(job)
 			return nil
 		}
@@ -398,8 +423,31 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 		})
 		return
 	}
+	if task.kind == "video" {
+		if s.store.CanSkipVideo(task.path, task.info.Size(), task.info.ModTime()) {
+			updateJob(func(job *domain.ScanJob) {
+				setCurrent(job)
+				job.SkippedFiles++
+			})
+			return
+		}
+		if err := s.indexVideoFile(library, task.path, task.info, task.ext); err != nil {
+			s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "video metadata failed: ", err, updateJob)
+			return
+		}
+		updateJob(func(job *domain.ScanJob) {
+			setCurrent(job)
+			job.IndexedFiles++
+			_ = s.store.AddJobEvent(jobID, "info", "indexed video: "+task.path)
+		})
+		return
+	}
 	if err := s.store.DeleteGameByPath(task.path); err != nil {
 		s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "game cleanup failed: ", err, updateJob)
+		return
+	}
+	if err := s.store.DeleteVideoByPath(task.path); err != nil {
+		s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "video cleanup failed: ", err, updateJob)
 		return
 	}
 
@@ -519,11 +567,20 @@ func classifyFileKind(library domain.Library, path string, ext string) string {
 		}
 		return ""
 	}
+	if library.AssetType == "video" {
+		if isVideoExt(ext) {
+			return "video"
+		}
+		return ""
+	}
 	if isBookExt(ext) {
 		return "book"
 	}
 	if isGameExt(ext) {
 		return "game"
+	}
+	if isVideoExt(ext) {
+		return "video"
 	}
 	return ""
 }
@@ -539,6 +596,15 @@ func isGamePackageExt(ext string) bool {
 func isGameExt(ext string) bool {
 	switch ext {
 	case ".nes", ".sfc", ".smc", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".chd", ".iso", ".bin", ".cue":
+		return true
+	default:
+		return false
+	}
+}
+
+func isVideoExt(ext string) bool {
+	switch ext {
+	case ".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm":
 		return true
 	default:
 		return false
@@ -612,6 +678,24 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		SHA1:          checksums.sha1,
 		EmulatorHint:  platform,
 		Compatibility: "unknown",
+	})
+	return err
+}
+
+func (s *Scanner) indexVideoFile(library domain.Library, path string, info fs.FileInfo, ext string) error {
+	relPath, err := filepath.Rel(library.RootPath, path)
+	if err != nil {
+		return fmt.Errorf("relative path: %w", err)
+	}
+	_, err = s.store.UpsertVideo(domain.VideoAsset{
+		LibraryID:       library.ID,
+		Title:           mediaTitle(path),
+		Format:          strings.TrimPrefix(ext, "."),
+		FilePath:        path,
+		RelPath:         filepath.ToSlash(relPath),
+		Size:            info.Size(),
+		MTime:           info.ModTime(),
+		ThumbnailStatus: "placeholder",
 	})
 	return err
 }
@@ -834,6 +918,14 @@ func gameTitle(path string) string {
 	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	title = regexp.MustCompile(`\s*\([^)]*\)`).ReplaceAllString(title, "")
 	title = regexp.MustCompile(`\s*\[[^]]*]`).ReplaceAllString(title, "")
+	return strings.TrimSpace(title)
+}
+
+func mediaTitle(path string) string {
+	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	title = strings.ReplaceAll(title, ".", " ")
+	title = strings.ReplaceAll(title, "_", " ")
+	title = regexp.MustCompile(`\s+`).ReplaceAllString(title, " ")
 	return strings.TrimSpace(title)
 }
 

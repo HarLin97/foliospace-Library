@@ -195,6 +195,13 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	if err := os.WriteFile(romPath, []byte("rom-body"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	videoPath := filepath.Join(root, "Movies", "Demo Movie.mp4")
+	if err := os.MkdirAll(filepath.Dir(videoPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(videoPath, []byte("video-body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ts := httptest.NewServer(New(service.New(st), nil).Routes())
 	defer ts.Close()
@@ -231,6 +238,8 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	if !strings.Contains(infoBody, `"apiVersion":"v1"`) ||
 		!strings.Contains(infoBody, `"epub"`) ||
 		!strings.Contains(infoBody, `"pdf"`) ||
+		!strings.Contains(infoBody, `"mp4"`) ||
+		!strings.Contains(infoBody, `"videoCatalog":true`) ||
 		!strings.Contains(infoBody, `"pdfPageLayout":true`) ||
 		!strings.Contains(infoBody, `"scanSettings":true`) {
 		t.Fatalf("client info response %q does not include v1 capabilities", infoBody)
@@ -245,6 +254,9 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 	if !strings.Contains(homeBody, `"gameShelf"`) || !strings.Contains(homeBody, `"Super Mario World"`) || strings.Contains(homeBody, "Super Mario World (USA).sfc") {
 		t.Fatalf("client home response %q is missing safe game shelf", homeBody)
+	}
+	if !strings.Contains(homeBody, `"videoShelf"`) || !strings.Contains(homeBody, `"Demo Movie"`) || strings.Contains(homeBody, "Movies/Demo Movie.mp4") {
+		t.Fatalf("client home response %q is missing safe video shelf", homeBody)
 	}
 	if !strings.Contains(homeBody, `"/api/books/`+itoa(cbzBookID)+`/cover"`) {
 		t.Fatalf("client home response %q does not include cover URL", homeBody)
@@ -279,6 +291,39 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 	if !strings.Contains(gameManifestBody, `"assetType":"game"`) || !strings.Contains(gameManifestBody, `"platform":"snes"`) || !strings.Contains(gameManifestBody, `"/api/client/games/`+itoa(games[0].ID)+`/file"`) {
 		t.Fatalf("game client manifest response %q is missing launch metadata", gameManifestBody)
+	}
+
+	videos, err := st.ListRecentVideos(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(videos) != 1 {
+		t.Fatalf("videos = %#v, want one indexed video", videos)
+	}
+	videoManifestBody := get(t, ts.URL+"/api/client/videos/"+itoa(videos[0].ID)+"/manifest")
+	if strings.Contains(videoManifestBody, root) || strings.Contains(videoManifestBody, "filePath") {
+		t.Fatalf("video client manifest leaked file path: %q", videoManifestBody)
+	}
+	if !strings.Contains(videoManifestBody, `"assetType":"video"`) || !strings.Contains(videoManifestBody, `"format":"mp4"`) || !strings.Contains(videoManifestBody, `"/api/client/videos/`+itoa(videos[0].ID)+`/file"`) {
+		t.Fatalf("video client manifest response %q is missing stream metadata", videoManifestBody)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/client/videos/"+itoa(videos[0].ID)+"/file", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Range", "bytes=0-4")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusPartialContent || string(data) != "video" {
+		t.Fatalf("video range status=%d body=%q, want 206 video", resp.StatusCode, data)
 	}
 }
 
@@ -379,6 +424,54 @@ func TestAPIClientGamesPage(t *testing.T) {
 	empty := authGet(t, ts.URL+"/api/client/games?q=missing", "secret")
 	if !strings.Contains(empty, `"items":[]`) || !strings.Contains(empty, `"total":0`) {
 		t.Fatalf("empty client games page = %q, want empty list response", empty)
+	}
+}
+
+func TestAPIClientVideosPage(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Videos", "/library", "video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, video := range []domain.VideoAsset{
+		{LibraryID: lib.ID, Title: "Alpha Movie", Format: "mp4", FilePath: "/library/Alpha Movie.mp4", RelPath: "Alpha Movie.mp4", Size: 1024, MTime: time.Unix(31, 0), ThumbnailStatus: "placeholder"},
+		{LibraryID: lib.ID, Title: "Beta Clip", Format: "mkv", FilePath: "/library/Beta Clip.mkv", RelPath: "Beta Clip.mkv", Size: 2048, MTime: time.Unix(32, 0), ThumbnailStatus: "placeholder"},
+	} {
+		if _, err := st.UpsertVideo(video); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	unauthorized, err := http.Get(ts.URL + "/api/client/videos?limit=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want 401", unauthorized.StatusCode)
+	}
+
+	body := authGet(t, ts.URL+"/api/client/videos?limit=1&offset=0&sort=title", "secret")
+	if strings.Contains(body, "/library") || strings.Contains(body, "filePath") || strings.Contains(body, "relPath") {
+		t.Fatalf("client videos leaked internal path: %q", body)
+	}
+	if !strings.Contains(body, `"total":2`) || !strings.Contains(body, `"limit":1`) || !strings.Contains(body, `"hasMore":true`) || !strings.Contains(body, `"title":"Alpha Movie"`) {
+		t.Fatalf("client videos page %q missing pagination metadata or title sort", body)
+	}
+	if !strings.Contains(body, `"/api/client/videos/`) || !strings.Contains(body, `/manifest"`) || !strings.Contains(body, `"/api/videos/`) {
+		t.Fatalf("client videos page %q missing manifestUrl or thumbnailUrl", body)
+	}
+
+	filtered := authGet(t, ts.URL+"/api/client/videos?q=beta&format=mkv", "secret")
+	if !strings.Contains(filtered, `"title":"Beta Clip"`) || !strings.Contains(filtered, `"total":1`) || !strings.Contains(filtered, `"hasMore":false`) {
+		t.Fatalf("filtered client videos page = %q, want one-item response", filtered)
 	}
 }
 

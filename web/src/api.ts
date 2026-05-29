@@ -2,7 +2,7 @@ export type Library = {
   id: number;
   name: string;
   rootPath: string;
-  assetType: "mixed" | "book" | "comic" | "game";
+  assetType: "mixed" | "book" | "comic" | "game" | "video";
 };
 
 export type DirectoryEntry = {
@@ -22,7 +22,7 @@ export type Series = {
   title: string;
   directoryPath: string;
   collectionType: "directory" | "game_platform";
-  primaryType: "book" | "comic" | "game";
+  primaryType: "book" | "comic" | "game" | "video";
   bookCount: number;
 };
 
@@ -76,6 +76,22 @@ export type GameAsset = {
   manifestUrl?: string;
 };
 
+export type VideoAsset = {
+  id: number;
+  assetType?: "video";
+  title: string;
+  format: string;
+  size: number;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  videoCodec?: string;
+  audioCodec?: string;
+  thumbnailStatus: string;
+  thumbnailUrl: string;
+  manifestUrl: string;
+};
+
 export type SearchResponse = {
   query: string;
   books: Book[];
@@ -105,9 +121,18 @@ export type GameListPage = {
   hasMore: boolean;
 };
 
+export type VideoListPage = {
+  items: VideoAsset[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
 export type CollectionAssets = {
   books: Book[];
   games: GameAsset[];
+  videos: VideoAsset[];
 };
 
 export type BookListOptions = {
@@ -119,6 +144,10 @@ export type BookListOptions = {
 
 export type GameListOptions = BookListOptions & {
   platform?: string;
+  format?: string;
+};
+
+export type VideoListOptions = BookListOptions & {
   format?: string;
 };
 
@@ -308,6 +337,7 @@ export const api = {
   continueReading: () => request<Book[]>("/api/books/continue-reading?limit=12"),
   recentBooks: () => request<Book[]>("/api/books/recent?limit=12"),
   recentGames: () => request<GameAsset[]>("/api/games/recent?limit=12"),
+  recentVideos: () => request<VideoAsset[]>("/api/videos/recent?limit=12"),
   clientGames: (options: GameListOptions = {}) => {
     const params = new URLSearchParams();
     if (options.limit) params.set("limit", String(options.limit));
@@ -317,6 +347,15 @@ export const api = {
     if (options.format) params.set("format", options.format);
     if (options.sort) params.set("sort", options.sort);
     return request<GameListPage>(`/api/client/games?${params.toString()}`);
+  },
+  clientVideos: (options: VideoListOptions = {}) => {
+    const params = new URLSearchParams();
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.offset) params.set("offset", String(options.offset));
+    if (options.q) params.set("q", options.q);
+    if (options.format) params.set("format", options.format);
+    if (options.sort) params.set("sort", options.sort);
+    return request<VideoListPage>(`/api/client/videos?${params.toString()}`);
   },
   favoriteBooks: () => request<Book[]>("/api/books/favorites?limit=12"),
   privateStatusBooks: (status: string) => request<Book[]>(`/api/books/private-status/${encodeURIComponent(status)}?limit=12`),
