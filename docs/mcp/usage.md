@@ -2,7 +2,38 @@
 
 This MCP server gives agents a safe control surface over FolioSpace Library. It is for lookup, diagnostics, manifests, preferences, private state, progress, and scan operations. It is not the normal transport for page images, EPUB resources, or ROM bytes; agents should use the opaque HTTP URLs returned by the Client API when they need to point a native client at media.
 
-## Build
+## Quick Install
+
+For end users, the recommended path is to install a release binary on the machine where the MCP client runs:
+
+```bash
+curl -fsSL https://foliospace.app/install-mcp.sh | sh
+```
+
+This installs `foliospace-mcp` to:
+
+```text
+~/.local/bin/foliospace-mcp
+```
+
+Release packages are expected at:
+
+```text
+https://foliospace.app/releases/foliospace-mcp_0.8_darwin_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.8_darwin_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.8_linux_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.8_linux_amd64.tar.gz
+https://foliospace.app/releases/checksums.txt
+```
+
+Override the release URL when testing another host:
+
+```bash
+curl -fsSL http://localhost:8081/install-mcp.sh \
+  | FOLIOSPACE_MCP_RELEASE_BASE_URL=http://localhost:8081/releases sh
+```
+
+## Build From Source
 
 ```bash
 go build -o ./bin/foliospace-mcp ./cmd/foliospace-mcp
@@ -25,14 +56,48 @@ Use an absolute path for `command`.
 {
   "mcpServers": {
     "foliospace-library": {
-      "command": "/Users/deadseafu/Documents/FolioSpaceReader/bin/foliospace-mcp",
+      "command": "/Users/you/.local/bin/foliospace-mcp",
       "env": {
-        "FOLIOSPACE_BASE_URL": "http://192.168.10.155:18080",
+        "FOLIOSPACE_BASE_URL": "http://your-nas-ip:8080",
         "FOLIOSPACE_API_TOKEN": "your-token-if-enabled"
       }
     }
   }
 }
+```
+
+If you build from source instead of using the installer, set `command` to the absolute path of your local binary, for example:
+
+```text
+/Users/deadseafu/Documents/FolioSpaceReader/bin/foliospace-mcp
+```
+
+## Agent Prompt Samples
+
+After the MCP server is configured, users can ask an agent:
+
+```text
+Use FolioSpace Library MCP to show service version, supported formats, and current health.
+```
+
+```text
+Search my FolioSpace Library for "metal slug" and open the game manifest for the best match.
+```
+
+```text
+List my configured FolioSpace libraries, then start a scan for the Books library.
+```
+
+```text
+Show recent scan jobs and summarize the latest errors.
+```
+
+```text
+Find books marked want-to-read and show the first 10.
+```
+
+```text
+Open the manifest for book 12 and tell me whether it is EPUB or CBZ.
 ```
 
 ## Tools
@@ -117,6 +182,56 @@ Read current health:
 ```json
 {"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"foliospace://health"}}
 ```
+
+End-to-end local smoke sample. MCP stdio uses `Content-Length` framed messages, so this sample uses Python to write valid frames:
+
+```bash
+python3 - <<'PY'
+import json
+import os
+import subprocess
+
+messages = [
+    {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "smoke", "version": "0.1.0"},
+        },
+    },
+    {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "foliospace.client_info", "arguments": {}},
+    },
+]
+
+payload = b""
+for message in messages:
+    body = json.dumps(message).encode()
+    payload += f"Content-Length: {len(body)}\r\n\r\n".encode() + body
+
+env = os.environ.copy()
+env["FOLIOSPACE_BASE_URL"] = "http://your-nas-ip:8080"
+env["FOLIOSPACE_API_TOKEN"] = "your-access-key"
+
+result = subprocess.run(
+    [os.path.expanduser("~/.local/bin/foliospace-mcp")],
+    input=payload,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    env=env,
+    check=True,
+)
+print(result.stdout.decode())
+PY
+```
+
+The smoke test should return JSON-RPC responses for initialization and service info. It is safe because it does not start scans or access media bytes.
 
 ## Design Notes
 

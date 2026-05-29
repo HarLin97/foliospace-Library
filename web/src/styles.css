@@ -1177,6 +1177,10 @@ button.danger:hover {
   border-bottom: 1px solid #d9e0e3;
 }
 
+.readerHeader {
+  grid-row: 1;
+}
+
 .reader:fullscreen .readerHeader,
 .reader:fullscreen .readerControls {
   background: rgba(18, 24, 27, 0.92);
@@ -1236,6 +1240,7 @@ button.danger:hover {
 }
 
 .bookDetails {
+  grid-row: 3;
   display: grid;
   gap: 8px;
   border-bottom: 1px solid #d9e0e3;
@@ -1270,6 +1275,7 @@ button.danger:hover {
 }
 
 .readerStateBar {
+  grid-row: 2;
   display: grid;
   grid-template-columns: minmax(120px, 0.6fr) auto 86px minmax(160px, 1fr) minmax(180px, 1.2fr) auto;
   gap: 8px;
@@ -1378,6 +1384,7 @@ button.danger:hover {
 }
 
 .readerControls {
+  grid-row: 5;
   border-top: 1px solid #d9e0e3;
   border-bottom: 0;
 }
@@ -1387,6 +1394,7 @@ button.danger:hover {
 }
 
 .pageStage {
+  grid-row: 4;
   position: relative;
   min-height: 0;
   background: #14191b;

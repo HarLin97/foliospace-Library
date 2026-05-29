@@ -75,6 +75,18 @@ Client API book and collection responses omit local NAS file paths.
 
 Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, progress, scan jobs, job control, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
 
+End users can install the MCP binary on the machine where their agent client runs:
+
+```bash
+curl -fsSL https://foliospace.app/install-mcp.sh | sh
+```
+
+Release maintainers can build macOS/Linux MCP packages with:
+
+```bash
+VERSION=0.8 ./scripts/build-mcp-release.sh
+```
+
 ## Product Direction
 
 Detailed product direction and the proposed `Asset` / `LibraryItem` model are in [`docs/product/foliospace-library-direction.md`](docs/product/foliospace-library-direction.md).
