@@ -2,6 +2,8 @@
 
 This MCP server gives agents a safe control surface over FolioSpace Library. It is for lookup, diagnostics, manifests, preferences, private state, progress, and scan operations. It is not the normal transport for page images, EPUB resources, or ROM bytes; agents should use the opaque HTTP URLs returned by the Client API when they need to point a native client at media.
 
+The server accepts both standard MCP stdio `Content-Length` framed messages and newline-delimited JSON-RPC messages for clients that use a simpler stdio transport.
+
 ## Quick Install
 
 For end users, the recommended path is to install a release binary on the machine where the MCP client runs:
@@ -183,7 +185,7 @@ Read current health:
 {"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"foliospace://health"}}
 ```
 
-End-to-end local smoke sample. MCP stdio uses `Content-Length` framed messages, so this sample uses Python to write valid frames:
+End-to-end local smoke sample using standard `Content-Length` framed messages:
 
 ```bash
 python3 - <<'PY'
@@ -232,6 +234,13 @@ PY
 ```
 
 The smoke test should return JSON-RPC responses for initialization and service info. It is safe because it does not start scans or access media bytes.
+
+For simple diagnostics, newline JSON-RPC is also accepted:
+
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0.1.0"}}}' \
+  | FOLIOSPACE_BASE_URL=http://your-nas-ip:8080 FOLIOSPACE_API_TOKEN=your-access-key ~/.local/bin/foliospace-mcp
+```
 
 ## Design Notes
 

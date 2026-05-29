@@ -428,6 +428,17 @@ Release package placeholders to publish on the website:
 /releases/checksums.txt
 ```
 
+Current local release artifact source for the website build:
+
+```text
+/Users/deadseafu/Documents/FolioSpaceReader/dist/install-mcp.sh
+/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/checksums.txt
+/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.8_darwin_arm64.tar.gz
+/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.8_darwin_amd64.tar.gz
+/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.8_linux_arm64.tar.gz
+/Users/deadseafu/Documents/FolioSpaceReader/dist/releases/foliospace-mcp_0.8_linux_amd64.tar.gz
+```
+
 Maintainer build command:
 
 ```bash
@@ -482,7 +493,7 @@ Find books marked want-to-read and show the first 10.
 MCP smoke-test note for docs:
 
 ```text
-MCP stdio uses Content-Length framed JSON-RPC messages. Website docs should not show bare `echo '{"jsonrpc":...}' | foliospace-mcp` examples unless the example adds valid MCP headers. Prefer agent-client configuration examples and natural-language prompt samples for normal users.
+FolioSpace MCP accepts standard Content-Length framed MCP stdio and newline-delimited JSON-RPC. Prefer MCP client configuration examples and natural-language prompt samples for normal users. Newline JSON-RPC can be shown as a lightweight diagnostic path for Hermes-style clients.
 ```
 
 Highlighted tools:
@@ -613,6 +624,14 @@ Docker Hub image:
 ```text
 funland/foliospace-library:0.8
 funland/foliospace-library:latest
+```
+
+Current Docker Hub digest:
+
+```text
+manifest: sha256:b22a5789e5526c428c43dac823808b5f75a8dfda712c5da0da0d48d6fa8dab09
+amd64:    sha256:98acf925bec40554a45b1ffbe417c25b112dfc6469455627614675a8500eb69c
+arm64:    sha256:6cc022d7e4e6dbab3e03b7d46d247391491598f148478c08c00c6d75959d6396
 ```
 
 Architectures:
