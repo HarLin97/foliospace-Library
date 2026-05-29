@@ -28,6 +28,8 @@ export function App() {
   const [gameShelf, setGameShelf] = useState<GameAsset[]>([]);
   const [videoShelf, setVideoShelf] = useState<VideoAsset[]>([]);
   const [collectionGames, setCollectionGames] = useState<GameAsset[]>([]);
+  const [collectionVideos, setCollectionVideos] = useState<VideoAsset[]>([]);
+  const [selectedVideo, setSelectedVideo] = useState<VideoAsset | null>(null);
   const [jobs, setJobs] = useState<ScanJob[]>([]);
   const [errors, setErrors] = useState<FileError[]>([]);
   const [jobEvents, setJobEvents] = useState<JobEvent[]>([]);
@@ -577,6 +579,7 @@ export function App() {
     if (!selectedSeries) return;
     setBooks([]);
     setCollectionGames([]);
+    setCollectionVideos([]);
     setBookTotal(0);
     setBookHasMore(false);
     void loadBooksPage(selectedSeries, 0, true);
@@ -589,6 +592,7 @@ export function App() {
       .then((assets) => {
         if (cancelled) return;
         setCollectionGames(arrayOrEmpty(assets.games));
+        setCollectionVideos(arrayOrEmpty(assets.videos));
       })
       .catch((error) => {
         if (!cancelled) {
@@ -599,6 +603,17 @@ export function App() {
       cancelled = true;
     };
   }, [selectedSeries]);
+
+  useEffect(() => {
+    if (!selectedVideo) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedVideo(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedVideo]);
 
   useEffect(() => {
     const node = bookLoadMoreRef.current;
@@ -901,6 +916,7 @@ export function App() {
       { key: "comic", title: t.comicCollections, items: [] as Series[] },
       { key: "book", title: t.bookCollections, items: [] as Series[] },
       { key: "game", title: t.gameCollections, items: [] as Series[] },
+      { key: "video", title: t.videoCollections, items: [] as Series[] },
     ];
     for (const item of filteredSeries) {
       const kind = collectionKind(item, libraries);
@@ -1151,6 +1167,7 @@ export function App() {
                       subtitle={t.videoShelfSubtitle}
                       videos={videoShelf.slice(0, 4)}
                       meta={(video) => videoMeta(video, t)}
+                      onOpen={setSelectedVideo}
                     />
                   )}
                   {recentBooks.length > 0 && (
@@ -1209,7 +1226,7 @@ export function App() {
                 <div>
                   <h1>{selectedSeries ? selectedSeries.title : t.volumeWall}</h1>
                   <small>
-                    {selectedSeries ? loadedCollectionCountLabel(selectedSeries, books.length, collectionGames.length) : t.selectCollection}
+                    {selectedSeries ? loadedCollectionCountLabel(selectedSeries, books.length, collectionGames.length, collectionVideos.length) : t.selectCollection}
                   </small>
                 </div>
                 <div className="coverWallTools">
@@ -1228,10 +1245,13 @@ export function App() {
                   )}
                 </div>
               </div>
-              {selectedSeries && (books.length > 0 || collectionGames.length > 0) ? (
+              {selectedSeries && (books.length > 0 || collectionGames.length > 0 || collectionVideos.length > 0) ? (
                 <div className="books">
                   {[...collectionGames].sort(compareGamesByPlatform).map((game) => (
                     <GameTile key={`collection-game-${game.id}`} game={game} meta={gameMeta(game, t)} />
+                  ))}
+                  {[...collectionVideos].sort(compareVideosByTitle).map((video) => (
+                    <VideoTile key={`collection-video-${video.id}`} video={video} meta={videoMeta(video, t)} onOpen={setSelectedVideo} />
                   ))}
                   {books.map((book) => (
                     <button className="book" key={book.id} onClick={() => openBook(book)} title={book.title}>
@@ -1610,6 +1630,27 @@ export function App() {
           </section>
         )}
       </section>
+      {selectedVideo && (
+        <div className="videoOverlay" role="dialog" aria-modal="true" aria-label={selectedVideo.title} onClick={() => setSelectedVideo(null)}>
+          <div className="videoPlayerPanel" onClick={(event) => event.stopPropagation()}>
+            <div className="videoPlayerHeader">
+              <div>
+                <strong>{selectedVideo.title}</strong>
+                <small>{videoMeta(selectedVideo, t)}</small>
+              </div>
+              <button type="button" onClick={() => setSelectedVideo(null)}>{t.close}</button>
+            </div>
+            <video
+              className="videoPlayer"
+              controls
+              autoPlay
+              preload="metadata"
+              poster={selectedVideo.thumbnailUrl}
+              src={`/api/client/videos/${selectedVideo.id}/file`}
+            />
+          </div>
+        </div>
+      )}
       {setupRequired && (
         <div className="authOverlay setupOverlay" role="dialog" aria-modal="true" aria-labelledby="setup-title">
           <form className="authPanel setupPanel" onSubmit={submitSetup}>
@@ -2006,11 +2047,13 @@ function VideoShelf({
   subtitle,
   videos,
   meta,
+  onOpen,
 }: {
   title: string;
   subtitle: string;
   videos: VideoAsset[];
   meta: (video: VideoAsset) => string;
+  onOpen: (video: VideoAsset) => void;
 }) {
   return (
     <div className="bookShelf videoShelf">
@@ -2022,24 +2065,34 @@ function VideoShelf({
       </div>
       <div className="shelfScroller">
         {videos.map((video) => (
-          <VideoTile className="shelfBook" key={`video-${video.id}`} video={video} meta={meta(video)} />
+          <VideoTile className="shelfBook" key={`video-${video.id}`} video={video} meta={meta(video)} onOpen={onOpen} />
         ))}
       </div>
     </div>
   );
 }
 
-function VideoTile({ video, meta, className = "book" }: { video: VideoAsset; meta: string; className?: string }) {
+function VideoTile({ video, meta, onOpen, className = "book" }: { video: VideoAsset; meta: string; onOpen: (video: VideoAsset) => void; className?: string }) {
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+
   return (
-    <button className={`${className} videoCard`} title={video.title}>
+    <button className={`${className} videoCard`} title={video.title} onClick={() => onOpen(video)}>
       <span className="shelfCover videoCover">
-        <img src={video.thumbnailUrl} alt="" loading="lazy" />
+        {!thumbnailFailed && <img src={video.thumbnailUrl} alt="" loading="lazy" onError={() => setThumbnailFailed(true)} />}
+        <span className="videoCoverFallback">
+          <em>Now Showing</em>
+          <strong>{video.title}</strong>
+        </span>
         <span className="videoCoverFormat">{video.format.toUpperCase()}</span>
       </span>
       <strong>{video.title}</strong>
       <small>{meta}</small>
     </button>
   );
+}
+
+function compareVideosByTitle(a: VideoAsset, b: VideoAsset) {
+  return a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true });
 }
 
 function compareGamesByPlatform(a: GameAsset, b: GameAsset) {
@@ -2098,11 +2151,12 @@ function gamePlatformLabel(game: GameAsset) {
 }
 
 function collectionCountLabel(item: Series) {
+  if (item.primaryType === "video") return `${item.bookCount} videos`;
   return item.collectionType === "game_platform" ? `${item.bookCount} games` : `${item.bookCount} volumes`;
 }
 
 function collectionKind(item: Series, libraries: Library[]) {
-  if (item.primaryType === "book" || item.primaryType === "comic" || item.primaryType === "game") {
+  if (item.primaryType === "book" || item.primaryType === "comic" || item.primaryType === "game" || item.primaryType === "video") {
     return item.primaryType;
   }
   if (item.collectionType === "game_platform") return "game";
@@ -2111,9 +2165,15 @@ function collectionKind(item: Series, libraries: Library[]) {
   return "comic";
 }
 
-function loadedCollectionCountLabel(item: Series, bookCount: number, gameCount: number) {
+function loadedCollectionCountLabel(item: Series, bookCount: number, gameCount: number, videoCount: number) {
+  if (item.primaryType === "video") {
+    return `${videoCount} videos`;
+  }
   if (item.collectionType === "game_platform") {
     return `${gameCount} games`;
+  }
+  if (videoCount > 0) {
+    return `${bookCount} volumes · ${videoCount} videos`;
   }
   if (gameCount > 0) {
     return `${bookCount} volumes · ${gameCount} games`;
@@ -2400,6 +2460,7 @@ const translations = {
     comicCollections: "漫画",
     bookCollections: "书籍",
     gameCollections: "游戏",
+    videoCollections: "视频",
     libraries: "资源目录",
     name: "名称",
     add: "添加",
@@ -2524,6 +2585,7 @@ const translations = {
     comicCollections: "漫畫",
     bookCollections: "書籍",
     gameCollections: "遊戲",
+    videoCollections: "影片",
     libraries: "資源目錄",
     name: "名稱",
     add: "新增",
@@ -2648,6 +2710,7 @@ const translations = {
     comicCollections: "Comics",
     bookCollections: "Books",
     gameCollections: "Games",
+    videoCollections: "Videos",
     libraries: "Resource Directories",
     name: "Name",
     add: "Add",
@@ -2772,6 +2835,7 @@ const translations = {
     comicCollections: "漫画",
     bookCollections: "書籍",
     gameCollections: "ゲーム",
+    videoCollections: "ビデオ",
     libraries: "リソース",
     name: "名前",
     add: "追加",
@@ -2896,6 +2960,7 @@ const translations = {
     comicCollections: "만화",
     bookCollections: "도서",
     gameCollections: "게임",
+    videoCollections: "비디오",
     libraries: "리소스",
     name: "이름",
     add: "추가",
