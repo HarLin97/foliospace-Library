@@ -631,14 +631,16 @@ funland/foliospace-library:latest should be promoted after the 0.82 Docker Hub u
 Current Docker Hub digest:
 
 ```text
-0.82: sha256:12ea400f1be196f7eab2bfe3bbb15d4e19d068ad329f357be05d3a86ca1be944
+0.82 manifest: sha256:e13d20c0c3e27bd13e504ea3c2cc60a2d18d115d4cbb6e1cf90693b7b4f80544
+amd64:         sha256:7783d385a62a0324266c7df2840a664bee742bcad97fa787e8027b8ce07fd902
+arm64:         sha256:0dcce968b470fe9e0a3dacd85ad13d8ffc8c68ce0e5191900626d75cbfcef599
 ```
 
 Architectures:
 
 ```text
-0.82 is currently published as linux/amd64 from the production NAS build host.
-Use a buildx-capable host to publish a future multi-architecture linux/amd64 + linux/arm64 manifest.
+linux/amd64
+linux/arm64
 ```
 
 Service version returned by API:
