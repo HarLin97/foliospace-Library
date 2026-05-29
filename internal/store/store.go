@@ -264,6 +264,140 @@ func (s *Store) DeleteEmptySeries(libraryID int64) error {
 	return err
 }
 
+func (s *Store) DeleteSkippedDirectoryEntries(libraryID int64, names []string) (int64, error) {
+	if len(names) == 0 {
+		return 0, nil
+	}
+	conditions, args := skippedDirectoryConditions("rel_path", names)
+	args = append([]any{libraryID}, args...)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT DISTINCT book_id FROM files WHERE library_id = ? AND (`+conditions+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	var bookIDs []int64
+	for rows.Next() {
+		var bookID int64
+		if err := rows.Scan(&bookID); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		bookIDs = append(bookIDs, bookID)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	fileRes, err := tx.Exec(`DELETE FROM files WHERE library_id = ? AND (`+conditions+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	deletedFiles, err := fileRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	gameConditions, gameArgs := skippedDirectoryConditions("rel_path", names)
+	gameArgs = append([]any{libraryID}, gameArgs...)
+	gameRes, err := tx.Exec(`DELETE FROM games WHERE library_id = ? AND (`+gameConditions+`)`, gameArgs...)
+	if err != nil {
+		return 0, err
+	}
+	deletedGames, err := gameRes.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	errorConditions, errorArgs := skippedDirectoryConditions("path", names)
+	errorArgs = append([]any{libraryID}, errorArgs...)
+	if _, err := tx.Exec(`DELETE FROM file_errors WHERE library_id = ? AND (`+errorConditions+`)`, errorArgs...); err != nil {
+		return 0, err
+	}
+
+	orphanBookIDs, err := orphanedBookIDs(tx, bookIDs)
+	if err != nil {
+		return 0, err
+	}
+	if len(orphanBookIDs) > 0 {
+		placeholders, deleteArgs := int64Placeholders(orphanBookIDs)
+		if _, err := tx.Exec(`DELETE FROM read_progress WHERE book_id IN (`+placeholders+`)`, deleteArgs...); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`DELETE FROM pages WHERE book_id IN (`+placeholders+`)`, deleteArgs...); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`DELETE FROM books WHERE id IN (`+placeholders+`)`, deleteArgs...); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM series
+		WHERE library_id = ?
+		AND id NOT IN (SELECT DISTINCT series_id FROM books)`, libraryID); err != nil {
+		return 0, err
+	}
+	return deletedFiles + deletedGames, tx.Commit()
+}
+
+func skippedDirectoryConditions(column string, names []string) (string, []any) {
+	conditions := make([]string, 0, len(names)*2)
+	args := make([]any, 0, len(names)*3)
+	for _, name := range names {
+		name = strings.Trim(strings.TrimSpace(name), `/\`)
+		if name == "" {
+			continue
+		}
+		conditions = append(conditions, column+" = ?", column+" LIKE ?", column+" LIKE ?")
+		args = append(args, name, name+"/%", "%/"+name+"/%")
+	}
+	if len(conditions) == 0 {
+		return "1 = 0", nil
+	}
+	return strings.Join(conditions, " OR "), args
+}
+
+func orphanedBookIDs(tx *sql.Tx, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders, args := int64Placeholders(ids)
+	rows, err := tx.Query(`SELECT b.id FROM books b
+		WHERE b.id IN (`+placeholders+`)
+		AND NOT EXISTS (SELECT 1 FROM files f WHERE f.book_id = b.id)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]int64, 0, len(ids))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func int64Placeholders(ids []int64) (string, []any) {
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return strings.Join(placeholders, ","), args
+}
+
 func (s *Store) UpsertBook(seriesID int64, title string, format string) (domain.Book, error) {
 	_, err := s.db.Exec(`INSERT INTO books(series_id, title, format) VALUES(?, ?, ?)
 		ON CONFLICT(series_id, title, format) DO UPDATE SET updated_at = CURRENT_TIMESTAMP`, seriesID, title, format)

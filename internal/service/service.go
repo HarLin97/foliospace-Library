@@ -598,6 +598,8 @@ func (s *Service) AnalyzeBook(id int64) ([]domain.Page, error) {
 	var pages []domain.Page
 	if book.Format == "epub" {
 		pages, err = archive.ListEPUBSpine(book.FilePath)
+	} else if book.Format == "pdf" {
+		pages = []domain.Page{{Index: 0, Name: filepath.Base(book.FilePath)}}
 	} else {
 		pages, err = archive.ListPages(book.FilePath)
 	}
@@ -628,6 +630,16 @@ func (s *Service) OpenPage(bookID int64, pageIndex int) (PageStream, error) {
 	}
 	if book.FilePath == "" {
 		return PageStream{}, fmt.Errorf("book has no indexed file")
+	}
+	if book.Format == "pdf" {
+		if pageIndex != 0 {
+			return PageStream{}, fmt.Errorf("page index %d out of range", pageIndex)
+		}
+		body, err := os.Open(book.FilePath)
+		if err != nil {
+			return PageStream{}, err
+		}
+		return PageStream{Body: body, ContentType: "application/pdf"}, nil
 	}
 	if book.Format == "epub" {
 		pages, err := s.Pages(bookID)
@@ -665,7 +677,22 @@ func (s *Service) OpenCover(bookID int64) (PageStream, error) {
 		}
 		return PageStream{Body: body, ContentType: contentType}, nil
 	}
+	if book.Format == "pdf" {
+		return PageStream{
+			Body:        io.NopCloser(strings.NewReader(pdfCoverPlaceholder())),
+			ContentType: "image/svg+xml; charset=utf-8",
+		}, nil
+	}
 	return s.OpenPage(bookID, 0)
+}
+
+func pdfCoverPlaceholder() string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" width="420" height="600" viewBox="0 0 420 600">
+		<rect width="420" height="600" fill="#f5f1e8"/>
+		<rect x="34" y="34" width="352" height="532" rx="18" fill="#fffaf0" stroke="#d2c7b4" stroke-width="4"/>
+		<text x="210" y="260" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" font-weight="700" fill="#1f2a2e">PDF</text>
+		<text x="210" y="316" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" letter-spacing="3" fill="#6d6255">NOW PRINTING</text>
+	</svg>`
 }
 
 func (s *Service) EPUBManifest(bookID int64) (domain.EPUBManifest, error) {

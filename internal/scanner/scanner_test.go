@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -537,6 +538,118 @@ func TestScanLibraryTreats7zAsBookUnlessLibraryIsGameTyped(t *testing.T) {
 	}
 	if len(games) != 0 {
 		t.Fatalf("games after cleanup = %#v, want stale 7z game removed", games)
+	}
+}
+
+func TestScanLibraryIndexesPDFAsBook(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "Manuals", "guide.pdf")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("%PDF-1.4\n% foliospace test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.DiscoveredFiles != 1 || job.IndexedFiles != 1 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want one pdf indexed", job)
+	}
+
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].Title != "Manuals" || series[0].PrimaryType != "book" {
+		t.Fatalf("series = %#v, want pdf book collection", series)
+	}
+	books, err := st.ListBooks(series[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 || books[0].Title != "guide" || books[0].Format != "pdf" || books[0].PageCount != 1 {
+		t.Fatalf("books = %#v, want single-page pdf entry", books)
+	}
+}
+
+func TestScanLibraryPrunesSkippedDirectoryIndexes(t *testing.T) {
+	root := t.TempDir()
+	activePath := filepath.Join(root, "Active", "keep.cbz")
+	recyclePath := filepath.Join(root, "#recycle", "old.cbz")
+	if err := os.MkdirAll(filepath.Dir(activePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeZip(t, activePath, map[string]string{"001.jpg": "keep"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeSeries, err := st.UpsertSeries(lib.ID, "Active", "Active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSeries, err := st.UpsertSeries(lib.ID, "#recycle", "#recycle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldBook, err := st.UpsertBook(oldSeries.ID, "old", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(oldBook.ID, lib.ID, recyclePath, "#recycle/old.cbz", 10, time.Unix(10, 0), ".cbz"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertBook(activeSeries.ID, "placeholder", "cbz"); err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want clean completed scan", job)
+	}
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range series {
+		if strings.Contains(item.DirectoryPath, "#recycle") || strings.Contains(item.Title, "#recycle") {
+			t.Fatalf("series = %#v, want recycle collection pruned", series)
+		}
+	}
+	books, err := st.ListBooks(activeSeries.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, book := range books {
+		if book.Title == "old" {
+			t.Fatalf("books = %#v, want recycle book pruned", books)
+		}
 	}
 }
 

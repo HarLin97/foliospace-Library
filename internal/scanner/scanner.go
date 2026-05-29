@@ -119,7 +119,6 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 			expectedPlatform := inferGamePlatform(ext, relPath)
 			if s.store.CanSkipGame(path, info.Size(), info.ModTime(), expectedPlatform) {
 				job.SkippedFiles++
-				_ = s.store.AddJobEvent(job.ID, "debug", "skipped unchanged game: "+path)
 				_ = s.store.UpdateScanJob(job)
 				return nil
 			}
@@ -144,9 +143,8 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 		}
 
 		if index, ok := s.unchangedFileIndex(path, info, ext); ok {
-			if hasCachedBookMetadata(index, ext) {
+			if canSkipUnchangedBook(library, path, index, ext) {
 				job.SkippedFiles++
-				_ = s.store.AddJobEvent(job.ID, "debug", "skipped unchanged: "+path)
 				_ = s.store.UpdateScanJob(job)
 				return nil
 			}
@@ -165,7 +163,6 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 				job.ReclassifiedFiles++
 			}
 			job.SkippedFiles++
-			_ = s.store.AddJobEvent(job.ID, "debug", "skipped unchanged: "+path)
 			_ = s.store.UpdateScanJob(job)
 			return nil
 		}
@@ -200,7 +197,7 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 		_ = s.store.AddJobEvent(job.ID, "error", "scan failed: "+walkErr.Error())
 		return job, walkErr
 	}
-	if err := s.store.DeleteEmptySeries(library.ID); err != nil {
+	if err := s.cleanupSkippedEntries(library, &job); err != nil {
 		job.Status = "failed"
 		job.CurrentPath = ""
 		job.FinishedAt = time.Now()
@@ -293,13 +290,17 @@ func (s *Scanner) runScanJobConcurrent(library domain.Library, job domain.ScanJo
 	taskCh := make(chan scanFileTask, len(tasks))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	lastPersist := time.Now()
 	stopped := false
 
 	updateJob := func(change func(*domain.ScanJob)) {
 		mu.Lock()
 		defer mu.Unlock()
 		change(&job)
-		_ = s.store.UpdateScanJob(job)
+		if time.Since(lastPersist) >= 500*time.Millisecond || job.Status != "running" {
+			_ = s.store.UpdateScanJob(job)
+			lastPersist = time.Now()
+		}
 	}
 	checkControl := func() bool {
 		mu.Lock()
@@ -341,7 +342,7 @@ func (s *Scanner) runScanJobConcurrent(library domain.Library, job domain.ScanJo
 	if job.Status == "paused" || job.Status == "cancelled" {
 		return job, nil
 	}
-	if err := s.store.DeleteEmptySeries(library.ID); err != nil {
+	if err := s.cleanupSkippedEntries(library, &job); err != nil {
 		job.Status = "failed"
 		job.CurrentPath = ""
 		job.FinishedAt = time.Now()
@@ -375,7 +376,6 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 			updateJob(func(job *domain.ScanJob) {
 				setCurrent(job)
 				job.SkippedFiles++
-				_ = s.store.AddJobEvent(jobID, "debug", "skipped unchanged game: "+task.path)
 			})
 			return
 		}
@@ -396,11 +396,10 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 	}
 
 	if index, ok := s.unchangedFileIndex(task.path, task.info, task.ext); ok {
-		if hasCachedBookMetadata(index, task.ext) {
+		if canSkipUnchangedBook(library, task.path, index, task.ext) {
 			updateJob(func(job *domain.ScanJob) {
 				setCurrent(job)
 				job.SkippedFiles++
-				_ = s.store.AddJobEvent(jobID, "debug", "skipped unchanged: "+task.path)
 			})
 			return
 		}
@@ -418,7 +417,6 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 				job.ReclassifiedFiles++
 			}
 			job.SkippedFiles++
-			_ = s.store.AddJobEvent(jobID, "debug", "skipped unchanged: "+task.path)
 		})
 		return
 	}
@@ -439,6 +437,17 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 		}
 		_ = s.store.AddJobEvent(jobID, "info", "indexed: "+task.path)
 	})
+}
+
+func (s *Scanner) cleanupSkippedEntries(library domain.Library, job *domain.ScanJob) error {
+	deleted, err := s.store.DeleteSkippedDirectoryEntries(library.ID, skippedScanDirNames())
+	if err != nil {
+		return err
+	}
+	if deleted > 0 {
+		_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("removed %d skipped-directory entries", deleted))
+	}
+	return s.store.DeleteEmptySeries(library.ID)
 }
 
 func (s *Scanner) recordTaskError(libraryID int64, jobID int64, path string, code domain.ErrorCode, eventPrefix string, err error, updateJob func(func(*domain.ScanJob))) {
@@ -507,7 +516,7 @@ func classifyFileKind(library domain.Library, path string, ext string) string {
 }
 
 func isBookExt(ext string) bool {
-	return ext == ".cbz" || ext == ".zip" || ext == ".epub" || ext == ".7z"
+	return ext == ".cbz" || ext == ".zip" || ext == ".epub" || ext == ".7z" || ext == ".pdf"
 }
 
 func isGamePackageExt(ext string) bool {
@@ -536,9 +545,14 @@ func (s *Scanner) unchangedFileIndex(path string, info fs.FileInfo, ext string) 
 	return index, ok
 }
 
-func hasCachedBookMetadata(index store.FileIndex, ext string) bool {
+func canSkipUnchangedBook(library domain.Library, path string, index store.FileIndex, ext string) bool {
 	if ext != ".epub" {
-		return false
+		relPath, err := filepath.Rel(library.RootPath, path)
+		if err != nil {
+			return false
+		}
+		seriesTitle, _ := seriesIdentityForRelPath(library.RootPath, relPath)
+		return index.Book.CollectionTitle == seriesTitle
 	}
 	return strings.TrimSpace(index.Book.Creator) != "" || strings.TrimSpace(index.Book.Description) != ""
 }
@@ -592,6 +606,9 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 func listBookPages(path string, ext string) ([]domain.Page, error) {
 	if ext == ".epub" {
 		return archive.ListEPUBSpine(path)
+	}
+	if ext == ".pdf" {
+		return []domain.Page{{Index: 0, Name: filepath.Base(path)}}, nil
 	}
 	return archive.ListPages(path)
 }
@@ -753,11 +770,15 @@ func shouldSkipScanDir(rootPath string, path string) bool {
 		return false
 	}
 	switch filepath.Base(path) {
-	case "#recycle", "@eaDir", ".calnotes":
+	case skippedScanDirNames()[0], skippedScanDirNames()[1], skippedScanDirNames()[2]:
 		return true
 	default:
 		return false
 	}
+}
+
+func skippedScanDirNames() []string {
+	return []string{"#recycle", "@eaDir", ".calnotes"}
 }
 
 func seriesIdentityForRelPath(rootPath string, relPath string) (string, string) {

@@ -654,7 +654,7 @@ export function App() {
   }
 
   useEffect(() => {
-    if (!selectedBook || pages.length === 0 || selectedBook.format === "epub") return;
+    if (!selectedBook || pages.length === 0 || selectedBook.format === "epub" || selectedBook.format === "pdf") return;
 
     let cancelled = false;
     const targetIndex = pageIndex;
@@ -1279,7 +1279,7 @@ export function App() {
                           />
                         </label>
                       </>
-                    ) : (
+                    ) : selectedBook.format === "pdf" ? null : (
                       <div className="segmentedControl" role="group" aria-label="Page mode">
                         <button
                           className={readerPageMode === "single" ? "selected" : ""}
@@ -1362,13 +1362,13 @@ export function App() {
                   </section>
                 )}
                 <div
-                  className={`pageStage ${selectedBook.format === "epub" ? "epub" : readerPageMode}`}
+                  className={`pageStage ${selectedBook.format === "epub" ? "epub" : selectedBook.format === "pdf" ? "pdf" : readerPageMode}`}
                   onMouseDownCapture={handleReaderMouseDown}
                   onTouchStartCapture={handleReaderTouchStart}
                 >
                   <button className="pageEdge previous" aria-label="Previous page" onClick={goReaderPrevious} />
                   <button className="pageEdge next" aria-label="Next page" onClick={goReaderNext} />
-                  {readerLoadState === "loading" && selectedBook.format !== "epub" && pageIndex !== displayedPageIndex && (
+                  {readerLoadState === "loading" && selectedBook.format !== "epub" && selectedBook.format !== "pdf" && pageIndex !== displayedPageIndex && (
                     <div className="pageLoading floating" role="status" aria-live="polite">
                       <div className="pageProgress"><div /></div>
                       <span>{t.loadingPage(pageIndex + 1)}</span>
@@ -1425,6 +1425,12 @@ export function App() {
                         }}
                       />
                     </>
+                  ) : selectedBook.format === "pdf" ? (
+                    <iframe
+                      className="pdfFrame"
+                      title={selectedBook.title}
+                      src={`/api/books/${selectedBook.id}/pages/0`}
+                    />
                   ) : (
                     <div className="pageSpread" aria-live="polite">
                       {visiblePageIndexes(displayedPageIndex, pages.length, readerPageMode).map((visibleIndex) => (
