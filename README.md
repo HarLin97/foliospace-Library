@@ -92,6 +92,12 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
+Release `0.8` is published as a multi-architecture image for `linux/amd64` and `linux/arm64`:
+
+```bash
+docker pull funland/foliospace-library:0.8
+```
+
 For local verification:
 
 ```bash
@@ -108,7 +114,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  foliospace-library:0.8
+  funland/foliospace-library:0.8
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
