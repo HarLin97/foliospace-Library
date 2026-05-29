@@ -859,22 +859,46 @@ func (s *Store) UpsertFile(bookID int64, libraryID int64, absPath string, relPat
 
 type FileIndex struct {
 	File      domain.File
+	Book      domain.Book
 	Analyzed  bool
 	PageCount int
 }
 
 func (s *Store) FileIndexByPath(absPath string) (FileIndex, error) {
-	row := s.db.QueryRow(`SELECT f.id, f.book_id, f.library_id, f.abs_path, f.rel_path, f.size, f.mtime, f.ext, b.analyzed, b.page_count
+	row := s.db.QueryRow(`SELECT f.id, f.book_id, f.library_id, f.abs_path, f.rel_path, f.size, f.mtime, f.ext,
+			b.id, b.series_id, s.title, b.title, b.creator, b.description, b.format, b.analyzed, b.page_count
 		FROM files f JOIN books b ON b.id = f.book_id
+		JOIN series s ON s.id = b.series_id
 		WHERE f.abs_path = ?`, absPath)
 	var item FileIndex
 	var mtime string
 	var analyzed int
-	if err := row.Scan(&item.File.ID, &item.File.BookID, &item.File.LibraryID, &item.File.AbsPath, &item.File.RelPath, &item.File.Size, &mtime, &item.File.Ext, &analyzed, &item.PageCount); err != nil {
+	if err := row.Scan(
+		&item.File.ID,
+		&item.File.BookID,
+		&item.File.LibraryID,
+		&item.File.AbsPath,
+		&item.File.RelPath,
+		&item.File.Size,
+		&mtime,
+		&item.File.Ext,
+		&item.Book.ID,
+		&item.Book.SeriesID,
+		&item.Book.CollectionTitle,
+		&item.Book.Title,
+		&item.Book.Creator,
+		&item.Book.Description,
+		&item.Book.Format,
+		&analyzed,
+		&item.PageCount,
+	); err != nil {
 		return item, err
 	}
 	item.File.MTime = parseTime(mtime)
 	item.Analyzed = analyzed != 0
+	item.Book.Analyzed = item.Analyzed
+	item.Book.PageCount = item.PageCount
+	item.Book.FilePath = item.File.AbsPath
 	return item, nil
 }
 

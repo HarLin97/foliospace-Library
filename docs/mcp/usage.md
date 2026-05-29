@@ -47,13 +47,20 @@ Use an absolute path for `command`.
 - `foliospace.save_preferences`: save client preferences.
 - `foliospace.get_private_state`: read per-book private state.
 - `foliospace.save_private_state`: save per-book private state.
+- `foliospace.list_favorites`: list favorite books as client-safe DTOs.
+- `foliospace.list_private_status`: list books by private status, for example `want`, `reading`, `finished`, or `dropped`.
 - `foliospace.get_progress`: read reading progress.
 - `foliospace.save_progress`: save reading progress.
+- `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection. This admin tool can expose configured mount paths.
 - `foliospace.list_collections`: list collections.
+- `foliospace.list_collection_volumes`: list books/comics in a collection with optional `limit`, `offset`, `q`, and `sort`.
 - `foliospace.list_collection_assets`: list mixed collection assets by `collectionId`.
 - `foliospace.scan_library`: start a library scan by `libraryId`.
 - `foliospace.list_jobs`: list scan/import jobs.
 - `foliospace.job_events`: list job events by `jobId`.
+- `foliospace.pause_job`: request pause for a running scan job.
+- `foliospace.cancel_job`: request cancellation for a running, pause-requested, or paused scan job.
+- `foliospace.resume_job`: resume a paused scan job by starting a new scan for the same library.
 - `foliospace.list_errors`: list scan/import errors, optionally filtered by `jobId`.
 - `foliospace.library_health`: service info plus job and error counts.
 
@@ -62,6 +69,7 @@ Use an absolute path for `command`.
 - `foliospace://client/info`
 - `foliospace://client/home`
 - `foliospace://client/preferences`
+- `foliospace://libraries`
 - `foliospace://jobs`
 - `foliospace://errors`
 - `foliospace://health`
@@ -86,18 +94,30 @@ Open a game manifest:
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"foliospace.open_game_manifest","arguments":{"gameId":12}}}
 ```
 
+List want-to-read books:
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"foliospace.list_private_status","arguments":{"status":"want","limit":12}}}
+```
+
+Pause a running scan job:
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"foliospace.pause_job","arguments":{"jobId":42}}}
+```
+
 Save interface language preference:
 
 ```json
-{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"foliospace.save_preferences","arguments":{"interfaceLanguage":"zh-Hans"}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"foliospace.save_preferences","arguments":{"interfaceLanguage":"zh-Hans"}}}
 ```
 
 Read current health:
 
 ```json
-{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"foliospace://health"}}
+{"jsonrpc":"2.0","id":7,"method":"resources/read","params":{"uri":"foliospace://health"}}
 ```
 
 ## Design Notes
 
-MCP responses intentionally avoid NAS file paths. Book pages, EPUB resources, covers, and game files are exposed as service URLs from the HTTP API. Keep performance-sensitive reader and emulator paths on HTTP; use MCP for agent decisions, setup, troubleshooting, and orchestration.
+Most MCP responses intentionally avoid NAS file paths. Book pages, EPUB resources, covers, and game files are exposed as service URLs from the HTTP API. The exception is `foliospace.list_libraries` / `foliospace://libraries`, which is an admin/diagnostic surface for choosing scan targets and can expose configured mount roots. Keep performance-sensitive reader and emulator paths on HTTP; use MCP for agent decisions, setup, troubleshooting, and orchestration.

@@ -118,13 +118,20 @@ func tools() []Tool {
 		{Name: "foliospace.save_preferences", Description: "Save client preferences. Pass the same JSON shape as the HTTP Client API.", InputSchema: objectSchema(map[string]any{"interfaceLanguage": stringSchema("Interface language code, for example zh-Hans, zh-Hant, en, or ja.")}, nil)},
 		{Name: "foliospace.get_private_state", Description: "Read per-book private reader state such as bookmarks, notes, selected text, or local-only UI state.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id.")}, []string{"bookId"})},
 		{Name: "foliospace.save_private_state", Description: "Save per-book private reader state. bookId selects the book; remaining fields are forwarded to the API.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id.")}, []string{"bookId"})},
+		{Name: "foliospace.list_favorites", Description: "List favorite books as client-safe DTOs.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of results.")}, nil)},
+		{Name: "foliospace.list_private_status", Description: "List books with a private status such as want, reading, finished, or dropped.", InputSchema: objectSchema(map[string]any{"status": stringSchema("Private status."), "limit": integerSchema("Maximum number of results.")}, []string{"status"})},
 		{Name: "foliospace.get_progress", Description: "Read saved reading progress for a book.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id.")}, []string{"bookId"})},
 		{Name: "foliospace.save_progress", Description: "Save reading progress for a book. bookId selects the book; remaining fields are forwarded to the API.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id.")}, []string{"bookId"})},
+		{Name: "foliospace.list_libraries", Description: "List configured library roots for diagnostics and scan selection. This admin tool can expose configured mount paths.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.list_collections", Description: "List library collections.", InputSchema: objectSchema(nil, nil)},
+		{Name: "foliospace.list_collection_volumes", Description: "List books/comics in a collection with optional pagination and filtering.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "sort": stringSchema("Server-supported sort key.")}, []string{"collectionId"})},
 		{Name: "foliospace.list_collection_assets", Description: "List mixed assets in a collection, including books, comics, games, documents, and media as available.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id.")}, []string{"collectionId"})},
 		{Name: "foliospace.scan_library", Description: "Start a scan for a configured library.", InputSchema: objectSchema(map[string]any{"libraryId": integerSchema("Library id.")}, []string{"libraryId"})},
 		{Name: "foliospace.list_jobs", Description: "List scan/import jobs.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.job_events", Description: "List events for a scan/import job.", InputSchema: objectSchema(map[string]any{"jobId": integerSchema("Job id.")}, []string{"jobId"})},
+		{Name: "foliospace.pause_job", Description: "Request pause for a running scan job.", InputSchema: objectSchema(map[string]any{"jobId": integerSchema("Job id.")}, []string{"jobId"})},
+		{Name: "foliospace.cancel_job", Description: "Request cancellation for a running, pause-requested, or paused scan job.", InputSchema: objectSchema(map[string]any{"jobId": integerSchema("Job id.")}, []string{"jobId"})},
+		{Name: "foliospace.resume_job", Description: "Resume a paused scan job by starting a new scan for the same library.", InputSchema: objectSchema(map[string]any{"jobId": integerSchema("Paused job id.")}, []string{"jobId"})},
 		{Name: "foliospace.list_errors", Description: "List scan/import errors, optionally filtered by job id.", InputSchema: objectSchema(map[string]any{"jobId": integerSchema("Optional job id filter.")}, nil)},
 		{Name: "foliospace.library_health", Description: "Return service info plus current job and error counts for agent diagnostics.", InputSchema: objectSchema(nil, nil)},
 	}
@@ -135,6 +142,7 @@ func resources() []Resource {
 		{URI: "foliospace://client/info", Name: "Client Info", Description: "Current FolioSpace Library service metadata.", MimeType: "application/json"},
 		{URI: "foliospace://client/home", Name: "Home", Description: "Continue reading, recent books, and collections.", MimeType: "application/json"},
 		{URI: "foliospace://client/preferences", Name: "Preferences", Description: "Client preference state.", MimeType: "application/json"},
+		{URI: "foliospace://libraries", Name: "Libraries", Description: "Configured libraries for diagnostics and scan selection.", MimeType: "application/json"},
 		{URI: "foliospace://jobs", Name: "Jobs", Description: "Scan/import job list.", MimeType: "application/json"},
 		{URI: "foliospace://errors", Name: "Errors", Description: "Scan/import error list.", MimeType: "application/json"},
 		{URI: "foliospace://health", Name: "Library Health", Description: "Service, job, and error summary.", MimeType: "application/json"},
@@ -157,6 +165,8 @@ func (s *Server) readResource(ctx context.Context, raw json.RawMessage) (any, er
 		data, err = s.get(ctx, "/api/client/home")
 	case "foliospace://client/preferences":
 		data, err = s.get(ctx, "/api/client/preferences")
+	case "foliospace://libraries":
+		data, err = s.get(ctx, "/api/libraries")
 	case "foliospace://jobs":
 		data, err = s.get(ctx, "/api/jobs")
 	case "foliospace://errors":
@@ -221,14 +231,23 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		bookID := intArg(params.Arguments, "bookId")
 		body := withoutKeys(params.Arguments, "bookId")
 		data, err = s.put(ctx, fmt.Sprintf("/api/client/books/%d/private-state", bookID), body)
+	case "foliospace.list_favorites":
+		data, err = s.get(ctx, "/api/client/books/favorites?"+limitQuery(params.Arguments, 12))
+	case "foliospace.list_private_status":
+		status := stringArg(params.Arguments, "status")
+		data, err = s.get(ctx, "/api/client/books/private-status/"+url.PathEscape(status)+"?"+limitQuery(params.Arguments, 12))
 	case "foliospace.get_progress":
 		data, err = s.get(ctx, fmt.Sprintf("/api/books/%d/progress", intArg(params.Arguments, "bookId")))
 	case "foliospace.save_progress":
 		bookID := intArg(params.Arguments, "bookId")
 		body := withoutKeys(params.Arguments, "bookId")
 		data, err = s.put(ctx, fmt.Sprintf("/api/books/%d/progress", bookID), body)
+	case "foliospace.list_libraries":
+		data, err = s.get(ctx, "/api/libraries")
 	case "foliospace.list_collections":
 		data, err = s.get(ctx, "/api/collections")
+	case "foliospace.list_collection_volumes":
+		data, err = s.get(ctx, fmt.Sprintf("/api/collections/%d/volumes?%s", intArg(params.Arguments, "collectionId"), collectionVolumesQuery(params.Arguments)))
 	case "foliospace.list_collection_assets":
 		data, err = s.get(ctx, fmt.Sprintf("/api/collections/%d/assets", intArg(params.Arguments, "collectionId")))
 	case "foliospace.scan_library":
@@ -237,6 +256,12 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		data, err = s.get(ctx, "/api/jobs")
 	case "foliospace.job_events":
 		data, err = s.get(ctx, fmt.Sprintf("/api/jobs/%d/events", intArg(params.Arguments, "jobId")))
+	case "foliospace.pause_job":
+		data, err = s.post(ctx, fmt.Sprintf("/api/jobs/%d/pause", intArg(params.Arguments, "jobId")), map[string]any{})
+	case "foliospace.cancel_job":
+		data, err = s.post(ctx, fmt.Sprintf("/api/jobs/%d/cancel", intArg(params.Arguments, "jobId")), map[string]any{})
+	case "foliospace.resume_job":
+		data, err = s.post(ctx, fmt.Sprintf("/api/jobs/%d/resume", intArg(params.Arguments, "jobId")), map[string]any{})
 	case "foliospace.list_errors":
 		if jobID := intArg(params.Arguments, "jobId"); jobID > 0 {
 			data, err = s.get(ctx, fmt.Sprintf("/api/errors?jobId=%d", jobID))
@@ -371,6 +396,24 @@ func gameListQuery(args map[string]any) string {
 		values.Set("offset", strconv.FormatInt(offset, 10))
 	}
 	for _, key := range []string{"q", "platform", "format", "sort"} {
+		if value := stringArg(args, key); value != "" {
+			values.Set(key, value)
+		}
+	}
+	return values.Encode()
+}
+
+func collectionVolumesQuery(args map[string]any) string {
+	values := url.Values{}
+	limit := intArg(args, "limit")
+	if limit > 0 {
+		values.Set("limit", strconv.FormatInt(limit, 10))
+	}
+	offset := intArg(args, "offset")
+	if offset > 0 {
+		values.Set("offset", strconv.FormatInt(offset, 10))
+	}
+	for _, key := range []string{"q", "sort"} {
 		if value := stringArg(args, key); value != "" {
 			values.Set(key, value)
 		}

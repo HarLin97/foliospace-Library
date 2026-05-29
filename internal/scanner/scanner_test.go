@@ -159,6 +159,101 @@ func TestScanLibraryUsesEPUBMetadataForTitleCollectionAndBookDetails(t *testing.
 	}
 }
 
+func TestScanLibraryDoesNotReopenUnchangedEPUBWhenMetadataExists(t *testing.T) {
+	root := t.TempDir()
+	epubPath := filepath.Join(root, "Books", "cached.epub")
+	makeZip(t, epubPath, sampleEPUBEntriesWithMetadata("Cached Title", "Cached Author", "Cached description."))
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Books", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstJob.Status != "completed" || firstJob.ErrorCount != 0 || firstJob.IndexedFiles != 1 {
+		t.Fatalf("first job = %#v, want one clean indexed epub", firstJob)
+	}
+
+	info, err := os.Stat(epubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := make([]byte, info.Size())
+	copy(broken, []byte("not an epub"))
+	if err := os.WriteFile(epubPath, broken, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(epubPath, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.Status != "completed" || secondJob.ErrorCount != 0 || secondJob.SkippedFiles != 1 {
+		t.Fatalf("second job = %#v, want unchanged EPUB skipped without reopening metadata", secondJob)
+	}
+}
+
+func TestScanLibraryDisambiguatesDuplicateEPUBMetadataTitles(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Author", "Duplicate Book (160)", "first.epub"), sampleEPUBEntriesWithMetadata("Duplicate Book", "Author", "First copy."))
+	makeZip(t, filepath.Join(root, "Author", "Duplicate Book (161)", "second.epub"), sampleEPUBEntriesWithMetadata("Duplicate Book", "Author", "Second copy."))
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Books", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.ErrorCount != 0 || job.IndexedFiles != 2 {
+		t.Fatalf("job = %#v, want two duplicate-title EPUBs indexed without errors", job)
+	}
+
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].Title != "Author" {
+		t.Fatalf("series = %#v, want one author collection", series)
+	}
+	books, err := st.ListBooks(series[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 2 {
+		t.Fatalf("books = %#v, want both duplicate-title books retained", books)
+	}
+	titles := map[string]bool{}
+	for _, book := range books {
+		titles[book.Title] = true
+	}
+	if !titles["Duplicate Book (160)"] || !titles["Duplicate Book (161)"] {
+		t.Fatalf("titles = %#v, want Calibre ids appended for duplicate metadata titles", titles)
+	}
+}
+
 func TestScanLibraryUsesConfiguredWorkerPool(t *testing.T) {
 	t.Setenv("FOLIOSPACE_SCAN_WORKERS", "2")
 	root := t.TempDir()

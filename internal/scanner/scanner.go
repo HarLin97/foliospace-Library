@@ -143,7 +143,13 @@ func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain
 			return nil
 		}
 
-		if s.canSkipUnchanged(path, info, ext) {
+		if index, ok := s.unchangedFileIndex(path, info, ext); ok {
+			if hasCachedBookMetadata(index, ext) {
+				job.SkippedFiles++
+				_ = s.store.AddJobEvent(job.ID, "debug", "skipped unchanged: "+path)
+				_ = s.store.UpdateScanJob(job)
+				return nil
+			}
 			result, err := s.indexFileMetadata(library, path, info, ext)
 			if err != nil {
 				job.ErrorCount++
@@ -389,7 +395,15 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 		return
 	}
 
-	if s.canSkipUnchanged(task.path, task.info, task.ext) {
+	if index, ok := s.unchangedFileIndex(task.path, task.info, task.ext); ok {
+		if hasCachedBookMetadata(index, task.ext) {
+			updateJob(func(job *domain.ScanJob) {
+				setCurrent(job)
+				job.SkippedFiles++
+				_ = s.store.AddJobEvent(jobID, "debug", "skipped unchanged: "+task.path)
+			})
+			return
+		}
 		result, err := s.indexFileMetadata(library, task.path, task.info, task.ext)
 		if err != nil {
 			s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "metadata update failed: ", err, updateJob)
@@ -509,16 +523,24 @@ func isGameExt(ext string) bool {
 	}
 }
 
-func (s *Scanner) canSkipUnchanged(path string, info fs.FileInfo, ext string) bool {
+func (s *Scanner) unchangedFileIndex(path string, info fs.FileInfo, ext string) (store.FileIndex, bool) {
 	index, err := s.store.FileIndexByPath(path)
 	if err != nil {
-		return false
+		return store.FileIndex{}, false
 	}
-	return index.File.Size == info.Size() &&
+	ok := index.File.Size == info.Size() &&
 		index.File.Ext == ext &&
 		index.File.MTime.Equal(info.ModTime()) &&
 		index.Analyzed &&
 		index.PageCount > 0
+	return index, ok
+}
+
+func hasCachedBookMetadata(index store.FileIndex, ext string) bool {
+	if ext != ".epub" {
+		return false
+	}
+	return strings.TrimSpace(index.Book.Creator) != "" || strings.TrimSpace(index.Book.Description) != ""
 }
 
 func (s *Scanner) indexFile(library domain.Library, jobID int64, path string, info fs.FileInfo, ext string) (indexedBookResult, error) {
@@ -609,7 +631,11 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 	existing, err := s.store.FileIndexByPath(path)
 	if err == nil {
 		previous, previousErr := s.store.BookByID(existing.File.BookID)
-		book, err = s.store.UpdateBookIdentity(existing.File.BookID, series.ID, metadata.Title, format)
+		title, err := s.disambiguateBookTitle(library, series.ID, metadata.Title, format, relPath, existing.File.BookID)
+		if err != nil {
+			return indexedBookResult{}, err
+		}
+		book, err = s.store.UpdateBookIdentity(existing.File.BookID, series.ID, title, format)
 		if err != nil {
 			return indexedBookResult{}, err
 		}
@@ -629,7 +655,11 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 		}
 		return result, nil
 	} else {
-		book, err = s.store.UpsertBook(series.ID, metadata.Title, format)
+		title, titleErr := s.disambiguateBookTitle(library, series.ID, metadata.Title, format, relPath, 0)
+		if titleErr != nil {
+			return indexedBookResult{}, titleErr
+		}
+		book, err = s.store.UpsertBook(series.ID, title, format)
 		if err != nil {
 			return indexedBookResult{}, err
 		}
@@ -643,6 +673,43 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 		return indexedBookResult{}, err
 	}
 	return indexedBookResult{Book: book}, nil
+}
+
+func (s *Scanner) disambiguateBookTitle(library domain.Library, seriesID int64, title string, format string, relPath string, currentBookID int64) (string, error) {
+	existing, err := s.store.BookBySeriesTitle(seriesID, title, format)
+	if err != nil {
+		return title, nil
+	}
+	if existing.ID == currentBookID {
+		return title, nil
+	}
+
+	existingRelPath := existing.FilePath
+	if rel, relErr := filepath.Rel(library.RootPath, existing.FilePath); relErr == nil {
+		existingRelPath = rel
+	}
+	existingTitle := disambiguatedTitle(title, existingRelPath)
+	if existingTitle != existing.Title {
+		if _, err := s.store.UpdateBookIdentity(existing.ID, seriesID, existingTitle, format); err != nil {
+			return "", err
+		}
+	}
+	currentTitle := disambiguatedTitle(title, relPath)
+	if currentTitle == existingTitle {
+		currentTitle = title + " (" + strings.TrimSpace(filepath.ToSlash(filepath.Dir(relPath))) + ")"
+	}
+	return currentTitle, nil
+}
+
+func disambiguatedTitle(title string, relPath string) string {
+	dir := filepath.Base(filepath.Dir(filepath.ToSlash(relPath)))
+	if dir == "." || dir == "/" || dir == "" {
+		return title
+	}
+	if matches := regexp.MustCompile(`\((\d+)\)\s*$`).FindStringSubmatch(dir); len(matches) == 2 {
+		return title + " (" + matches[1] + ")"
+	}
+	return title + " (" + dir + ")"
 }
 
 type bookMetadata struct {

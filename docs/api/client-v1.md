@@ -617,6 +617,59 @@ When any paged query parameter is present, the response is:
 
 Without paged query parameters, the response is the legacy book array.
 
+### `GET /api/collections/{collectionId}/assets`
+
+Returns mixed collection assets. Current responses can contain books/comics and games:
+
+```json
+{
+  "books": [],
+  "games": []
+}
+```
+
+Native clients should prefer `/api/client/home`, `/api/client/games`, and book manifests for first-screen and launch flows. This endpoint is useful when a collection is used as a local shelf that can contain multiple asset types.
+
+## Scan Diagnostics And Control
+
+These routes are operational surfaces for web UI, trusted native tools, and MCP agents.
+
+### `GET /api/libraries`
+
+Returns configured library roots. This endpoint can expose configured mount paths and should be treated as an admin/diagnostic route, not a public client catalog.
+
+### `POST /api/libraries/{libraryId}/scan`
+
+Starts a scan job for a library and returns the job.
+
+### `GET /api/jobs`
+
+Lists recent scan jobs.
+
+### `GET /api/jobs/{jobId}/events`
+
+Lists job events. Events include scan start, worker count, skipped/indexed files, errors, pause/cancel state, and completion.
+
+### `POST /api/jobs/{jobId}/pause`
+
+Requests pause for a running scan job.
+
+### `POST /api/jobs/{jobId}/cancel`
+
+Requests cancellation for a running, pause-requested, or paused scan job.
+
+### `POST /api/jobs/{jobId}/resume`
+
+Starts a new scan for the same library when the selected job is paused.
+
+### `GET /api/errors`
+
+Lists scan/import errors.
+
+Optional query:
+
+- `jobId`: return errors for one job.
+
 ## Error Format
 
 Errors currently use a simple JSON envelope:
@@ -665,30 +718,28 @@ Good MCP tools:
 - `foliospace.client_info`: return server info and capability flags.
 - `foliospace.home`: return continue-reading, recent books, and collections.
 - `foliospace.search_books`: search/filter books by title, collection, format, progress, or unread state.
-- `foliospace.open_manifest`: return the client manifest for a book.
+- `foliospace.open_book_manifest`: return the client manifest for a book.
+- `foliospace.list_games` and `foliospace.open_game_manifest`: browse and open local ROM assets through client-safe DTOs.
 - `foliospace.get_private_state` and `foliospace.save_private_state`: inspect or update status, favorite, rating, tags, and notes.
 - `foliospace.list_favorites` and `foliospace.list_private_status`: browse private shelves such as favorites and want-to-read.
 - `foliospace.get_preferences` and `foliospace.save_preferences`: inspect or update UI language and reader defaults.
 - `foliospace.get_progress` and `foliospace.save_progress`: inspect or update reading progress.
-- `foliospace.list_collections` and `foliospace.list_volumes`: browse the indexed library.
+- `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection.
+- `foliospace.list_collections`, `foliospace.list_collection_volumes`, and `foliospace.list_collection_assets`: browse the indexed library.
 - `foliospace.scan_library`: start a scan for a configured library.
-- `foliospace.list_jobs` and `foliospace.job_events`: inspect scan progress and history.
+- `foliospace.list_jobs`, `foliospace.job_events`, `foliospace.pause_job`, `foliospace.cancel_job`, and `foliospace.resume_job`: inspect and control scan progress.
 - `foliospace.list_errors`: surface broken archives, unsupported files, permission errors, and missing mounts.
 - `foliospace.library_health`: summarize scan status, error counts, stale books, empty collections, and missing covers.
 
 Good MCP resources:
 
 - `foliospace://client/info`
-- `foliospace://home`
+- `foliospace://client/home`
 - `foliospace://client/preferences`
-- `foliospace://collections/{collectionId}`
-- `foliospace://books/{bookId}/manifest`
-- `foliospace://books/{bookId}/private-state`
-- `foliospace://books/favorites`
-- `foliospace://books/private-status/{status}`
-- `foliospace://books/{bookId}/progress`
-- `foliospace://jobs/{jobId}/events`
+- `foliospace://libraries`
+- `foliospace://jobs`
 - `foliospace://errors`
+- `foliospace://health`
 
 Useful assistant workflows:
 
@@ -710,7 +761,8 @@ Avoid for MCP v1:
 
 Suggested first MCP scope:
 
-1. Read-only discovery: `client_info`, `home`, `search_books`, `open_manifest`.
-2. Diagnostics: `list_jobs`, `job_events`, `list_errors`, `library_health`.
+1. Read-only discovery: `client_info`, `home`, `search_books`, `open_book_manifest`, `list_games`, `open_game_manifest`.
+2. Diagnostics: `list_libraries`, `list_jobs`, `job_events`, `list_errors`, `library_health`.
 3. Controlled progress and private state sync: `get_progress`, `save_progress`, `get_private_state`, `save_private_state`.
-4. Admin actions later: `scan_library`, library root management, reindex/repair operations.
+4. Controlled scan operations: `scan_library`, `pause_job`, `cancel_job`, `resume_job`.
+5. Admin actions later: library root mutation, delete/reindex/repair operations.

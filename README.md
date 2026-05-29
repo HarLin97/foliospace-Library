@@ -62,7 +62,7 @@ Client API book and collection responses omit local NAS file paths.
 
 ## MCP
 
-Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, preferences, private reader state, progress, scan jobs, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
+Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, progress, scan jobs, job control, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
 
 ## Product Direction
 

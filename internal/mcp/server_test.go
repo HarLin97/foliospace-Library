@@ -22,7 +22,13 @@ func TestServerListsTools(t *testing.T) {
 		t.Fatalf("tools/list error = %#v", response.Error)
 	}
 	body := mustJSON(t, response.Result)
-	if !strings.Contains(body, "foliospace.client_info") || !strings.Contains(body, "foliospace.list_games") || !strings.Contains(body, "foliospace.open_game_manifest") || !strings.Contains(body, "foliospace.library_health") {
+	if !strings.Contains(body, "foliospace.client_info") ||
+		!strings.Contains(body, "foliospace.list_games") ||
+		!strings.Contains(body, "foliospace.open_game_manifest") ||
+		!strings.Contains(body, "foliospace.list_favorites") ||
+		!strings.Contains(body, "foliospace.list_collection_volumes") ||
+		!strings.Contains(body, "foliospace.pause_job") ||
+		!strings.Contains(body, "foliospace.library_health") {
 		t.Fatalf("tools/list response %s missing expected tools", body)
 	}
 }
@@ -96,6 +102,74 @@ func TestServerCallsClientGamesTool(t *testing.T) {
 	}
 	if gotPath != "/api/client/games?format=nes&limit=50&offset=100&platform=nes&q=contra&sort=title" {
 		t.Fatalf("path = %s, want client games query", gotPath)
+	}
+}
+
+func TestServerCallsPrivateShelfTools(t *testing.T) {
+	var paths []string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.RequestURI())
+		return jsonResponse(`[]`), nil
+	})}
+
+	favoriteResponse := server.Handle(context.Background(), toolCall(t, "foliospace.list_favorites", map[string]any{"limit": 5}))
+	if favoriteResponse.Error != nil {
+		t.Fatalf("favorites tool error = %#v", favoriteResponse.Error)
+	}
+	statusResponse := server.Handle(context.Background(), toolCall(t, "foliospace.list_private_status", map[string]any{"status": "want", "limit": 7}))
+	if statusResponse.Error != nil {
+		t.Fatalf("private-status tool error = %#v", statusResponse.Error)
+	}
+
+	if strings.Join(paths, "\n") != "/api/client/books/favorites?limit=5\n/api/client/books/private-status/want?limit=7" {
+		t.Fatalf("paths = %#v, want private shelf routes", paths)
+	}
+}
+
+func TestServerCallsCollectionVolumesTool(t *testing.T) {
+	var gotPath string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.RequestURI()
+		return jsonResponse(`{"items":[],"total":0}`), nil
+	})}
+
+	response := server.Handle(context.Background(), toolCall(t, "foliospace.list_collection_volumes", map[string]any{
+		"collectionId": 42,
+		"limit":        20,
+		"offset":       40,
+		"q":            "space",
+		"sort":         "title",
+	}))
+
+	if response.Error != nil {
+		t.Fatalf("collection volumes tool error = %#v", response.Error)
+	}
+	if gotPath != "/api/collections/42/volumes?limit=20&offset=40&q=space&sort=title" {
+		t.Fatalf("path = %s, want collection volumes query", gotPath)
+	}
+}
+
+func TestServerCallsJobControlTools(t *testing.T) {
+	var calls []string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		return jsonResponse(`{"id":9,"status":"pause_requested"}`), nil
+	})}
+
+	for _, name := range []string{"foliospace.pause_job", "foliospace.cancel_job", "foliospace.resume_job"} {
+		response := server.Handle(context.Background(), toolCall(t, name, map[string]any{"jobId": 9}))
+		if response.Error != nil {
+			t.Fatalf("%s error = %#v", name, response.Error)
+		}
+	}
+
+	got := strings.Join(calls, "\n")
+	want := "POST /api/jobs/9/pause\nPOST /api/jobs/9/cancel\nPOST /api/jobs/9/resume"
+	if got != want {
+		t.Fatalf("calls = %q, want %q", got, want)
 	}
 }
 
