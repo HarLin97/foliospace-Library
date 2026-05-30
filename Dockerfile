@@ -1,4 +1,4 @@
-FROM node:20-alpine AS web-build
+FROM node:22-alpine AS web-build
 WORKDIR /src/web
 COPY web/package*.json ./
 RUN npm ci
@@ -25,6 +25,5 @@ EXPOSE 8080
 ENV FOLIOSPACE_CONFIG_DIR=/config
 ENV FOLIOSPACE_LIBRARY_DIR=/library
 ENV FOLIOSPACE_ADDR=:8080
-ENV FOLIOSPACE_API_TOKEN=
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["/app/foliospace-library"]
