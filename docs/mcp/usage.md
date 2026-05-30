@@ -102,6 +102,14 @@ Find books marked want-to-read and show the first 10.
 Open the manifest for book 12 and tell me whether it is EPUB or CBZ.
 ```
 
+```text
+List my local videos, open one movie manifest, and tell me whether it will direct-play or use HLS transcoding.
+```
+
+```text
+Check whether FolioSpace is currently transcoding a video and which item is occupying the queue.
+```
+
 ## Tools
 
 - `foliospace.client_info`: service name, version, supported formats, and capability flags.
@@ -141,6 +149,7 @@ Open the manifest for book 12 and tell me whether it is EPUB or CBZ.
 
 - `foliospace://client/info`
 - `foliospace://client/home`
+- `foliospace://client/videos`
 - `foliospace://client/preferences`
 - `foliospace://settings/scan`
 - `foliospace://libraries`
@@ -181,6 +190,8 @@ Open a video manifest and choose playback:
 ```
 
 Use `fileUrl` when `directPlayable` is `true`; use `hlsUrl` when `playbackMode` is `hls`.
+
+The MCP response only returns service URLs and metadata. The agent should hand the returned `fileUrl`, `hlsUrl`, or `thumbnailUrl` to a web/native client instead of trying to transfer large media bytes over MCP.
 
 Check HLS transcode status:
 

@@ -51,7 +51,7 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-const serviceVersion = "0.82"
+const serviceVersion = "0.88"
 
 func New(baseURL string, token string) *Server {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -149,6 +149,7 @@ func resources() []Resource {
 	return []Resource{
 		{URI: "foliospace://client/info", Name: "Client Info", Description: "Current FolioSpace Library service metadata.", MimeType: "application/json"},
 		{URI: "foliospace://client/home", Name: "Home", Description: "Continue reading, recent books, and collections.", MimeType: "application/json"},
+		{URI: "foliospace://client/videos", Name: "Videos", Description: "Recent client-safe video catalog items.", MimeType: "application/json"},
 		{URI: "foliospace://client/preferences", Name: "Preferences", Description: "Client preference state.", MimeType: "application/json"},
 		{URI: "foliospace://settings/scan", Name: "Scan Settings", Description: "Scan worker and runtime settings.", MimeType: "application/json"},
 		{URI: "foliospace://libraries", Name: "Libraries", Description: "Configured libraries for diagnostics and scan selection.", MimeType: "application/json"},
@@ -172,6 +173,8 @@ func (s *Server) readResource(ctx context.Context, raw json.RawMessage) (any, er
 		data, err = s.get(ctx, "/api/client/info")
 	case "foliospace://client/home":
 		data, err = s.get(ctx, "/api/client/home")
+	case "foliospace://client/videos":
+		data, err = s.get(ctx, "/api/client/videos?limit=20")
 	case "foliospace://client/preferences":
 		data, err = s.get(ctx, "/api/client/preferences")
 	case "foliospace://settings/scan":

@@ -28,6 +28,13 @@ Docker image:
 funland/foliospace-library:0.88
 ```
 
+Current public Docker tags:
+
+```text
+funland/foliospace-library:0.88
+funland/foliospace-library:latest
+```
+
 Suggested CLI / binary name for future release work:
 
 ```text
@@ -85,6 +92,7 @@ Avoid this positioning:
 - Client-safe HTTP API keeps NAS paths private.
 - MCP support lets agents inspect libraries, jobs, manifests, preferences, progress, and health.
 - Game ROM indexing is local-only and designed for launch handoff to native clients such as GameEMU.
+- Video catalog support is lightweight: local thumbnails, direct file streaming when browser-compatible, and on-demand HLS transcode for incompatible codecs.
 
 ## Current Feature Set
 
@@ -134,6 +142,17 @@ Games:
 - `Now Printing` placeholder when cover art is missing.
 - ROM support is for user-owned local files only.
 
+Videos:
+
+- Local video indexing for `.mp4`, `.m4v`, `.mov`, `.mkv`, `.avi`, and `.webm`.
+- Recent video shelf in the home API and a dedicated video catalog in the web UI.
+- Client-safe video manifests with opaque `fileUrl`, `hlsUrl`, `thumbnailUrl`, and transcode status URLs.
+- Direct HTTP Range streaming for browser-compatible files.
+- On-demand HLS transcode for browser-incompatible files such as many HEVC/H.265 assets.
+- Single active HLS transcode queue to keep NAS CPU usage predictable.
+- Cached HLS output under `/config/cache/video-transcodes`.
+- Local sidecar cover lookup and cached `ffmpeg` thumbnail extraction.
+
 Setup / Release:
 
 - First-run setup page.
@@ -150,6 +169,7 @@ Current priority support:
 - EPUB: `.epub`
 - Comics: `.cbz`, `.zip`
 - Games: `.nes`, `.sfc`, `.smc`, `.gba`, `.gb`, `.gbc`, `.nds`, `.3ds`, `.cia`, `.chd`, `.iso`, `.bin`, `.cue`
+- Videos: `.mp4`, `.m4v`, `.mov`, `.mkv`, `.avi`, `.webm`
 - Archive ROM sets: `.zip`, `.7z` only when the configured library type is `game`
 
 Important note for website copy:
@@ -166,6 +186,7 @@ Near-term:
 - Game metadata improvements.
 - Spatial photo and spatial video indexing.
 - Better diagnostic export for early adopters.
+- Optional richer movie metadata lookup. Keep this secondary to local indexing and playback reliability.
 
 Future modules:
 
@@ -210,6 +231,7 @@ Suggested home-page sections:
    - Comic reader
    - Scan jobs
    - Game shelf
+   - Video shelf and video playback status
    - Setup page
 5. Install
    - Docker pull and run commands.
@@ -239,7 +261,8 @@ docker run -d \
   -v /volume2/ComicCenter:/library:ro \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
-  -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
+  -v /volume2/MovieCollection/Movies:/videos:ro \
+  -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
   funland/foliospace-library:0.88
 ```
 
@@ -249,7 +272,7 @@ Open:
 http://localhost:8080
 ```
 
-Fresh installs show a setup page. The user creates an access key and selects a container-visible directory such as `/library`, `/books`, or `/games`.
+Fresh installs show a setup page. The user creates an access key and selects a container-visible directory such as `/library`, `/books`, `/games`, or `/videos`.
 
 Important installation explanation:
 
@@ -270,10 +293,11 @@ services:
       - ./data/library:/library:ro
       - ./data/books:/books:ro
       - ./data/games:/games:ro
+      - ./data/videos:/videos:ro
     environment:
       FOLIOSPACE_CONFIG_DIR: /config
       FOLIOSPACE_LIBRARY_DIR: /library
-      FOLIOSPACE_DIRECTORY_ROOTS: /library,/books,/games
+      FOLIOSPACE_DIRECTORY_ROOTS: /library,/books,/games,/videos
       FOLIOSPACE_ADDR: :8080
       FOLIOSPACE_API_TOKEN: ""
       FOLIOSPACE_SCAN_WORKERS: "2"
@@ -285,7 +309,7 @@ services:
 | --- | --- | --- |
 | `FOLIOSPACE_CONFIG_DIR` | `/config` | SQLite database, generated covers, thumbnails, cache. |
 | `FOLIOSPACE_LIBRARY_DIR` | `/library` | Legacy/default library root. |
-| `FOLIOSPACE_DIRECTORY_ROOTS` | `/library,/books,/games` | Container-visible roots shown in setup/directory picker. |
+| `FOLIOSPACE_DIRECTORY_ROOTS` | `/library,/books,/games,/videos` | Container-visible roots shown in setup/directory picker. |
 | `FOLIOSPACE_ADDR` | `:8080` | HTTP listen address inside the container. |
 | `FOLIOSPACE_API_TOKEN` | empty | Optional environment-managed API token. If empty, first-run setup creates a DB-backed token. |
 | `FOLIOSPACE_SCAN_WORKERS` | `2` | Concurrent scan workers. Keep low on NAS devices. |
@@ -351,11 +375,19 @@ GET  /api/client/books/private-status/:status
 GET  /api/client/games
 GET  /api/client/games/:id/manifest
 GET  /api/client/games/:id/file
+
+GET  /api/client/videos
+GET  /api/client/videos/:id/manifest
+GET  /api/client/videos/:id/file
+GET  /api/client/videos/:id/hls/index.m3u8
+GET  /api/client/videos/:id/transcode/status
+GET  /api/client/videos/transcode/status
+GET  /api/videos/:id/thumbnail
 ```
 
 Client-safe rule:
 
-Client API responses should not expose real absolute NAS paths. They return opaque service URLs for covers, pages, EPUB resources, and game files.
+Client API responses should not expose real absolute NAS paths. They return opaque service URLs for covers, pages, EPUB resources, game files, video streams, HLS playlists, and thumbnails.
 
 ## Example Client Flow
 
@@ -368,6 +400,27 @@ Client API responses should not expose real absolute NAS paths. They return opaq
 6. Stream CBZ/ZIP pages from returned page URLs, EPUB spine/resources from the EPUB manifest, or PDF data from the Range-capable PDF page URL.
 7. Sync reading progress and private state.
 8. Open a game with GET /api/client/games/{gameId}/manifest and pass the service file URL to the native emulator layer.
+9. Open a video with GET /api/client/videos/{videoId}/manifest. Use `fileUrl` for direct playback, or use `hlsUrl` and poll transcode status when `playbackMode` is `hls`.
+```
+
+## Video Copy for Website
+
+Suggested feature copy:
+
+```text
+FolioSpace Library can index a local movie/video folder without becoming a full Plex or Jellyfin replacement. Browser-compatible files stream directly through FolioSpace with Range requests. Files that browsers usually cannot decode, such as many HEVC/H.265 videos, can be converted on demand to cached H.264/AAC HLS for web playback.
+```
+
+Suggested limitation copy:
+
+```text
+Video support is designed as a lightweight local catalog and playback bridge. It does not yet include online movie metadata lookup, server-side subtitle management, multi-user watch history, or full media-server library curation.
+```
+
+Custom cover guidance:
+
+```text
+To override a video thumbnail, place a cover image next to the video file. Supported names include the same basename with `.jpg`, `.jpeg`, `.png`, or `.webp`, plus `Movie.poster.jpg`, `Movie.cover.jpg`, `poster.jpg`, and `cover.jpg`.
 ```
 
 ## MCP Summary
@@ -404,7 +457,7 @@ User computer / agent runtime:
   foliospace-mcp binary
   Codex, Claude Desktop, or another MCP client
 
-The MCP server calls FolioSpace Library through HTTP API. Large media content such as comic pages, EPUB resources, PDF streams, and ROM files still streams through the HTTP URLs returned by the API.
+The MCP server calls FolioSpace Library through HTTP API. Large media content such as comic pages, EPUB resources, PDF streams, ROM files, video files, HLS playlists, and thumbnails still streams through the HTTP URLs returned by the API.
 ```
 
 End-user install:
@@ -492,6 +545,14 @@ Show recent scan jobs and summarize the latest errors.
 Find books marked want-to-read and show the first 10.
 ```
 
+```text
+List my local videos and tell me which ones need HLS transcoding for browser playback.
+```
+
+```text
+Is FolioSpace currently transcoding a video? If yes, show the active title and segment count.
+```
+
 MCP smoke-test note for docs:
 
 ```text
@@ -506,6 +567,10 @@ Highlighted tools:
 - `foliospace.open_book_manifest`
 - `foliospace.list_games`
 - `foliospace.open_game_manifest`
+- `foliospace.list_videos`
+- `foliospace.open_video_manifest`
+- `foliospace.get_video_transcode_status`
+- `foliospace.get_video_transcode_queue`
 - `foliospace.get_preferences`
 - `foliospace.save_preferences`
 - `foliospace.get_private_state`
@@ -530,7 +595,15 @@ Example MCP JSON-RPC:
 ```
 
 ```json
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"foliospace.pause_job","arguments":{"jobId":42}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"foliospace.open_video_manifest","arguments":{"videoId":21}}}
+```
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"foliospace.get_video_transcode_queue","arguments":{}}}
+```
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"foliospace.pause_job","arguments":{"jobId":42}}}
 ```
 
 ## Screenshot Placeholder Plan
@@ -547,6 +620,8 @@ Use placeholder blocks until production screenshots are captured. Recommended fi
 | `screenshots/scan-jobs.png` | Scan job list with elapsed time, progress, pause, cancel, and resume controls. | Show transparent scanning. |
 | `screenshots/errors.png` | Structured file error list with reason and path context. | Show diagnostics. |
 | `screenshots/game-shelf.png` | Game shelf grouped by platform with covers and Now Printing placeholders. | Show ROM library direction. |
+| `screenshots/video-library.png` | Video library with custom thumbnails, placeholders, and playback mode labels. | Show 0.88 video catalog. |
+| `screenshots/video-player-hls.png` | Video player showing HLS transcode status and queue messaging. | Show lightweight playback bridge. |
 | `screenshots/api-mcp.png` | Developer page showing API and MCP examples. | Optional docs visual. |
 
 For placeholder design, keep it product-like:
@@ -625,7 +700,7 @@ Docker Hub image:
 
 ```text
 funland/foliospace-library:0.88
-funland/foliospace-library:latest should be promoted after the 0.88 Docker Hub upload succeeds.
+funland/foliospace-library:latest
 ```
 
 Current Docker Hub digest:

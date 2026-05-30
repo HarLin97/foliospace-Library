@@ -148,7 +148,7 @@ This endpoint reports container paths, not host/NAS paths. Docker volume mapping
 9. Sync private state with `GET/PUT /api/client/books/{bookId}/private-state`.
 10. Sync UI language and reader defaults with `GET/PUT /api/client/preferences`.
 11. Open a game with `GET /api/client/games/{gameId}/manifest`, then use `fileUrl` only through the service.
-12. Open a video with `GET /api/client/videos/{videoId}/manifest`, then stream `fileUrl` through the service with HTTP Range requests.
+12. Open a video with `GET /api/client/videos/{videoId}/manifest`, then use `fileUrl` for direct/Range playback or `hlsUrl` when `playbackMode` is `hls`.
 
 ## Client Endpoints
 
@@ -175,6 +175,7 @@ Response:
     "gameShelf": true,
     "gameCatalog": true,
     "videoCatalog": true,
+    "videoHls": true,
     "privateState": true,
     "search": true,
     "preferences": true,
@@ -298,7 +299,12 @@ Response:
       "height": 0,
       "thumbnailStatus": "placeholder",
       "thumbnailUrl": "/api/videos/21/thumbnail",
-      "manifestUrl": "/api/client/videos/21/manifest"
+      "manifestUrl": "/api/client/videos/21/manifest",
+      "directPlayable": true,
+      "playbackMode": "direct",
+      "fileUrl": "/api/client/videos/21/file",
+      "hlsUrl": "/api/client/videos/21/hls/index.m3u8",
+      "transcodeStatusUrl": "/api/client/videos/21/transcode/status"
     }
   ],
   "collections": [
@@ -306,6 +312,7 @@ Response:
       "id": 7,
       "title": "Series A",
       "collectionType": "directory",
+      "primaryType": "book",
       "bookCount": 12
     }
   ]
@@ -438,6 +445,8 @@ Returns client-safe video playback metadata. It does not expose the real NAS pat
 
 If `playbackMode` is `hls`, clients should open `hlsUrl`. The first request to `hlsUrl` starts an on-demand `ffmpeg` transcode into `/config/cache/video-transcodes`; subsequent playback reuses the cached HLS playlist and segments until the source file changes. The built-in transcoder keeps one active video transcode at a time and downscales wide 4K sources to 1080p H.264/AAC HLS for NAS-friendly playback.
 
+While HLS is still being generated, timeline seeking is limited to segments that already exist. Once the playlist is fully cached, clients can seek normally within the generated HLS output. If another video is already occupying the single transcode slot, the HLS playlist request returns `409` and clients should poll the per-video and global status endpoints below.
+
 ### `GET /api/client/videos/{videoId}/transcode/status`
 
 Returns the current HLS cache/transcode state for a video.
@@ -451,7 +460,7 @@ Returns the current HLS cache/transcode state for a video.
 }
 ```
 
-`status` is one of `idle`, `starting`, `running`, `queued`, `ready`, or `failed`. Clients can poll this endpoint while opening HLS playback to show `转码中`, `已缓存`, or a failure state. If another video is already being transcoded, the manifest request can return `409` and this endpoint reports `queued`.
+`status` is one of `idle`, `starting`, `running`, `queued`, `ready`, or `failed`. Clients can poll this endpoint while opening HLS playback to show `转码中`, `已缓存`, or a failure state. If another video is already being transcoded, the HLS playlist request can return `409` and this endpoint reports `queued`.
 
 ### `GET /api/client/videos/transcode/status`
 
