@@ -209,7 +209,7 @@ Response:
 Fields:
 
 - `locale`: `zh`, `zht`, `en`, `ja`, or `ko`.
-- `readerPageMode`: `single` or `double` for image archives.
+- `readerPageMode`: `single`, `double`, or `webtoon` for image archives. `webtoon` means vertical continuous scrolling for long-strip comics.
 - `epubPageMode`: `single` or `double`.
 - `epubTheme`: `light`, `sepia`, or `dark`.
 - `epubFontSize`: integer, normalized to `14...26`.
@@ -223,7 +223,7 @@ Request:
 ```json
 {
   "locale": "zht",
-  "readerPageMode": "double",
+  "readerPageMode": "webtoon",
   "epubPageMode": "double",
   "epubTheme": "dark",
   "epubFontSize": 24
@@ -796,7 +796,7 @@ Response:
 }
 ```
 
-For CBZ/ZIP, `pageIndex` is the page array index and `locator` can be empty.
+For CBZ/ZIP, `pageIndex` is the page array index and `locator` can be empty. In Webtoon/vertical-scroll mode, clients may store `locator` as `webtoon:<fraction>` where `<fraction>` is the scroll progress from `0` to `1`.
 
 For EPUB, use `pageIndex` as the spine index and use `locator` for the current EPUB resource href or a future CFI-like locator. `progressFraction` is clamped by the server to `0...1`.
 

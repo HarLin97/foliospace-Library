@@ -456,7 +456,7 @@ func normalizeClientPreferences(prefs domain.ClientPreferences) domain.ClientPre
 	if !oneOf(prefs.Locale, "zh", "zht", "en", "ja", "ko") {
 		prefs.Locale = "zh"
 	}
-	if !oneOf(prefs.ReaderPageMode, "single", "double") {
+	if !oneOf(prefs.ReaderPageMode, "single", "double", "webtoon") {
 		prefs.ReaderPageMode = "single"
 	}
 	if !oneOf(prefs.EPUBPageMode, "single", "double") {

@@ -100,7 +100,7 @@ Reading:
 
 - EPUB indexing and reading.
 - CBZ/ZIP comic indexing and reading.
-- Single-page and double-page reader modes.
+- Single-page, double-page, and Webtoon/vertical-scroll reader modes.
 - Fullscreen reading.
 - EPUB themes: light, sepia, dark.
 - EPUB font-size preference.

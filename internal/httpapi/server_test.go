@@ -630,8 +630,8 @@ func TestClientAPIPreferences(t *testing.T) {
 		t.Fatalf("default preferences response %q does not include defaults", defaultBody)
 	}
 
-	updatedBody := putJSONBody(t, ts.URL+"/api/client/preferences", `{"locale":"zht","readerPageMode":"double","epubPageMode":"double","epubTheme":"dark","epubFontSize":40}`)
-	if !strings.Contains(updatedBody, `"locale":"zht"`) || !strings.Contains(updatedBody, `"readerPageMode":"double"`) || !strings.Contains(updatedBody, `"epubTheme":"dark"`) || !strings.Contains(updatedBody, `"epubFontSize":26`) {
+	updatedBody := putJSONBody(t, ts.URL+"/api/client/preferences", `{"locale":"zht","readerPageMode":"webtoon","epubPageMode":"double","epubTheme":"dark","epubFontSize":40}`)
+	if !strings.Contains(updatedBody, `"locale":"zht"`) || !strings.Contains(updatedBody, `"readerPageMode":"webtoon"`) || !strings.Contains(updatedBody, `"epubTheme":"dark"`) || !strings.Contains(updatedBody, `"epubFontSize":26`) {
 		t.Fatalf("updated preferences response %q does not include normalized preferences", updatedBody)
 	}
 

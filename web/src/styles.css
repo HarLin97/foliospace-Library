@@ -1653,6 +1653,11 @@ button.danger:hover {
   gap: 0;
 }
 
+.pageStage.webtoon {
+  overflow: hidden;
+  background: #0d1214;
+}
+
 .pageSpread img {
   display: block;
   width: auto;
@@ -1664,6 +1669,35 @@ button.danger:hover {
 
 .pageStage.double .pageSpread img {
   max-width: calc((100% - clamp(8px, 1.4vw, 20px)) / 2);
+}
+
+.webtoonReader {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(10px, 2vw, 24px) 0 clamp(24px, 3vw, 44px);
+  scroll-behavior: smooth;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035), transparent 18%, transparent 82%, rgba(255, 255, 255, 0.035)),
+    #0d1214;
+}
+
+.webtoonPage {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.webtoonPage img {
+  display: block;
+  width: min(100%, 980px);
+  height: auto;
+  max-width: 100%;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .pageStage.epub {

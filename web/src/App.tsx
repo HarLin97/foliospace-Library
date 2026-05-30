@@ -8,7 +8,8 @@ import { api, Book, BookPrivateState, clearAuthToken, ClientPreferences, Directo
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
 type View = "library" | "reader" | "games" | "videos" | "jobs" | "errors";
-type ReaderPageMode = "single" | "double";
+type ReaderPageMode = "single" | "double" | "webtoon";
+type EpubPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
@@ -81,13 +82,15 @@ export function App() {
   const [readerRetryKey, setReaderRetryKey] = useState(0);
   const [readerPageMode, setReaderPageMode] = useState<ReaderPageMode>(initialPreferences.readerPageMode);
   const [readerFullscreen, setReaderFullscreen] = useState(false);
-  const [epubPageMode, setEpubPageMode] = useState<ReaderPageMode>(initialPreferences.epubPageMode);
+  const [epubPageMode, setEpubPageMode] = useState<EpubPageMode>(initialPreferences.epubPageMode);
   const [epubFontSize, setEpubFontSize] = useState(initialPreferences.epubFontSize);
   const [epubTheme, setEpubTheme] = useState<EpubTheme>(initialPreferences.epubTheme);
   const [epubPagePosition, setEpubPagePosition] = useState(0);
   const [epubPageCount, setEpubPageCount] = useState(1);
   const [epubTocOpen, setEpubTocOpen] = useState(false);
   const [pdfPageCount, setPdfPageCount] = useState(1);
+  const [webtoonProgress, setWebtoonProgress] = useState(0);
+  const [webtoonRestoreProgress, setWebtoonRestoreProgress] = useState<number | null>(null);
   const [newLibraryName, setNewLibraryName] = useState("");
   const [newLibraryPath, setNewLibraryPath] = useState("");
   const [newLibraryAssetType, setNewLibraryAssetType] = useState<LibraryAssetType>("mixed");
@@ -102,6 +105,7 @@ export function App() {
   const t = translations[locale];
   const imageCache = useRef<Set<string>>(new Set());
   const readerRef = useRef<HTMLElement | null>(null);
+  const webtoonRef = useRef<HTMLDivElement | null>(null);
   const bookLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const collectionSectionsRef = useRef<HTMLDivElement | null>(null);
   const videoPlayerRef = useRef<HTMLVideoElement | null>(null);
@@ -439,19 +443,26 @@ export function App() {
     if (selectedBook.format === "epub") return;
 
     const totalPages = selectedBook.format === "pdf" ? pdfPageCount : pages.length;
+    const useWebtoonMode = readerPageMode === "webtoon" && selectedBook.format !== "pdf";
+    const locator = useWebtoonMode ? `webtoon:${webtoonProgress.toFixed(4)}` : "";
+    const progressFraction = useWebtoonMode
+      ? webtoonProgress
+      : totalPages > 1
+        ? pageIndex / (totalPages - 1)
+        : 0;
     const timer = window.setTimeout(() => {
       api
         .progressDetail(
           selectedBook.id,
           pageIndex,
-          "",
-          totalPages > 1 ? pageIndex / (totalPages - 1) : 0,
+          locator,
+          progressFraction,
         )
         .catch(() => undefined);
     }, 450);
 
     return () => window.clearTimeout(timer);
-  }, [selectedBook, pageIndex, pages.length, pdfPageCount]);
+  }, [selectedBook, pageIndex, pages.length, pdfPageCount, readerPageMode, webtoonProgress]);
 
   useEffect(() => {
     if (!selectedBook || selectedBook.format !== "epub") return;
@@ -753,6 +764,8 @@ export function App() {
     setEpubPagePosition(0);
     setEpubPageCount(1);
     setPdfPageCount(1);
+    setWebtoonProgress(0);
+    setWebtoonRestoreProgress(null);
     setEpubTocOpen(false);
     setReaderLoadState("loading");
     try {
@@ -769,6 +782,11 @@ export function App() {
       } else {
         const progress = await api.readProgress(book.id);
         const restoredPage = book.format === "pdf" ? Math.max(0, progress.pageIndex) : Math.max(0, Math.min(progress.pageIndex, Math.max(0, nextPages.length - 1)));
+        const restoredWebtoonProgress = readWebtoonLocator(progress.locator);
+        if (restoredWebtoonProgress !== null) {
+          setWebtoonProgress(restoredWebtoonProgress);
+          setWebtoonRestoreProgress(restoredWebtoonProgress);
+        }
         setPageIndex(restoredPage);
         setDisplayedPageIndex(restoredPage);
         setReaderLoadState("ready");
@@ -814,6 +832,9 @@ export function App() {
       setEpubPagePosition(0);
       setEpubPageCount(1);
     }
+    if (readerPageMode === "webtoon" && book.format !== "epub" && book.format !== "pdf") {
+      requestAnimationFrame(() => scrollWebtoonToPage(clamped));
+    }
     if (clamped !== pageIndex) {
       setReaderLoadState("loading");
     }
@@ -822,6 +843,12 @@ export function App() {
 
   useEffect(() => {
     if (!selectedBook || pages.length === 0 || selectedBook.format === "epub" || selectedBook.format === "pdf") return;
+    if (readerPageMode === "webtoon") {
+      setDisplayedPageIndex(pageIndex);
+      setReaderLoadState("ready");
+      preloadWebtoonWindow(selectedBook.id, pageIndex, pages.length).catch(() => undefined);
+      return;
+    }
 
     let cancelled = false;
     const targetIndex = pageIndex;
@@ -844,6 +871,21 @@ export function App() {
       cancelled = true;
     };
   }, [selectedBook?.id, pageIndex, pages.length, readerRetryKey, readerPageMode]);
+
+  useEffect(() => {
+    if (!selectedBook || readerPageMode !== "webtoon" || selectedBook.format === "epub" || selectedBook.format === "pdf") return;
+    const target = webtoonRestoreProgress;
+    if (target === null) return;
+    const timer = window.setTimeout(() => {
+      const node = webtoonRef.current;
+      if (!node) return;
+      const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+      node.scrollTop = maxScroll * target;
+      updateWebtoonPosition();
+      setWebtoonRestoreProgress(null);
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [selectedBook?.id, readerPageMode, webtoonRestoreProgress, pages.length]);
 
   useEffect(() => {
     function onFullscreenChange() {
@@ -925,6 +967,13 @@ export function App() {
     return Promise.all(visible.map((next) => preloadPage(bookID, next)));
   }
 
+  function preloadWebtoonWindow(bookID: number, index: number, total: number) {
+    const start = Math.max(0, index - 1);
+    const end = Math.min(total - 1, index + 4);
+    const targets = Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
+    return Promise.all(targets.map((next) => preloadPage(bookID, next)));
+  }
+
   function prefetchNeighborPages(bookID: number, index: number, total: number, mode: ReaderPageMode) {
     const step = mode === "double" ? 2 : 1;
     for (const next of [index + step, index - step]) {
@@ -936,12 +985,14 @@ export function App() {
 
   function visiblePageIndexes(index: number, total: number, mode: ReaderPageMode) {
     if (total <= 0) return [];
+    if (mode === "webtoon") return [];
     if (mode === "single") return [index];
     return [index, index + 1].filter((next) => next >= 0 && next < total);
   }
 
   function readerStep() {
     if (selectedBook?.format === "epub") return 1;
+    if (readerPageMode === "webtoon") return 1;
     return readerPageMode === "double" ? 2 : 1;
   }
 
@@ -953,6 +1004,10 @@ export function App() {
         return;
       }
       setReaderPage(selectedBook, pageIndex - 1);
+      return;
+    }
+    if (readerPageMode === "webtoon" && selectedBook.format !== "pdf") {
+      scrollWebtoonByPage(-1);
       return;
     }
     setReaderPage(selectedBook, pageIndex - readerStep());
@@ -968,7 +1023,47 @@ export function App() {
       setReaderPage(selectedBook, pageIndex + 1);
       return;
     }
+    if (readerPageMode === "webtoon" && selectedBook.format !== "pdf") {
+      scrollWebtoonByPage(1);
+      return;
+    }
     setReaderPage(selectedBook, pageIndex + readerStep());
+  }
+
+  function scrollWebtoonByPage(direction: 1 | -1) {
+    const node = webtoonRef.current;
+    if (!node) return;
+    node.scrollBy({ top: direction * Math.max(320, node.clientHeight * 0.88), behavior: "smooth" });
+  }
+
+  function scrollWebtoonToPage(index: number) {
+    const node = webtoonRef.current;
+    const target = node?.querySelector<HTMLElement>(`[data-page-index="${index}"]`);
+    if (!node || !target) return;
+    node.scrollTo({ top: Math.max(0, target.offsetTop - 10), behavior: "smooth" });
+  }
+
+  function updateWebtoonPosition() {
+    const node = webtoonRef.current;
+    if (!node) return;
+    const maxScroll = Math.max(0, node.scrollHeight - node.clientHeight);
+    const nextProgress = maxScroll > 0 ? node.scrollTop / maxScroll : 0;
+    setWebtoonProgress(Math.max(0, Math.min(1, nextProgress)));
+
+    const markers = Array.from(node.querySelectorAll<HTMLElement>("[data-page-index]"));
+    const viewportAnchor = node.scrollTop + node.clientHeight * 0.28;
+    let current = 0;
+    for (const marker of markers) {
+      if (marker.offsetTop <= viewportAnchor) {
+        current = Number(marker.dataset.pageIndex ?? 0);
+      } else {
+        break;
+      }
+    }
+    if (Number.isFinite(current)) {
+      setPageIndex((value) => (value === current ? value : current));
+      setDisplayedPageIndex((value) => (value === current ? value : current));
+    }
   }
 
   function jumpToEpubChapter(index: number) {
@@ -1560,6 +1655,17 @@ export function App() {
                         >
                           {t.double}
                         </button>
+                        {selectedBook.format !== "pdf" && (
+                          <button
+                            className={readerPageMode === "webtoon" ? "selected" : ""}
+                            onClick={() => {
+                              setReaderPageMode("webtoon");
+                              setReaderLoadState("ready");
+                            }}
+                          >
+                            {t.webtoon}
+                          </button>
+                        )}
                       </div>
                     )}
                     <button onClick={toggleReaderFullscreen}>{readerFullscreen ? t.exitFullscreen : t.fullscreen}</button>
@@ -1696,9 +1802,23 @@ export function App() {
                     <PdfReader
                       book={selectedBook}
                       pageIndex={pageIndex}
-                      pageMode={readerPageMode}
+                      pageMode={readerPageMode === "webtoon" ? "single" : readerPageMode}
                       onPageCount={(count) => setPdfPageCount(count)}
                     />
+                  ) : readerPageMode === "webtoon" ? (
+                    <div ref={webtoonRef} className="webtoonReader" onScroll={updateWebtoonPosition} aria-live="polite">
+                      {pages.map((page) => (
+                        <div className="webtoonPage" data-page-index={page.index} key={`${selectedBook.id}-${page.index}`}>
+                          <img
+                            src={`/api/books/${selectedBook.id}/pages/${page.index}`}
+                            alt={page.name}
+                            draggable={false}
+                            loading="lazy"
+                            onLoad={updateWebtoonPosition}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   ) : (
                     <div className="pageSpread" aria-live="polite">
                       {visiblePageIndexes(displayedPageIndex, pages.length, readerPageMode).map((visibleIndex) => (
@@ -2598,6 +2718,13 @@ function readEpubLocator(locator: string) {
   return Math.max(0, value);
 }
 
+function readWebtoonLocator(locator: string) {
+  if (!locator.startsWith("webtoon:")) return null;
+  const value = Number.parseFloat(locator.slice("webtoon:".length));
+  if (!Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(1, value));
+}
+
 function encodeResourcePath(value: string) {
   return value
     .split("/")
@@ -2740,6 +2867,7 @@ const translations = {
     contents: "目录",
     single: "单页",
     double: "双页",
+    webtoon: "条漫",
     light: "浅色",
     sepia: "米色",
     dark: "深色",
@@ -2887,6 +3015,7 @@ const translations = {
     contents: "目錄",
     single: "單頁",
     double: "雙頁",
+    webtoon: "條漫",
     light: "淺色",
     sepia: "米色",
     dark: "深色",
@@ -3034,6 +3163,7 @@ const translations = {
     contents: "Contents",
     single: "Single",
     double: "Double",
+    webtoon: "Webtoon",
     light: "Light",
     sepia: "Sepia",
     dark: "Dark",
@@ -3181,6 +3311,7 @@ const translations = {
     contents: "目次",
     single: "単ページ",
     double: "見開き",
+    webtoon: "縦スクロール",
     light: "ライト",
     sepia: "セピア",
     dark: "ダーク",
@@ -3328,6 +3459,7 @@ const translations = {
     contents: "목차",
     single: "한 페이지",
     double: "두 페이지",
+    webtoon: "웹툰",
     light: "라이트",
     sepia: "세피아",
     dark: "다크",
@@ -3440,7 +3572,7 @@ function normalizeClientPreferences(value: Partial<ClientPreferences>): ClientPr
   const epubFontSize = Number(value.epubFontSize);
   return {
     locale: locale === "zh" || locale === "zht" || locale === "en" || locale === "ja" || locale === "ko" ? locale : defaults.locale,
-    readerPageMode: readerPageMode === "double" ? "double" : defaults.readerPageMode,
+    readerPageMode: readerPageMode === "double" || readerPageMode === "webtoon" ? readerPageMode : defaults.readerPageMode,
     epubPageMode: epubPageMode === "double" ? "double" : defaults.epubPageMode,
     epubTheme: epubTheme === "sepia" || epubTheme === "dark" || epubTheme === "light" ? epubTheme : defaults.epubTheme,
     epubFontSize: Number.isFinite(epubFontSize) ? Math.max(14, Math.min(26, Math.round(epubFontSize))) : defaults.epubFontSize,

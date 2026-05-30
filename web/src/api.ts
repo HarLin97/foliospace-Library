@@ -120,7 +120,7 @@ export type SearchResponse = {
 
 export type ClientPreferences = {
   locale: "zh" | "zht" | "en" | "ja" | "ko";
-  readerPageMode: "single" | "double";
+  readerPageMode: "single" | "double" | "webtoon";
   epubPageMode: "single" | "double";
   epubTheme: "light" | "sepia" | "dark";
   epubFontSize: number;
