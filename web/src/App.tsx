@@ -3,7 +3,7 @@ import type { FormEvent, MouseEvent, ReactNode, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, FileError, GameAsset, getAuthToken, JobEvent, Library, Page, ScanJob, Series, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, DirectoryEntry, DirectoryListing, EpubManifest, FileError, GameAsset, getActiveProfileId, getAuthToken, JobEvent, Library, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -79,6 +79,9 @@ export function App() {
   const [scanWorkerDraft, setScanWorkerDraft] = useState(1);
   const [scanSettingsSaving, setScanSettingsSaving] = useState(false);
   const [activeTask, setActiveTask] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState(0);
+  const [profileSaving, setProfileSaving] = useState(false);
   const [readerLoadState, setReaderLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [readerRetryKey, setReaderRetryKey] = useState(0);
   const [readerPageMode, setReaderPageMode] = useState<ReaderPageMode>(initialPreferences.readerPageMode);
@@ -104,6 +107,11 @@ export function App() {
   const [bookDetailsOpen, setBookDetailsOpen] = useState(false);
   const [locale, setLocale] = useState<Locale>(initialPreferences.locale);
   const t = translations[locale];
+  const activeProfile = useMemo(
+    () => profiles.find((profile) => profile.id === activeProfileId) ?? profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null,
+    [activeProfileId, profiles],
+  );
+  const activeProfileLabel = activeProfile ? profileDisplayName(activeProfile, t) : t.defaultProfile;
   const imageCache = useRef<Set<string>>(new Set());
   const readerRef = useRef<HTMLElement | null>(null);
   const webtoonRef = useRef<HTMLDivElement | null>(null);
@@ -131,38 +139,51 @@ export function App() {
     if (showProgress) {
       setActiveTask("Refreshing library");
     }
-    const [preferences, info, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf] = await Promise.all([
-      api.clientPreferences(),
-      api.clientInfo(),
-      api.scanSettings(),
-      api.libraries(),
-      api.series(),
-      api.jobs(),
-      api.errors(),
-      api.continueReading(),
-      api.recentBooks(),
-      api.favoriteBooks(),
-      api.privateStatusBooks("want"),
-      api.recentGames(),
-      api.recentVideos(),
-    ]);
-    applyClientPreferences(preferences);
-    preferencesLoaded.current = true;
-    setClientInfo(info);
-    setScanSettings(nextScanSettings);
-    setScanWorkerDraft(nextScanSettings.scanWorkers);
-    setLibraries(arrayOrEmpty(nextLibraries));
-    setSeries(arrayOrEmpty(nextSeries));
-    setJobs(arrayOrEmpty(nextJobs));
-    setErrors(arrayOrEmpty(nextErrors));
-    setContinueBooks(arrayOrEmpty(nextContinueBooks));
-    setRecentBooks(arrayOrEmpty(nextRecentBooks));
-    setFavoriteBooks(arrayOrEmpty(nextFavoriteBooks));
-    setWantBooks(arrayOrEmpty(nextWantBooks));
-    setGameShelf(arrayOrEmpty(nextGameShelf));
-    setVideoShelf(arrayOrEmpty(nextVideoShelf));
-    if (showProgress) {
-      setActiveTask(null);
+    try {
+      const nextProfiles = await api.profiles();
+      const profileList = arrayOrEmpty(nextProfiles);
+      const resolvedProfile = resolveActiveProfile(profileList, getActiveProfileId());
+      setProfiles(profileList);
+      setActiveProfileId(resolvedProfile?.id ?? 0);
+      if (resolvedProfile) {
+        persistActiveProfileId(resolvedProfile.id);
+      } else {
+        persistActiveProfileId("");
+      }
+      const [preferences, info, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf] = await Promise.all([
+        api.clientPreferences(),
+        api.clientInfo(),
+        api.scanSettings(),
+        api.libraries(),
+        api.series(),
+        api.jobs(),
+        api.errors(),
+        api.continueReading(),
+        api.recentBooks(),
+        api.favoriteBooks(),
+        api.privateStatusBooks("want"),
+        api.recentGames(),
+        api.recentVideos(),
+      ]);
+      applyClientPreferences(preferences);
+      preferencesLoaded.current = true;
+      setClientInfo(info);
+      setScanSettings(nextScanSettings);
+      setScanWorkerDraft(nextScanSettings.scanWorkers);
+      setLibraries(arrayOrEmpty(nextLibraries));
+      setSeries(arrayOrEmpty(nextSeries));
+      setJobs(arrayOrEmpty(nextJobs));
+      setErrors(arrayOrEmpty(nextErrors));
+      setContinueBooks(arrayOrEmpty(nextContinueBooks));
+      setRecentBooks(arrayOrEmpty(nextRecentBooks));
+      setFavoriteBooks(arrayOrEmpty(nextFavoriteBooks));
+      setWantBooks(arrayOrEmpty(nextWantBooks));
+      setGameShelf(arrayOrEmpty(nextGameShelf));
+      setVideoShelf(arrayOrEmpty(nextVideoShelf));
+    } finally {
+      if (showProgress) {
+        setActiveTask(null);
+      }
     }
   }
 
@@ -651,6 +672,92 @@ export function App() {
     setBookHasMore(false);
     void loadBooksPage(selectedSeries, 0, true);
   }, [loadBooksPage, selectedSeries]);
+
+  function resetProfileScopedViewState() {
+    setSelectedBook(null);
+    setPages([]);
+    setEpubManifest(null);
+    setBookDetailsOpen(false);
+    setPrivateDraft(emptyPrivateState());
+    setPageIndex(0);
+    setDisplayedPageIndex(0);
+    setEpubPagePosition(0);
+    setEpubPageCount(1);
+    setPdfPageCount(1);
+    setWebtoonProgress(0);
+    setWebtoonRestoreProgress(null);
+    setEpubTocOpen(false);
+    setReaderLoadState("idle");
+    setBooks([]);
+    setBookTotal(0);
+    setBookHasMore(false);
+    setContinueBooks([]);
+    setRecentBooks([]);
+    setFavoriteBooks([]);
+    setWantBooks([]);
+    setGlobalBooks([]);
+  }
+
+  async function reloadSelectedSeries() {
+    if (!selectedSeries) return;
+    await loadBooksPage(selectedSeries, 0, true);
+  }
+
+  async function switchProfile(profileID: number) {
+    if (!profileID || profileID === activeProfileId || profileSaving) return;
+    const targetProfile = profiles.find((profile) => profile.id === profileID) ?? null;
+    setProfileSaving(true);
+    persistActiveProfileId(profileID);
+    setActiveProfileId(profileID);
+    resetProfileScopedViewState();
+    setStatus(t.profileSwitching);
+    try {
+      await refreshAll(true);
+      await reloadSelectedSeries();
+      setStatus(t.profileSwitched(targetProfile?.name ?? t.defaultProfile));
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function createProfile() {
+    const name = window.prompt(t.createProfilePrompt, "");
+    const trimmedName = name?.trim();
+    if (!trimmedName) return;
+    setProfileSaving(true);
+    try {
+      const profile = await api.createProfile(trimmedName);
+      persistActiveProfileId(profile.id);
+      setActiveProfileId(profile.id);
+      resetProfileScopedViewState();
+      await refreshAll(true);
+      await reloadSelectedSeries();
+      setStatus(t.profileCreated(profile.name));
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function renameActiveProfile() {
+    if (!activeProfile || profileSaving) return;
+    const name = window.prompt(t.renameProfilePrompt(activeProfile.name), activeProfile.name);
+    const trimmedName = name?.trim();
+    if (!trimmedName || trimmedName === activeProfile.name) return;
+    setProfileSaving(true);
+    try {
+      const profile = await api.renameProfile(activeProfile.id, trimmedName);
+      setProfiles((items) => items.map((item) => item.id === profile.id ? profile : item));
+      setStatus(t.profileRenamed(profile.name));
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!selectedVideo) return;
@@ -1251,6 +1358,41 @@ export function App() {
 
         <header className="topbar">
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.searchLibrary} />
+          <div className="profileControls" aria-label={t.profile}>
+            <span className="profileAvatarIcon" title={t.profile} aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+                <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+              </svg>
+            </span>
+            <select
+              className="profileSelect"
+              style={{ width: profileSelectWidth(activeProfileLabel) }}
+              value={activeProfile?.id ?? ""}
+              onChange={(event) => switchProfile(Number(event.target.value))}
+              disabled={profileSaving || profiles.length === 0}
+              aria-label={t.profile}
+            >
+              {profiles.length === 0 ? (
+                <option value="">{t.defaultProfile}</option>
+              ) : (
+                profiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profileDisplayName(profile, t)}
+                  </option>
+                ))
+              )}
+            </select>
+            <button type="button" className="profileIconButton" onClick={createProfile} disabled={profileSaving} title={t.newProfile} aria-label={t.newProfile}>
+              +
+            </button>
+            <button type="button" className="profileRenameButton" onClick={renameActiveProfile} disabled={profileSaving || !activeProfile} title={t.renameProfile} aria-label={t.renameProfile}>
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+          </div>
           <select className="localeSelect" value={locale} onChange={(event) => setLocale(event.target.value as Locale)} aria-label={t.language}>
             <option value="zh">中文</option>
             <option value="zht">繁體中文</option>
@@ -1258,7 +1400,7 @@ export function App() {
             <option value="ja">日本語</option>
             <option value="ko">한국어</option>
           </select>
-          <span>{activeScan ? `Scanning: ${scanProgressLabel} · ${t.elapsed} ${activeScanElapsed}` : status}</span>
+          <span className="statusText">{activeScan ? `Scanning: ${scanProgressLabel} · ${t.elapsed} ${activeScanElapsed}` : status}</span>
         </header>
 
         {activeScan && (
@@ -2832,6 +2974,17 @@ type Translation = typeof translations.en;
 const translations = {
   zh: {
     language: "语言",
+    profile: "用户档案",
+    defaultProfile: "默认用户",
+    defaultProfileBadge: "默认",
+    newProfile: "新建用户",
+    renameProfile: "重命名",
+    createProfilePrompt: "新建用户档案\n请输入新用户名称",
+    renameProfilePrompt: (name: string) => `重命名当前用户档案：${name}\n请输入新的用户名称`,
+    profileSwitching: "正在切换用户",
+    profileSwitched: (name: string) => `已切换到 ${name}`,
+    profileCreated: (name: string) => `已创建用户 ${name}`,
+    profileRenamed: (name: string) => `已重命名为 ${name}`,
     library: "首页",
     reader: "阅读器",
     jobs: "任务",
@@ -2988,6 +3141,17 @@ const translations = {
   },
   zht: {
     language: "語言",
+    profile: "使用者檔案",
+    defaultProfile: "預設使用者",
+    defaultProfileBadge: "預設",
+    newProfile: "新增使用者",
+    renameProfile: "重新命名",
+    createProfilePrompt: "新增使用者檔案\n請輸入新使用者名稱",
+    renameProfilePrompt: (name: string) => `重新命名目前使用者檔案：${name}\n請輸入新的使用者名稱`,
+    profileSwitching: "正在切換使用者",
+    profileSwitched: (name: string) => `已切換到 ${name}`,
+    profileCreated: (name: string) => `已新增使用者 ${name}`,
+    profileRenamed: (name: string) => `已重新命名為 ${name}`,
     library: "首頁",
     reader: "閱讀器",
     jobs: "任務",
@@ -3144,6 +3308,17 @@ const translations = {
   },
   en: {
     language: "Language",
+    profile: "Profile",
+    defaultProfile: "Default Profile",
+    defaultProfileBadge: "Default",
+    newProfile: "New Profile",
+    renameProfile: "Rename",
+    createProfilePrompt: "Create a new profile\nEnter the new profile name",
+    renameProfilePrompt: (name: string) => `Rename current profile: ${name}\nEnter the new profile name`,
+    profileSwitching: "Switching profile",
+    profileSwitched: (name: string) => `Switched to ${name}`,
+    profileCreated: (name: string) => `Created profile ${name}`,
+    profileRenamed: (name: string) => `Renamed to ${name}`,
     library: "Home",
     reader: "Reader",
     jobs: "Jobs",
@@ -3300,6 +3475,17 @@ const translations = {
   },
   ja: {
     language: "言語",
+    profile: "プロフィール",
+    defaultProfile: "デフォルト",
+    defaultProfileBadge: "既定",
+    newProfile: "新規プロフィール",
+    renameProfile: "名前変更",
+    createProfilePrompt: "新規プロフィールを作成\n新しいプロフィール名を入力",
+    renameProfilePrompt: (name: string) => `現在のプロフィール名を変更：${name}\n新しいプロフィール名を入力`,
+    profileSwitching: "プロフィールを切り替え中",
+    profileSwitched: (name: string) => `${name} に切り替えました`,
+    profileCreated: (name: string) => `${name} を作成しました`,
+    profileRenamed: (name: string) => `${name} に変更しました`,
     library: "ホーム",
     reader: "リーダー",
     jobs: "ジョブ",
@@ -3456,6 +3642,17 @@ const translations = {
   },
   ko: {
     language: "언어",
+    profile: "프로필",
+    defaultProfile: "기본 프로필",
+    defaultProfileBadge: "기본",
+    newProfile: "새 프로필",
+    renameProfile: "이름 변경",
+    createProfilePrompt: "새 프로필 만들기\n새 프로필 이름을 입력하세요",
+    renameProfilePrompt: (name: string) => `현재 프로필 이름 변경: ${name}\n새 프로필 이름을 입력하세요`,
+    profileSwitching: "프로필 전환 중",
+    profileSwitched: (name: string) => `${name}(으)로 전환됨`,
+    profileCreated: (name: string) => `${name} 프로필 생성됨`,
+    profileRenamed: (name: string) => `${name}(으)로 이름 변경됨`,
     library: "홈",
     reader: "리더",
     jobs: "작업",
@@ -3696,6 +3893,24 @@ function isLocale(value: string | null | undefined): value is Locale {
 
 function arrayOrEmpty<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
+}
+
+function resolveActiveProfile(profiles: Profile[], storedProfileID: string | number) {
+  const parsedID = Number(storedProfileID);
+  if (Number.isFinite(parsedID) && parsedID > 0) {
+    const storedProfile = profiles.find((profile) => profile.id === Math.trunc(parsedID));
+    if (storedProfile) return storedProfile;
+  }
+  return profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null;
+}
+
+function profileDisplayName(profile: Profile, t: Translation) {
+  return profile.isDefault ? `${profile.name} · ${t.defaultProfileBadge}` : profile.name;
+}
+
+function profileSelectWidth(name: string) {
+  const length = Array.from(name.trim() || "User").length;
+  return `calc(${Math.max(4, Math.min(length, 18))}ch + 34px)`;
 }
 
 function mergeByID<T extends { id: number }>(current: T[], incoming: T[]) {
