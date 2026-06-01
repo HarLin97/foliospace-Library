@@ -1820,7 +1820,7 @@ export function App() {
             <div className="aboutGrid">
               <div>
                 <span>{t.version}</span>
-                <strong>{clientInfo?.serviceVersion || "0.881"}</strong>
+                <strong>{clientInfo?.serviceVersion || "0.885"}</strong>
               </div>
               <div>
                 <span>{t.apiVersion}</span>
