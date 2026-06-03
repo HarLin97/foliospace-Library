@@ -2014,7 +2014,8 @@ button.danger:hover {
   background: #0d1214;
 }
 
-.reader.webtoonMode .pageStage.webtoon {
+.reader.webtoonMode .pageStage.webtoon,
+.reader.webtoonMode .pageStage.pdf.webtoon {
   grid-row-end: -1;
 }
 
@@ -2080,6 +2081,15 @@ button.danger:hover {
   padding: clamp(8px, 1.6vw, 22px);
 }
 
+.pageStage.pdf.webtoon {
+  background: #101518;
+  padding: 0;
+}
+
+.pageStage.pdf.webtoon .pageEdge {
+  display: none;
+}
+
 .pdfFrame {
   position: relative;
   z-index: 1;
@@ -2119,6 +2129,26 @@ button.danger:hover {
 
 .pdfReader.double canvas {
   max-width: calc((100% - 18px) / 2);
+}
+
+.pdfReader.webtoon {
+  display: block;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: clamp(12px, 2vw, 26px);
+  scroll-behavior: smooth;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035), transparent 18%, transparent 82%, rgba(255, 255, 255, 0.035)),
+    #101518;
+}
+
+.pdfReader.webtoon canvas {
+  width: min(100%, 980px);
+  max-width: 100%;
+  max-height: none;
+  height: auto;
+  margin: 0 auto clamp(10px, 1.6vw, 18px);
+  border-radius: 4px;
 }
 
 .pdfReaderError {
@@ -3033,6 +3063,10 @@ button.danger:hover {
   .pdfReader.double canvas {
     max-width: 100%;
     max-height: calc((100% - 18px) / 2);
+  }
+
+  .pdfReader.webtoon {
+    padding-inline: 8px;
   }
 
   .epubFrame {

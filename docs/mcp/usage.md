@@ -21,10 +21,10 @@ This installs `foliospace-mcp` to:
 Release packages are expected at:
 
 ```text
-https://foliospace.app/releases/foliospace-mcp_0.90_darwin_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.90_darwin_amd64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.90_linux_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.90_linux_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.91_darwin_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.91_darwin_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.91_linux_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.91_linux_amd64.tar.gz
 https://foliospace.app/releases/checksums.txt
 ```
 
@@ -119,7 +119,7 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.client_info`: service name, version, supported formats, and capability flags.
 - `foliospace.home`: continue reading, recent books, and collections.
 - `foliospace.search_books`: search indexed books and comics.
-- `foliospace.open_book_manifest`: open a CBZ/ZIP/EPUB/PDF client manifest by `bookId`. PDF manifests expose the opaque PDF stream URL; clients should use HTTP Range capable reads against that URL.
+- `foliospace.open_book_manifest`: open a CBZ/ZIP/EPUB/PDF client manifest by `bookId`. Manifests include `readerModes` and `defaultReaderMode` so clients can expose single-page, double-page, or webtoon/vertical-scroll controls without guessing from the extension. PDF manifests expose the opaque PDF stream URL; clients should use HTTP Range capable reads against that URL.
 - `foliospace.list_games`: list paginated client-safe ROM assets with `limit`, `offset`, `q`, `platform`, `format`, and `sort`.
 - `foliospace.open_game_manifest`: open a ROM client manifest by `gameId`.
 - `foliospace.list_videos`: list paginated client-safe video assets with `limit`, `offset`, `q`, `format`, and `sort`.
