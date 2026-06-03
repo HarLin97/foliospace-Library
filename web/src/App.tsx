@@ -1354,8 +1354,13 @@ export function App() {
   const activeScanElapsed = activeScan ? formatElapsed(activeScan, nowTick) : null;
   const selectedJobLatest = selectedJob ? jobs.find((job) => job.id === selectedJob.id) ?? selectedJob : null;
   const useWebtoonReader = selectedBook ? readerPageMode === "webtoon" && selectedBook.format !== "epub" : false;
+  const selectedBookReaderClass = selectedBook
+    ? selectedBook.format === "pdf"
+      ? "pdfBookReader"
+      : `${selectedBook.format}Reader`
+    : "";
   const readerClassName = selectedBook
-    ? `reader ${selectedBook.format}Reader${useWebtoonReader ? " webtoonMode" : ""}${readerFullscreen ? " immersiveMode" : ""}`
+    ? `reader ${selectedBookReaderClass}${useWebtoonReader ? " webtoonMode" : ""}${readerFullscreen ? " immersiveMode" : ""}`
     : "reader";
 
   return (

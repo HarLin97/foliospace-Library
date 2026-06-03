@@ -1999,7 +1999,8 @@ button.danger:hover {
   background: #0d1214;
 }
 
-.reader.webtoonMode .pageStage.webtoon {
+.reader.webtoonMode .pageStage.webtoon,
+.reader.webtoonMode .pageStage.pdf.webtoon {
   grid-row-end: -1;
 }
 
@@ -2068,6 +2069,10 @@ button.danger:hover {
 .pageStage.pdf.webtoon {
   background: #101518;
   padding: 0;
+}
+
+.pageStage.pdf.webtoon .pageEdge {
+  display: none;
 }
 
 .pdfFrame {
