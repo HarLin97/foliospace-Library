@@ -2,7 +2,11 @@ package httpapi
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -150,6 +154,253 @@ func TestAPIIndexesAndStreamsCBZPages(t *testing.T) {
 	chapter := get(t, ts.URL+"/api/books/"+itoa(epubBookID)+"/epub/resources/OPS/text/chapter1.xhtml")
 	if !strings.Contains(chapter, "Chapter") {
 		t.Fatalf("chapter response %q does not include Chapter", chapter)
+	}
+}
+
+func TestThumbnailAPIAndWorkerControls(t *testing.T) {
+	root := t.TempDir()
+	bookPath := filepath.Join(root, "Series A", "book1.cbz")
+	makeJPEGZip(t, bookPath)
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(lib.ID, "Series A", "Series A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "book1", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(book.ID, lib.ID, bookPath, "Series A/book1.cbz", info.Size(), info.ModTime(), ".cbz"); err != nil {
+		t.Fatal(err)
+	}
+	configDir := t.TempDir()
+	svc := service.NewWithConfig(st, configDir)
+	svc.PauseThumbnailWorker()
+	ts := httptest.NewServer(New(svc, nil).Routes())
+	defer ts.Close()
+
+	volumesBody := get(t, ts.URL+"/api/collections/"+itoa(series.ID)+"/volumes?limit=1")
+	if !strings.Contains(volumesBody, `"thumbnailUrl":"/api/books/`+itoa(book.ID)+`/thumbnail?size=small`) || !strings.Contains(volumesBody, `"thumbnailStatus"`) {
+		t.Fatalf("volumes body %q missing thumbnail fields", volumesBody)
+	}
+
+	resp, err := http.Get(ts.URL + "/api/books/" + itoa(book.ID) + "/thumbnail?size=small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Header.Get("Content-Type") != "image/jpeg" || resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("ETag") != "" || resp.Header.Get("X-FolioSpace-Thumbnail-Fallback") != "source" || len(body) == 0 {
+		t.Fatalf("source fallback response type=%q cache=%q etag=%q fallback=%q len=%d", resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"), resp.Header.Get("ETag"), resp.Header.Get("X-FolioSpace-Thumbnail-Fallback"), len(body))
+	}
+	headResp, err := http.Head(ts.URL + "/api/books/" + itoa(book.ID) + "/thumbnail?size=small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = headResp.Body.Close()
+	if headResp.Header.Get("Content-Type") != "image/jpeg" || headResp.Header.Get("Cache-Control") != "no-store" || headResp.Header.Get("ETag") != "" || headResp.Header.Get("X-FolioSpace-Thumbnail-Fallback") != "source" {
+		t.Fatalf("source fallback HEAD type=%q cache=%q etag=%q fallback=%q", headResp.Header.Get("Content-Type"), headResp.Header.Get("Cache-Control"), headResp.Header.Get("ETag"), headResp.Header.Get("X-FolioSpace-Thumbnail-Fallback"))
+	}
+	statusBody := get(t, ts.URL+"/api/thumbnail-worker/status")
+	if !strings.Contains(statusBody, `"status":"paused"`) || !strings.Contains(statusBody, `"queued":1`) {
+		t.Fatalf("status body %q, want paused queued worker", statusBody)
+	}
+
+	resumeBody := postJSONBody(t, ts.URL+"/api/thumbnail-worker/resume", "")
+	if !strings.Contains(resumeBody, `"workerEnabled":true`) {
+		t.Fatalf("resume body %q, want worker status", resumeBody)
+	}
+	if err := svc.ProcessNextThumbnailJobForTest(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool {
+		status, err := svc.ThumbnailWorkerStatus()
+		return err == nil && status.Ready == 1
+	})
+	resp, err = http.Get(ts.URL + "/api/books/" + itoa(book.ID) + "/thumbnail?size=small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageBody, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Header.Get("Content-Type") != "image/jpeg" || !strings.Contains(resp.Header.Get("Cache-Control"), "max-age=2592000") || resp.Header.Get("ETag") == "" || len(imageBody) == 0 {
+		t.Fatalf("cached response type=%q cache=%q etag=%q len=%d", resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"), resp.Header.Get("ETag"), len(imageBody))
+	}
+	headResp, err = http.Head(ts.URL + "/api/books/" + itoa(book.ID) + "/thumbnail?size=small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = headResp.Body.Close()
+	if headResp.Header.Get("Content-Type") != "image/jpeg" || !strings.Contains(headResp.Header.Get("Cache-Control"), "max-age=2592000") || headResp.Header.Get("ETag") == "" {
+		t.Fatalf("cached HEAD type=%q cache=%q etag=%q", headResp.Header.Get("Content-Type"), headResp.Header.Get("Cache-Control"), headResp.Header.Get("ETag"))
+	}
+
+	svc.PauseThumbnailWorker()
+	_, err = http.Get(ts.URL + "/api/books/" + itoa(book.ID) + "/thumbnail?size=medium")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelBody := postJSONBody(t, ts.URL+"/api/thumbnail-worker/cancel", "")
+	if !strings.Contains(cancelBody, `"cancelled":1`) {
+		t.Fatalf("cancel body %q, want one cancelled thumbnail job", cancelBody)
+	}
+
+	orphanPath := filepath.Join(configDir, "cache", "book-thumbnails", "small", "orphan.jpg")
+	if err := os.WriteFile(orphanPath, []byte("orphan-cache"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cleanupBody := postJSONBody(t, ts.URL+"/api/thumbnail-worker/cleanup-orphans", "")
+	if !strings.Contains(cleanupBody, `"orphanFiles":0`) {
+		t.Fatalf("cleanup body %q, want orphan cache files cleaned", cleanupBody)
+	}
+	if _, err := os.Stat(orphanPath); !os.IsNotExist(err) {
+		t.Fatalf("orphan cache file still exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestThumbnailAPIStreamsStaleCacheFallbackWithoutLongCaching(t *testing.T) {
+	root := t.TempDir()
+	bookPath := filepath.Join(root, "Series A", "book1.cbz")
+	makeJPEGZip(t, bookPath)
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(lib.ID, "Series A", "Series A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "book1", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(book.ID, lib.ID, bookPath, "Series A/book1.cbz", info.Size(), info.ModTime(), ".cbz"); err != nil {
+		t.Fatal(err)
+	}
+	configDir := t.TempDir()
+	svc := service.NewWithConfig(st, configDir)
+	svc.PauseThumbnailWorker()
+	stalePath := filepath.Join(configDir, "cache", "book-thumbnails", "small", itoa(book.ID)+"-legacy-fallback.jpg")
+	if err := os.MkdirAll(filepath.Dir(stalePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleBytes := makeJPEGBytes(t, 32, 44, color.RGBA{R: 100, G: 80, B: 170, A: 255})
+	if err := os.WriteFile(stalePath, staleBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(New(svc, nil).Routes())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/books/" + itoa(book.ID) + "/thumbnail?size=small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Header.Get("Content-Type") != "image/jpeg" || resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("ETag") != "" || resp.Header.Get("X-FolioSpace-Thumbnail-Fallback") != "stale" || !bytes.Equal(body, staleBytes) {
+		t.Fatalf("stale response type=%q cache=%q etag=%q fallback=%q len=%d, want no-store stale jpeg", resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"), resp.Header.Get("ETag"), resp.Header.Get("X-FolioSpace-Thumbnail-Fallback"), len(body))
+	}
+	headResp, err := http.Head(ts.URL + "/api/books/" + itoa(book.ID) + "/thumbnail?size=small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = headResp.Body.Close()
+	if headResp.Header.Get("Content-Type") != "image/jpeg" || headResp.Header.Get("Cache-Control") != "no-store" || headResp.Header.Get("ETag") != "" || headResp.Header.Get("X-FolioSpace-Thumbnail-Fallback") != "stale" {
+		t.Fatalf("stale HEAD type=%q cache=%q etag=%q fallback=%q, want no-store stale jpeg headers", headResp.Header.Get("Content-Type"), headResp.Header.Get("Cache-Control"), headResp.Header.Get("ETag"), headResp.Header.Get("X-FolioSpace-Thumbnail-Fallback"))
+	}
+	status, err := svc.ThumbnailWorkerStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Queued != 1 || status.Ready != 0 || !status.Paused {
+		t.Fatalf("thumbnail worker status = %#v, want queued regeneration while stale fallback is streamed", status)
+	}
+}
+
+func TestCollectionVolumesPreservesLegacyBookFieldsWithThumbnails(t *testing.T) {
+	root := t.TempDir()
+	bookPath := filepath.Join(root, "Series A", "book1.cbz")
+	makeJPEGZip(t, bookPath)
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(lib.ID, "Series A", "Series A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "book1", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(book.ID, lib.ID, bookPath, "Series A/book1.cbz", info.Size(), info.ModTime(), ".cbz"); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(New(service.NewWithConfig(st, t.TempDir()), nil).Routes())
+	defer ts.Close()
+
+	body := get(t, ts.URL+"/api/collections/"+itoa(series.ID)+"/volumes")
+	var volumes []map[string]any
+	if err := json.Unmarshal([]byte(body), &volumes); err != nil {
+		t.Fatal(err)
+	}
+	if len(volumes) != 1 || volumes[0]["filePath"] != bookPath || volumes[0]["thumbnailUrl"] == "" || volumes[0]["thumbnailStatus"] == "" {
+		t.Fatalf("collection volumes = %#v, want legacy filePath plus thumbnail fields", volumes)
+	}
+
+	pagedBody := get(t, ts.URL+"/api/collections/"+itoa(series.ID)+"/volumes?limit=1")
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(pagedBody), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0]["filePath"] != bookPath || page.Items[0]["thumbnailUrl"] == "" || page.Items[0]["thumbnailStatus"] == "" {
+		t.Fatalf("paged collection volumes = %#v, want legacy filePath plus thumbnail fields", page.Items)
 	}
 }
 
@@ -1216,4 +1467,25 @@ func makeZip(t *testing.T, path string, entries map[string]string) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func makeJPEGZip(t *testing.T, path string) {
+	t.Helper()
+	imageBody := bytes.NewBuffer(makeJPEGBytes(t, 16, 24, color.RGBA{R: 40, G: 50, B: 180, A: 255}))
+	makeZip(t, path, map[string]string{"001.jpg": imageBody.String()})
+}
+
+func makeJPEGBytes(t *testing.T, width int, height int, fill color.RGBA) []byte {
+	t.Helper()
+	var imageBody bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.Set(x, y, fill)
+		}
+	}
+	if err := jpeg.Encode(&imageBody, img, &jpeg.Options{Quality: 85}); err != nil {
+		t.Fatal(err)
+	}
+	return imageBody.Bytes()
 }

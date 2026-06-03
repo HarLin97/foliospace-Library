@@ -26,9 +26,13 @@ import (
 )
 
 type Service struct {
-	store     *store.Store
-	scanner   *scanner.Scanner
-	configDir string
+	store                    *store.Store
+	scanner                  *scanner.Scanner
+	configDir                string
+	thumbnailWorker          *thumbnailWorker
+	thumbnailCacheStatusMu   sync.Mutex
+	thumbnailCacheStatusSnap domain.ThumbnailCacheStatus
+	thumbnailCacheStatusTime time.Time
 }
 
 const adminTokenHashSetting = "admin_token_sha256"
@@ -93,13 +97,17 @@ func New(store *store.Store) *Service {
 }
 
 func NewWithConfig(store *store.Store, configDir string) *Service {
-	return &Service{
+	svc := &Service{
 		store: store,
 		scanner: scanner.NewWithWorkerCount(store, func() int {
 			return scanWorkerCountFromStore(store)
 		}),
 		configDir: strings.TrimSpace(configDir),
 	}
+	_, _ = store.ResetRunningThumbnailJobs()
+	svc.thumbnailWorker = newThumbnailWorker(svc)
+	svc.thumbnailWorker.start()
+	return svc
 }
 
 func (s *Service) CreateLibrary(name string, rootPath string) (domain.Library, error) {

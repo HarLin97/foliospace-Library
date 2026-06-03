@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"foliospace-reader/internal/domain"
 	"foliospace-reader/internal/service"
@@ -75,6 +76,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/videos/", s.handleVideoAction)
 	mux.HandleFunc("/api/videos/recent", s.handleRecentVideos)
 	mux.HandleFunc("/api/search", s.handleSearch)
+	mux.HandleFunc("/api/thumbnail-worker/", s.handleThumbnailWorkerAction)
 	mux.HandleFunc("/api/jobs", s.handleJobs)
 	mux.HandleFunc("/api/jobs/", s.handleJobAction)
 	mux.HandleFunc("/api/errors", s.handleErrors)
@@ -923,11 +925,11 @@ func (s *Server) handleCollectionAction(w http.ResponseWriter, r *http.Request) 
 			Query:    r.URL.Query().Get("q"),
 			Sort:     r.URL.Query().Get("sort"),
 		}, profileID)
-		writeJSONOrError(w, page, err)
+		writeJSONOrError(w, bookListPageWithThumbnails(page), err)
 		return
 	}
 	items, err := s.service.ListBooksForProfile(id, profileID)
-	writeJSONOrError(w, items, err)
+	writeJSONOrError(w, booksWithThumbnails(items), err)
 }
 
 func (s *Server) handleContinueReading(w http.ResponseWriter, r *http.Request) {
@@ -1050,6 +1052,10 @@ func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if tail == "cover" && r.Method == http.MethodGet {
 		s.streamCover(w, id)
+		return
+	}
+	if tail == "thumbnail" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		s.streamBookThumbnail(w, r, id, r.URL.Query().Get("size"))
 		return
 	}
 	if tail == "epub/manifest" && r.Method == http.MethodGet {
@@ -1208,6 +1214,46 @@ func (s *Server) streamCover(w http.ResponseWriter, bookID int64) {
 	_, _ = io.Copy(w, page.Body)
 }
 
+func (s *Server) streamBookThumbnail(w http.ResponseWriter, r *http.Request, bookID int64, size string) {
+	stream, err := s.service.OpenBookThumbnail(bookID, size)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer stream.Body.Close()
+
+	w.Header().Set("Content-Type", stream.ContentType)
+	fallbackKind := thumbnailFallbackKind(stream)
+	if stream.CacheHit && fallbackKind == "" {
+		w.Header().Set("Cache-Control", "private, max-age=2592000")
+		if stream.ETag != "" {
+			w.Header().Set("ETag", `"`+stream.ETag+`"`)
+		}
+	} else {
+		w.Header().Set("Cache-Control", "no-store")
+		if fallbackKind != "" {
+			w.Header().Set("X-FolioSpace-Thumbnail-Fallback", fallbackKind)
+		}
+	}
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = io.Copy(w, stream.Body)
+}
+
+func thumbnailFallbackKind(stream service.ThumbnailStream) string {
+	if stream.StaleFallback {
+		return "stale"
+	}
+	if stream.SourceFallback {
+		return "source"
+	}
+	if stream.GenericFallback {
+		return "generic"
+	}
+	return ""
+}
+
 func (s *Server) streamSeriesCover(w http.ResponseWriter, seriesID int64) {
 	page, err := s.service.OpenSeriesCover(seriesID)
 	if err != nil {
@@ -1219,6 +1265,44 @@ func (s *Server) streamSeriesCover(w http.ResponseWriter, seriesID int64) {
 	w.Header().Set("Content-Type", page.ContentType)
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = io.Copy(w, page.Body)
+}
+
+func (s *Server) handleThumbnailWorkerAction(w http.ResponseWriter, r *http.Request) {
+	action := strings.TrimPrefix(r.URL.Path, "/api/thumbnail-worker/")
+	switch action {
+	case "status":
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+	case "pause", "resume", "cancel", "cleanup-orphans":
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+	default:
+		http.NotFound(w, r)
+		return
+	}
+
+	switch action {
+	case "pause":
+		s.service.PauseThumbnailWorker()
+	case "resume":
+		s.service.ResumeThumbnailWorker()
+	case "cancel":
+		if _, err := s.service.CancelThumbnailJobs(); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	case "cleanup-orphans":
+		if _, err := s.service.CleanupThumbnailOrphanCache(); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	status, err := s.service.ThumbnailWorkerStatus()
+	writeJSONOrError(w, status, err)
 }
 
 func (s *Server) streamEPUBResource(w http.ResponseWriter, bookID int64, resourcePath string) {
@@ -1429,6 +1513,7 @@ type clientCollection struct {
 type clientBook struct {
 	ID               int64    `json:"id"`
 	CollectionID     int64    `json:"collectionId"`
+	SeriesID         int64    `json:"seriesId"`
 	CollectionTitle  string   `json:"collectionTitle,omitempty"`
 	Title            string   `json:"title"`
 	Creator          string   `json:"creator,omitempty"`
@@ -1438,13 +1523,27 @@ type clientBook struct {
 	PageCount        int      `json:"pageCount"`
 	CoverStatus      string   `json:"coverStatus"`
 	CoverURL         string   `json:"coverUrl"`
+	ThumbnailStatus  string   `json:"thumbnailStatus"`
+	ThumbnailURL     string   `json:"thumbnailUrl"`
+	Analyzed         bool     `json:"analyzed"`
+	AddedAt          string   `json:"addedAt"`
+	UpdatedAt        string   `json:"updatedAt"`
 	CurrentPage      int      `json:"currentPage"`
 	ProgressFraction float64  `json:"progressFraction"`
+	LastReadAt       string   `json:"lastReadAt"`
 	PrivateStatus    string   `json:"privateStatus"`
 	Favorite         bool     `json:"favorite"`
 	Rating           int      `json:"rating"`
 	Tags             []string `json:"tags"`
 	Summary          string   `json:"summary"`
+}
+
+type clientBookListPageResponse struct {
+	Items   []clientBook `json:"items"`
+	Total   int64        `json:"total"`
+	Limit   int          `json:"limit"`
+	Offset  int          `json:"offset"`
+	HasMore bool         `json:"hasMore"`
 }
 
 type clientBookManifestResponse struct {
@@ -1571,6 +1670,35 @@ func clientBooks(books []domain.Book) []clientBook {
 		out = append(out, clientBookItem(book))
 	}
 	return out
+}
+
+func booksWithThumbnails(books []domain.Book) []domain.Book {
+	out := make([]domain.Book, 0, len(books))
+	for _, book := range books {
+		out = append(out, bookWithThumbnail(book))
+	}
+	return out
+}
+
+func bookListPageWithThumbnails(page domain.BookListPage) domain.BookListPage {
+	page.Items = booksWithThumbnails(page.Items)
+	return page
+}
+
+func bookWithThumbnail(book domain.Book) domain.Book {
+	book.ThumbnailStatus = thumbnailStatus(book)
+	book.ThumbnailURL = clientThumbnailURL(book.ID, "small")
+	return book
+}
+
+func clientBookListPage(page domain.BookListPage) clientBookListPageResponse {
+	return clientBookListPageResponse{
+		Items:   clientBooks(page.Items),
+		Total:   page.Total,
+		Limit:   page.Limit,
+		Offset:  page.Offset,
+		HasMore: page.HasMore,
+	}
 }
 
 func games(items []domain.GameAsset) []domain.GameAsset {
@@ -1703,6 +1831,7 @@ func clientBookItem(book domain.Book) clientBook {
 	return clientBook{
 		ID:               book.ID,
 		CollectionID:     book.SeriesID,
+		SeriesID:         book.SeriesID,
 		CollectionTitle:  book.CollectionTitle,
 		Title:            book.Title,
 		Creator:          book.Creator,
@@ -1712,8 +1841,14 @@ func clientBookItem(book domain.Book) clientBook {
 		PageCount:        book.PageCount,
 		CoverStatus:      book.CoverStatus,
 		CoverURL:         clientCoverURL(book.ID),
+		ThumbnailStatus:  thumbnailStatus(book),
+		ThumbnailURL:     clientThumbnailURL(book.ID, "small"),
+		Analyzed:         book.Analyzed,
+		AddedAt:          formatClientTime(book.AddedAt),
+		UpdatedAt:        formatClientTime(book.UpdatedAt),
 		CurrentPage:      book.CurrentPage,
 		ProgressFraction: book.ProgressFraction,
+		LastReadAt:       formatClientTime(book.LastReadAt),
 		PrivateStatus:    book.PrivateStatus,
 		Favorite:         book.Favorite,
 		Rating:           book.Rating,
@@ -1724,6 +1859,24 @@ func clientBookItem(book domain.Book) clientBook {
 
 func clientCoverURL(bookID int64) string {
 	return fmt.Sprintf("/api/books/%d/cover", bookID)
+}
+
+func clientThumbnailURL(bookID int64, size string) string {
+	return fmt.Sprintf("/api/books/%d/thumbnail?size=%s&v=%s", bookID, size, service.ThumbnailCacheVersion())
+}
+
+func thumbnailStatus(book domain.Book) string {
+	if strings.TrimSpace(book.ThumbnailStatus) != "" {
+		return book.ThumbnailStatus
+	}
+	return "pending"
+}
+
+func formatClientTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format(time.RFC3339Nano)
 }
 
 func privateStateFromBook(book domain.Book) domain.BookPrivateState {

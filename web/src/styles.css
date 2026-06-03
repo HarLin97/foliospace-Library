@@ -2303,6 +2303,91 @@ button.danger:hover {
   width: 100%;
 }
 
+.thumbnailWorkerPanel {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid #eef2f3;
+  padding: 12px 0;
+}
+
+.thumbnailWorkerHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.thumbnailWorkerHeader small,
+.thumbnailCacheHeader small,
+.thumbnailActive,
+.thumbnailError {
+  display: block;
+  margin-top: 3px;
+  color: #69777d;
+}
+
+.thumbnailError {
+  color: #a33a31;
+}
+
+.workerBadge {
+  border: 1px solid #cfd9dd;
+  border-radius: 999px;
+  background: #f6f9fa;
+  color: #526269;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.workerBadge.running,
+.workerBadge.queued {
+  border-color: #9ec6d0;
+  background: #ecf8fa;
+  color: #1f6c7e;
+}
+
+.workerBadge.paused {
+  border-color: #e3c072;
+  background: #fff8df;
+  color: #76570b;
+}
+
+.thumbnailCachePanel {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #eef2f3;
+  padding-top: 10px;
+}
+
+.thumbnailCacheHeader {
+  display: grid;
+  gap: 2px;
+}
+
+.thumbnailStats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.thumbnailStats span {
+  display: grid;
+  gap: 2px;
+  border: 1px solid #edf2f4;
+  border-radius: 6px;
+  background: #fbfcfd;
+  padding: 7px;
+  color: #69777d;
+  font-size: 12px;
+}
+
+.thumbnailStats strong {
+  color: #1f2a2e;
+  font-size: 15px;
+}
+
 .jobDetail {
   display: grid;
   gap: 14px;
@@ -2679,6 +2764,15 @@ button.danger:hover {
     gap: 10px;
     overflow: visible;
     padding: 10px;
+  }
+
+  .thumbnailStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .thumbnailWorkerHeader {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .catalogGrid.videos {
