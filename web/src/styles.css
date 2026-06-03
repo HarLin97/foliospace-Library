@@ -1057,6 +1057,21 @@ button:hover {
   object-fit: cover;
 }
 
+.shelfCover .sourceCoverImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.shelfCover .sourceCoverImage.loaded {
+  opacity: 1;
+}
+
 h1 {
   font-size: 18px;
   margin: 0 0 14px;

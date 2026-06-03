@@ -15,3 +15,13 @@ test("thumbnail fallback uses the legacy bookshelf artwork", async () => {
   assert.ok(!appSource.includes("data:image/svg+xml"), "inline SVG fallback should not be used");
   await access(path.join(webDir, "public", "bookshelf-bg-v2.jpg"));
 });
+
+test("continue reading uses source covers for enlarged shelves", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+
+  assert.ok(appSource.includes("const visibleContinueBooks = continueBooks.slice(0, 4);"), "continue reading should base large cover mode on displayed books");
+  assert.ok(appSource.includes("largeCovers={visibleContinueBooks.length < 4}"), "continue reading should enable large cover mode only when fewer than four displayed books are shown");
+  assert.ok(appSource.includes("largeCover={largeCovers}"), "BookShelf should pass large cover mode to each book cover");
+  assert.ok(appSource.includes("sourceCoverUrl={largeCover ? book.coverUrl || `/api/books/${book.id}/cover` : undefined}"), "BookCover should fall back to the legacy source cover URL when older API payloads omit coverUrl");
+  assert.ok(appSource.includes('className={`sourceCoverImage${sourceCoverLoaded ? " loaded" : ""}`}'), "large covers should render a real cover image overlay instead of relying on a hidden preload");
+});

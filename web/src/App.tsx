@@ -1410,6 +1410,7 @@ export function App() {
   const readerClassName = selectedBook
     ? `reader ${selectedBook.format}Reader${useWebtoonReader ? " webtoonMode" : ""}${readerFullscreen ? " immersiveMode" : ""}`
     : "reader";
+  const visibleContinueBooks = continueBooks.slice(0, 4);
 
   return (
     <main className={view === "reader" ? "app readerMode" : "app"}>
@@ -1665,16 +1666,17 @@ export function App() {
               </div>
             </section>
 
-            {(continueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || videoShelf.length > 0 || recentBooks.length > 0) && (
+            {(visibleContinueBooks.length > 0 || favoriteBooks.length > 0 || wantBooks.length > 0 || gameShelf.length > 0 || videoShelf.length > 0 || recentBooks.length > 0) && (
               <section className="homeRows quickShelfPanel panel wide" aria-label="Reading shortcuts">
                 <div className="quickShelfColumn">
-                  {continueBooks.length > 0 && (
+                  {visibleContinueBooks.length > 0 && (
                     <BookShelf
                       title={t.continueReading}
                       subtitle={t.continueSubtitle}
-                      books={continueBooks.slice(0, 4)}
+                      books={visibleContinueBooks}
                       onOpen={openBook}
                       meta={(book) => continueMeta(book, t)}
+                      largeCovers={visibleContinueBooks.length < 4}
                       progress
                     />
                   )}
@@ -2564,6 +2566,7 @@ function BookShelf({
   books,
   onOpen,
   meta,
+  largeCovers = false,
   progress = false,
 }: {
   title: string;
@@ -2571,6 +2574,7 @@ function BookShelf({
   books: Book[];
   onOpen: (book: Book) => void;
   meta: (book: Book) => string;
+  largeCovers?: boolean;
   progress?: boolean;
 }) {
   return (
@@ -2585,7 +2589,7 @@ function BookShelf({
         {books.map((book) => (
           <button className="shelfBook" key={`${title}-${book.id}`} onClick={() => onOpen(book)} title={book.title}>
             <span className="shelfCover">
-              <BookCover book={book} />
+              <BookCover book={book} largeCover={largeCovers} />
               <span className="coverBadge">{book.format.toUpperCase()}</span>
             </span>
             <span>
@@ -2604,12 +2608,46 @@ function BookShelf({
   );
 }
 
-function BookCover({ book }: { book: Book }) {
+function BookCover({ book, largeCover = false }: { book: Book; largeCover?: boolean }) {
   const src = book.thumbnailUrl || `/api/books/${book.id}/thumbnail?size=small`;
-  return <ThumbnailImage src={src} thumbnailStatus={book.thumbnailStatus || "pending"} alt="" loading="lazy" />;
+  return (
+    <>
+      <ThumbnailImage
+        src={src}
+        thumbnailStatus={book.thumbnailStatus || "pending"}
+        alt=""
+        loading="lazy"
+      />
+      <SourceCoverOverlay sourceCoverUrl={largeCover ? book.coverUrl || `/api/books/${book.id}/cover` : undefined} />
+    </>
+  );
 }
 
 const thumbnailFallbackImage = "/bookshelf-bg-v2.jpg";
+
+function SourceCoverOverlay({ sourceCoverUrl }: { sourceCoverUrl?: string }) {
+  const [sourceCoverLoaded, setSourceCoverLoaded] = useState(false);
+  const [sourceCoverFailed, setSourceCoverFailed] = useState(false);
+
+  useEffect(() => {
+    setSourceCoverLoaded(false);
+    setSourceCoverFailed(false);
+  }, [sourceCoverUrl]);
+
+  if (!sourceCoverUrl || sourceCoverFailed) return null;
+
+  return (
+    <img
+      className={`sourceCoverImage${sourceCoverLoaded ? " loaded" : ""}`}
+      src={authenticatedResourcePath(sourceCoverUrl)}
+      alt=""
+      loading="lazy"
+      data-thumbnail-status={sourceCoverLoaded ? "source-cover" : "source-cover-loading"}
+      onLoad={() => setSourceCoverLoaded(true)}
+      onError={() => setSourceCoverFailed(true)}
+    />
+  );
+}
 
 function ThumbnailImage({
   src,
