@@ -1281,12 +1281,87 @@ func (s *Service) OpenCover(bookID int64) (PageStream, error) {
 		return PageStream{Body: body, ContentType: contentType}, nil
 	}
 	if book.Format == "pdf" {
+		if cover, err := renderPDFCover(book.FilePath, pdfCoverRenderDPI); err == nil {
+			return cover, nil
+		}
 		return PageStream{
 			Body:        io.NopCloser(strings.NewReader(pdfCoverPlaceholder())),
 			ContentType: "image/svg+xml; charset=utf-8",
 		}, nil
 	}
 	return s.OpenPage(bookID, 0)
+}
+
+const (
+	pdfCoverRenderDPI      = 144
+	pdfThumbnailRenderDPI  = 96
+	pdfCoverRenderTimeout  = 10 * time.Second
+	pdfThumbnailSourceMark = "pdf-first-page:pdftoppm:v1"
+	pdfPlaceholderMark     = "pdf-placeholder:v1"
+)
+
+type cleanupReadCloser struct {
+	io.ReadCloser
+	cleanup func()
+}
+
+func (reader cleanupReadCloser) Close() error {
+	err := reader.ReadCloser.Close()
+	if reader.cleanup != nil {
+		reader.cleanup()
+	}
+	return err
+}
+
+func renderPDFCover(path string, dpi int) (PageStream, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return PageStream{}, fmt.Errorf("pdf path is required")
+	}
+	binary, err := exec.LookPath("pdftoppm")
+	if err != nil {
+		return PageStream{}, err
+	}
+	tmpDir, err := os.MkdirTemp("", "foliospace-pdf-cover-*")
+	if err != nil {
+		return PageStream{}, err
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(tmpDir)
+	}
+	outputPrefix := filepath.Join(tmpDir, "cover")
+	ctx, cancel := context.WithTimeout(context.Background(), pdfCoverRenderTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "-f", "1", "-singlefile", "-jpeg", "-r", strconv.Itoa(dpi), path, outputPrefix)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		cleanup()
+		if ctx.Err() != nil {
+			return PageStream{}, ctx.Err()
+		}
+		message := strings.TrimSpace(stderr.String())
+		if message != "" {
+			return PageStream{}, fmt.Errorf("render pdf cover: %w: %s", err, message)
+		}
+		return PageStream{}, fmt.Errorf("render pdf cover: %w", err)
+	}
+	file, err := os.Open(outputPrefix + ".jpg")
+	if err != nil {
+		cleanup()
+		return PageStream{}, err
+	}
+	return PageStream{
+		Body:        cleanupReadCloser{ReadCloser: file, cleanup: cleanup},
+		ContentType: "image/jpeg",
+	}, nil
+}
+
+func pdfThumbnailSourceCacheMarker() string {
+	if _, err := exec.LookPath("pdftoppm"); err == nil {
+		return pdfThumbnailSourceMark
+	}
+	return pdfPlaceholderMark
 }
 
 func pdfCoverPlaceholder() string {

@@ -915,7 +915,7 @@ func (s *Server) handleSeriesAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := s.service.ListBooksForProfile(id, s.requestProfileID(r))
-	writeJSONOrError(w, items, err)
+	writeJSONOrError(w, booksWithThumbnails(items), err)
 }
 
 func (s *Server) handleCollectionAction(w http.ResponseWriter, r *http.Request) {
@@ -930,6 +930,7 @@ func (s *Server) handleCollectionAction(w http.ResponseWriter, r *http.Request) 
 	}
 	if action == "assets" {
 		assets, err := s.service.CollectionAssetsForProfile(id, s.requestProfileID(r))
+		assets.Books = booksWithThumbnails(assets.Books)
 		writeJSONOrError(w, map[string]any{
 			"books": assets.Books,
 			"games": games(assets.Games),
@@ -958,7 +959,7 @@ func (s *Server) handleContinueReading(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := s.service.ContinueReadingForProfile(s.requestProfileID(r), queryLimit(r, 12))
-	writeJSONOrError(w, items, err)
+	writeJSONOrError(w, booksWithThumbnails(items), err)
 }
 
 func (s *Server) handleRecentBooks(w http.ResponseWriter, r *http.Request) {
@@ -967,7 +968,7 @@ func (s *Server) handleRecentBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := s.service.RecentBooksForProfile(s.requestProfileID(r), queryLimit(r, 12))
-	writeJSONOrError(w, items, err)
+	writeJSONOrError(w, booksWithThumbnails(items), err)
 }
 
 func (s *Server) handleRecentGames(w http.ResponseWriter, r *http.Request) {
@@ -1024,7 +1025,7 @@ func (s *Server) handleFavoriteBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := s.service.FavoriteBooksForProfile(s.requestProfileID(r), queryLimit(r, 12))
-	writeJSONOrError(w, items, err)
+	writeJSONOrError(w, booksWithThumbnails(items), err)
 }
 
 func (s *Server) handlePrivateStatusBooks(w http.ResponseWriter, r *http.Request) {
@@ -1038,7 +1039,7 @@ func (s *Server) handlePrivateStatusBooks(w http.ResponseWriter, r *http.Request
 		return
 	}
 	items, err := s.service.BooksByPrivateStatusForProfile(s.requestProfileID(r), status, queryLimit(r, 12))
-	writeJSONOrError(w, items, err)
+	writeJSONOrError(w, booksWithThumbnails(items), err)
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -1054,7 +1055,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, searchResponse{
 		Query: query,
-		Books: books,
+		Books: booksWithThumbnails(books),
 	})
 }
 
@@ -1067,7 +1068,7 @@ func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 
 	if tail == "" && r.Method == http.MethodGet {
 		book, err := s.service.BookForProfile(id, s.requestProfileID(r))
-		writeJSONOrError(w, book, err)
+		writeJSONOrError(w, bookWithThumbnail(book), err)
 		return
 	}
 	if tail == "cover" && r.Method == http.MethodGet {
@@ -1130,7 +1131,7 @@ func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		book, err := s.service.UpdateBookPrivateStateForProfile(id, s.requestProfileID(r), req)
-		writeJSONOrError(w, book, err)
+		writeJSONOrError(w, bookWithThumbnail(book), err)
 		return
 	}
 	if tail == "analyze" && r.Method == http.MethodPost {
@@ -1883,11 +1884,11 @@ func clientBookItem(book domain.Book) clientBook {
 }
 
 func clientCoverURL(bookID int64) string {
-	return fmt.Sprintf("/api/books/%d/cover", bookID)
+	return fmt.Sprintf("/api/books/%d/cover?v=%s", bookID, service.ThumbnailClientCacheVersion())
 }
 
 func clientThumbnailURL(bookID int64, size string) string {
-	return fmt.Sprintf("/api/books/%d/thumbnail?size=%s&v=%s", bookID, size, service.ThumbnailCacheVersion())
+	return fmt.Sprintf("/api/books/%d/thumbnail?size=%s&v=%s", bookID, size, service.ThumbnailClientCacheVersion())
 }
 
 func thumbnailStatus(book domain.Book) string {

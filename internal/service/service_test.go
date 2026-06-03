@@ -364,6 +364,218 @@ func TestEPUBThumbnailCacheKeyIncludesResolvedCoverHref(t *testing.T) {
 	}
 }
 
+func TestPDFOpenCoverUsesRenderedFirstPageWhenAvailable(t *testing.T) {
+	root := t.TempDir()
+	bookPath := filepath.Join(root, "Books", "sample.pdf")
+	if err := os.MkdirAll(filepath.Dir(bookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bookPath, []byte("%PDF-1.4\n%%EOF\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderedJPEG := makeTestJPEGBytes(t, 640, 900, color.RGBA{R: 18, G: 88, B: 140, A: 255})
+	installFakePDFToPPM(t, renderedJPEG)
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Books", root, "book")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(lib.ID, "Books", "Books")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "sample", "pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(book.ID, lib.ID, bookPath, "Books/sample.pdf", info.Size(), info.ModTime(), ".pdf"); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := NewWithConfig(st, t.TempDir()).OpenCover(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	data, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.ContentType != "image/jpeg" || !bytes.Equal(data, renderedJPEG) {
+		t.Fatalf("PDF cover contentType=%q len=%d, want rendered first-page jpeg", stream.ContentType, len(data))
+	}
+}
+
+func TestPDFThumbnailWorkerRendersFirstPageAndInvalidatesPlaceholderCache(t *testing.T) {
+	root := t.TempDir()
+	bookPath := filepath.Join(root, "Books", "sample.pdf")
+	if err := os.MkdirAll(filepath.Dir(bookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bookPath, []byte("%PDF-1.4\n%%EOF\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderedJPEG := makeTestJPEGBytes(t, 800, 1100, color.RGBA{R: 36, G: 120, B: 44, A: 255})
+	installFakePDFToPPM(t, renderedJPEG)
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Books", root, "book")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(lib.ID, "Books", "Books")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "sample", "pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(book.ID, lib.ID, bookPath, "Books/sample.pdf", info.Size(), info.ModTime(), ".pdf"); err != nil {
+		t.Fatal(err)
+	}
+	bookWithPath, err := st.BookByID(book.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewWithConfig(st, t.TempDir())
+	currentKey, err := svc.bookThumbnailCacheKey(bookWithPath, "small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutPDFRendererKey, err := thumbnailV1ProfileCacheKey(bookWithPath, "small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if currentKey == withoutPDFRendererKey {
+		t.Fatal("PDF thumbnail cache key did not include rendered first-page source marker")
+	}
+
+	svc.PauseThumbnailWorker()
+	stream, err := svc.OpenBookThumbnail(book.ID, "small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Body.Close()
+	svc.ResumeThumbnailWorker()
+	if err := svc.ProcessNextThumbnailJobForTest(); err != nil {
+		t.Fatal(err)
+	}
+	cached, err := svc.OpenBookThumbnail(book.ID, "small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cached.Body.Close()
+	cachedData, err := io.ReadAll(cached.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached.ContentType != "image/jpeg" || !cached.CacheHit {
+		t.Fatalf("PDF thumbnail contentType=%q cacheHit=%v, want cached rendered jpeg", cached.ContentType, cached.CacheHit)
+	}
+	cachedImage, _, err := image.Decode(bytes.NewReader(cachedData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cachedImage.Bounds().Dx() != 320 {
+		t.Fatalf("PDF thumbnail width = %d, want 320", cachedImage.Bounds().Dx())
+	}
+	assertCenterColorNear(t, cachedImage, color.RGBA{R: 36, G: 120, B: 44, A: 255})
+}
+
+func TestPDFThumbnailFallsBackToRenderedSourceInsteadOfStalePlaceholder(t *testing.T) {
+	root := t.TempDir()
+	bookPath := filepath.Join(root, "Books", "sample.pdf")
+	if err := os.MkdirAll(filepath.Dir(bookPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bookPath, []byte("%PDF-1.4\n%%EOF\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderedJPEG := makeTestJPEGBytes(t, 640, 900, color.RGBA{R: 44, G: 92, B: 150, A: 255})
+	installFakePDFToPPM(t, renderedJPEG)
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Books", root, "book")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(lib.ID, "Books", "Books")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "sample", "pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(book.ID, lib.ID, bookPath, "Books/sample.pdf", info.Size(), info.ModTime(), ".pdf"); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewWithConfig(st, t.TempDir())
+	svc.PauseThumbnailWorker()
+	stalePath, err := svc.bookThumbnailCachePath(book.ID, "small", "legacy-pdf-placeholder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(stalePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleBytes := makeTestJPEGBytes(t, 32, 44, color.RGBA{R: 220, G: 216, B: 204, A: 255})
+	if err := os.WriteFile(stalePath, staleBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := svc.OpenBookThumbnail(book.ID, "small")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	data, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.ContentType != "image/jpeg" || !stream.SourceFallback || stream.StaleFallback || stream.CacheHit || !bytes.Equal(data, renderedJPEG) {
+		t.Fatalf("PDF thumbnail fallback type=%q source=%v stale=%v cacheHit=%v len=%d, want rendered source jpeg", stream.ContentType, stream.SourceFallback, stream.StaleFallback, stream.CacheHit, len(data))
+	}
+	status, err := svc.ThumbnailWorkerStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Queued != 1 {
+		t.Fatalf("thumbnail worker queued = %d, want regeneration queued", status.Queued)
+	}
+}
+
 func TestBookThumbnailCropsLandscapeCoverToPortraitRatio(t *testing.T) {
 	root := t.TempDir()
 	bookPath := filepath.Join(root, "Series A", "landscape.cbz")
@@ -824,6 +1036,46 @@ func makeTestJPEGBytes(t *testing.T, width int, height int, fill color.RGBA) []b
 		t.Fatal(err)
 	}
 	return imageBody.Bytes()
+}
+
+func installFakePDFToPPM(t *testing.T, renderedJPEG []byte) {
+	t.Helper()
+	binDir := t.TempDir()
+	sourcePath := filepath.Join(binDir, "rendered.jpg")
+	if err := os.WriteFile(sourcePath, renderedJPEG, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(binDir, "pdftoppm")
+	script := fmt.Sprintf(`#!/bin/sh
+out=""
+for arg in "$@"; do
+  out="$arg"
+done
+cp %q "$out.jpg"
+`, sourcePath)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func assertCenterColorNear(t *testing.T, img image.Image, want color.RGBA) {
+	t.Helper()
+	bounds := img.Bounds()
+	r, g, b, _ := img.At(bounds.Min.X+bounds.Dx()/2, bounds.Min.Y+bounds.Dy()/2).RGBA()
+	got := color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: 255}
+	if absInt(int(got.R)-int(want.R)) > 8 ||
+		absInt(int(got.G)-int(want.G)) > 8 ||
+		absInt(int(got.B)-int(want.B)) > 8 {
+		t.Fatalf("center color = %#v, want near %#v", got, want)
+	}
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func mkdir(path string) error {

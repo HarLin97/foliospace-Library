@@ -24,6 +24,7 @@ import (
 )
 
 const thumbnailAlgorithmVersion = "v1"
+const thumbnailClientCacheVersion = thumbnailAlgorithmVersion + "-cover-refresh-1"
 const thumbnailCacheKeyProfile = "portrait-1x-3x4.15"
 const thumbnailJPEGQuality = 90
 const thumbnailTargetAspectRatio = 3.0 / 4.15
@@ -41,6 +42,10 @@ type ThumbnailStream struct {
 
 func ThumbnailCacheVersion() string {
 	return thumbnailAlgorithmVersion
+}
+
+func ThumbnailClientCacheVersion() string {
+	return thumbnailClientCacheVersion
 }
 
 type thumbnailWorker struct {
@@ -186,6 +191,16 @@ func (s *Service) OpenBookThumbnail(bookID int64, size string) (ThumbnailStream,
 	}
 	if s.thumbnailWorker != nil {
 		s.thumbnailWorker.wakeUp()
+	}
+	if book.Format == "pdf" {
+		if cover, err := s.openBookThumbnailSource(book); err == nil {
+			return ThumbnailStream{
+				Body:           cover.Body,
+				ContentType:    cover.ContentType,
+				SourceFallback: true,
+				ETag:           cacheKey,
+			}, nil
+		}
 	}
 	if file, path := s.openStaleBookThumbnail(book.ID, size, cachePath); file != nil {
 		return ThumbnailStream{
@@ -391,9 +406,6 @@ func (s *Service) generateThumbnailJob(ctx context.Context, job domain.Thumbnail
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
 		return err
 	}
-	if book.Format == "pdf" {
-		return s.writeThumbnailImage(job.ID, cachePath, genericBookThumbnail(book, job.Size))
-	}
 	imageStream, err := s.openBookThumbnailSource(book)
 	if err != nil {
 		return s.writeGenericThumbnailJob(job, book, cachePath, err)
@@ -453,6 +465,9 @@ func (s *Service) openBookThumbnailSource(book domain.Book) (PageStream, error) 
 		}
 		return PageStream{Body: body, ContentType: contentType}, nil
 	}
+	if book.Format == "pdf" {
+		return renderPDFCover(book.FilePath, pdfThumbnailRenderDPI)
+	}
 	return s.OpenPage(book.ID, 0)
 }
 
@@ -470,6 +485,9 @@ func (s *Service) bookThumbnailCacheKey(book domain.Book, size string) (string, 
 }
 
 func bookThumbnailSourceCacheMarker(book domain.Book) string {
+	if book.Format == "pdf" {
+		return pdfThumbnailSourceCacheMarker()
+	}
 	if book.Format != "epub" || strings.TrimSpace(book.FilePath) == "" {
 		return ""
 	}

@@ -193,8 +193,31 @@ func TestThumbnailAPIAndWorkerControls(t *testing.T) {
 	defer ts.Close()
 
 	volumesBody := get(t, ts.URL+"/api/collections/"+itoa(series.ID)+"/volumes?limit=1")
-	if !strings.Contains(volumesBody, `"thumbnailUrl":"/api/books/`+itoa(book.ID)+`/thumbnail?size=small`) || !strings.Contains(volumesBody, `"thumbnailStatus"`) {
-		t.Fatalf("volumes body %q missing thumbnail fields", volumesBody)
+	var volumesPage struct {
+		Items []domain.Book `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(volumesBody), &volumesPage); err != nil {
+		t.Fatal(err)
+	}
+	if len(volumesPage.Items) != 1 || volumesPage.Items[0].ThumbnailURL != "/api/books/"+itoa(book.ID)+"/thumbnail?size=small&v=v1-cover-refresh-1" || volumesPage.Items[0].ThumbnailStatus == "" {
+		t.Fatalf("volumes page = %#v, want thumbnail URL with upgraded client cache version", volumesPage)
+	}
+	putJSON(t, ts.URL+"/api/books/"+itoa(book.ID)+"/progress", `{"pageIndex":1,"progressFraction":0.5}`)
+	continueBody := get(t, ts.URL+"/api/books/continue-reading?limit=1")
+	var continueBooks []domain.Book
+	if err := json.Unmarshal([]byte(continueBody), &continueBooks); err != nil {
+		t.Fatal(err)
+	}
+	if len(continueBooks) != 1 || continueBooks[0].ThumbnailURL != "/api/books/"+itoa(book.ID)+"/thumbnail?size=small&v=v1-cover-refresh-1" || continueBooks[0].ThumbnailStatus == "" {
+		t.Fatalf("continue reading = %#v, want versioned thumbnail URL", continueBooks)
+	}
+	searchBody := get(t, ts.URL+"/api/search?q=book&limit=1")
+	var searchResult searchResponse
+	if err := json.Unmarshal([]byte(searchBody), &searchResult); err != nil {
+		t.Fatal(err)
+	}
+	if len(searchResult.Books) != 1 || searchResult.Books[0].ThumbnailURL != "/api/books/"+itoa(book.ID)+"/thumbnail?size=small&v=v1-cover-refresh-1" || searchResult.Books[0].ThumbnailStatus == "" {
+		t.Fatalf("search result = %#v, want versioned thumbnail URL", searchResult)
 	}
 
 	resp, err := http.Get(ts.URL + "/api/books/" + itoa(book.ID) + "/thumbnail?size=small")
@@ -513,7 +536,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	if !strings.Contains(homeBody, `"videoShelf"`) || !strings.Contains(homeBody, `"Demo Movie"`) || strings.Contains(homeBody, "Movies/Demo Movie.mp4") {
 		t.Fatalf("client home response %q is missing safe video shelf", homeBody)
 	}
-	if !strings.Contains(homeBody, `"/api/books/`+itoa(cbzBookID)+`/cover"`) {
+	if !strings.Contains(homeBody, `"/api/books/`+itoa(cbzBookID)+`/cover?v=v1-cover-refresh-1"`) {
 		t.Fatalf("client home response %q does not include cover URL", homeBody)
 	}
 
