@@ -37,6 +37,8 @@ export type Series = {
   coverBookId?: number;
   thumbnailStatus?: string;
   thumbnailUrl?: string;
+  favorite: boolean;
+  liked: boolean;
 };
 
 export type Book = {
@@ -73,6 +75,11 @@ export type BookPrivateState = {
   rating: number;
   tags: string[];
   summary: string;
+};
+
+export type CollectionPrivateState = {
+  favorite: boolean;
+  liked: boolean;
 };
 
 export type GameAsset = {
@@ -242,6 +249,8 @@ export type VideoListOptions = BookListOptions & {
 export type Page = {
   index: number;
   name: string;
+  url?: string;
+  displayUrl?: string;
 };
 
 export type EpubManifest = {
@@ -471,6 +480,11 @@ export const api = {
   series: () => request<Series[]>("/api/collections"),
   books: (seriesId: number) => request<Book[]>(`/api/collections/${seriesId}/volumes`),
   collectionAssets: (seriesId: number) => request<CollectionAssets>(`/api/collections/${seriesId}/assets`),
+  collectionPrivateState: (seriesId: number, state: CollectionPrivateState) =>
+    request<Series>(`/api/collections/${seriesId}/private-state`, {
+      method: "PUT",
+      body: JSON.stringify(state),
+    }),
   booksPage: (seriesId: number, options: BookListOptions) => {
     const params = new URLSearchParams();
     if (options.limit) params.set("limit", String(options.limit));

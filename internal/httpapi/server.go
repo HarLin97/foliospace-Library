@@ -351,7 +351,7 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	collections, err := s.service.ListSeries()
+	collections, err := s.service.ListSeriesForProfile(profileID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -787,10 +787,12 @@ func (s *Server) clientBookManifest(bookID int64, profileID int64) (clientBookMa
 	}
 	out.Pages = make([]clientPageRef, 0, len(pages))
 	for _, page := range pages {
+		pageURL := fmt.Sprintf("/api/books/%d/pages/%d", book.ID, page.Index)
 		out.Pages = append(out.Pages, clientPageRef{
-			Index: page.Index,
-			Name:  page.Name,
-			URL:   fmt.Sprintf("/api/books/%d/pages/%d", book.ID, page.Index),
+			Index:      page.Index,
+			Name:       page.Name,
+			URL:        pageURL,
+			DisplayURL: pageURL + "?maxWidth=1200",
 		})
 	}
 	return out, nil
@@ -896,7 +898,7 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	items, err := s.service.ListSeries()
+	items, err := s.service.ListSeriesForProfile(s.requestProfileID(r))
 	writeJSONOrError(w, clientCollections(items), err)
 }
 
@@ -920,8 +922,22 @@ func (s *Server) handleSeriesAction(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCollectionAction(w http.ResponseWriter, r *http.Request) {
 	id, action, ok := parseIDAction(r.URL.Path, "/api/collections/")
-	if !ok || (action != "volumes" && action != "assets") {
+	if !ok || (action != "volumes" && action != "assets" && action != "private-state") {
 		http.NotFound(w, r)
+		return
+	}
+	if action == "private-state" {
+		if r.Method != http.MethodPut {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req domain.CollectionPrivateState
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		collection, err := s.service.UpdateCollectionPrivateStateForProfile(id, s.requestProfileID(r), req)
+		writeJSONOrError(w, collection, err)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -1212,7 +1228,9 @@ func (s *Server) streamPage(w http.ResponseWriter, r *http.Request, bookID int64
 		http.ServeFile(w, r, book.FilePath)
 		return
 	}
-	page, err := s.service.OpenPage(bookID, pageIndex)
+	page, err := s.service.OpenPageWithOptions(bookID, pageIndex, service.PageImageOptions{
+		MaxWidth: parsePageMaxWidth(r),
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -1220,7 +1238,26 @@ func (s *Server) streamPage(w http.ResponseWriter, r *http.Request, bookID int64
 	defer page.Body.Close()
 
 	w.Header().Set("Content-Type", page.ContentType)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
 	_, _ = io.Copy(w, page.Body)
+}
+
+func parsePageMaxWidth(r *http.Request) int {
+	raw := r.URL.Query().Get("maxWidth")
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	if value < 320 {
+		return 320
+	}
+	if value > 2400 {
+		return 2400
+	}
+	return value
 }
 
 func (s *Server) streamCover(w http.ResponseWriter, bookID int64) {
@@ -1537,6 +1574,8 @@ type clientCollection struct {
 	CoverBookID     int64  `json:"coverBookId,omitempty"`
 	ThumbnailStatus string `json:"thumbnailStatus,omitempty"`
 	ThumbnailURL    string `json:"thumbnailUrl,omitempty"`
+	Favorite        bool   `json:"favorite"`
+	Liked           bool   `json:"liked"`
 }
 
 type clientBook struct {
@@ -1666,9 +1705,10 @@ type clientProgress struct {
 }
 
 type clientPageRef struct {
-	Index int    `json:"index"`
-	Name  string `json:"name"`
-	URL   string `json:"url"`
+	Index      int    `json:"index"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	DisplayURL string `json:"displayUrl,omitempty"`
 }
 
 type clientEPUBOpenInfo struct {
@@ -1693,6 +1733,8 @@ func clientCollections(collections []domain.Series) []clientCollection {
 			PrimaryType:    collection.PrimaryType,
 			BookCount:      collection.BookCount,
 			CoverBookID:    collection.CoverBookID,
+			Favorite:       collection.Favorite,
+			Liked:          collection.Liked,
 		}
 		if collection.CoverBookID > 0 {
 			item.ThumbnailStatus = "pending"
