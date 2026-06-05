@@ -92,7 +92,7 @@ Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/clien
 - `GET/PUT /api/settings/scan`: scan worker settings for NAS devices with different CPU and memory budgets.
 - `GET /api/client/search`, `/api/client/books/favorites`, and `/api/client/books/private-status/:status`: private-state-aware discovery shelves.
 
-Client API book and collection responses omit local NAS file paths.
+Client API book and collection responses omit local NAS file paths. Returned cover, thumbnail, page, EPUB, game, and video URLs are opaque service URLs; clients should preserve query parameters because FolioSpace uses them for cache-compatible media refreshes while keeping older routes valid.
 
 ## Compact Mobile Reader
 
