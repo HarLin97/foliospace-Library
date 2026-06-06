@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, MouseEvent, ReactNode, SyntheticEvent, TouchEvent } from "react";
+import type { CSSProperties, FormEvent, MouseEvent, ReactNode, SyntheticEvent, TouchEvent } from "react";
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
@@ -13,6 +13,7 @@ import {
   type WebtoonPageMetric,
   type WebtoonPosition,
 } from "./webtoon-position";
+import { fullscreenImageFit, type ReaderImageFitMode } from "./reader-fit";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -25,6 +26,7 @@ const WEBTOON_PLACEHOLDER_HEIGHT = 2200;
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
 type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
+type ReaderImageSize = { width: number; height: number };
 const bookPageSize = 30;
 const catalogPageSize = 200;
 
@@ -114,6 +116,7 @@ export function App() {
   const [webtoonPosition, setWebtoonPosition] = useState<WebtoonPosition | null>(null);
   const [webtoonRestorePosition, setWebtoonRestorePosition] = useState<WebtoonPosition | null>(null);
   const [webtoonPageHeights, setWebtoonPageHeights] = useState<Record<number, number>>({});
+  const [readerImageSizes, setReaderImageSizes] = useState<Record<number, ReaderImageSize>>({});
   const [newLibraryName, setNewLibraryName] = useState("");
   const [newLibraryPath, setNewLibraryPath] = useState("");
   const [newLibraryAssetType, setNewLibraryAssetType] = useState<LibraryAssetType>("mixed");
@@ -828,6 +831,7 @@ export function App() {
     webtoonUserActivated.current = false;
     webtoonUserScrollUntil.current = 0;
     suppressPagedProgressSave.current = false;
+    setReaderImageSizes({});
     setEpubTocOpen(false);
     setReaderLoadState("idle");
     setBooks([]);
@@ -1070,6 +1074,7 @@ export function App() {
     webtoonUserActivated.current = false;
     webtoonUserScrollUntil.current = 0;
     suppressPagedProgressSave.current = false;
+    setReaderImageSizes({});
     setEpubTocOpen(false);
     setReaderLoadState("loading");
     try {
@@ -1473,11 +1478,42 @@ export function App() {
   }
 
   function handleWebtoonImageLoad(event: SyntheticEvent<HTMLImageElement>, page: Page) {
+    recordReaderImageSize(page, event.currentTarget);
     const height = Math.ceil(event.currentTarget.getBoundingClientRect().height);
     if (height > 0) {
       setWebtoonPageHeights((items) => (items[page.index] === height ? items : { ...items, [page.index]: height }));
     }
     updateWebtoonPosition();
+  }
+
+  function handleComicImageLoad(event: SyntheticEvent<HTMLImageElement>, page: Page | undefined) {
+    recordReaderImageSize(page, event.currentTarget);
+  }
+
+  function recordReaderImageSize(page: Page | undefined, image: HTMLImageElement) {
+    if (!page || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    const next = { width: image.naturalWidth, height: image.naturalHeight };
+    setReaderImageSizes((items) => {
+      const current = items[page.index];
+      if (current?.width === next.width && current.height === next.height) return items;
+      return { ...items, [page.index]: next };
+    });
+  }
+
+  function comicImageFitStyle(page: Page | undefined, mode: ReaderImageFitMode): CSSProperties {
+    if (!readerFullscreen || !page) return {};
+    const size = readerImageSizes[page.index];
+    if (!size) return {};
+    const fit = fullscreenImageFit({
+      naturalWidth: size.width,
+      naturalHeight: size.height,
+      devicePixelRatio: typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
+      mode,
+    });
+    return {
+      "--reader-fit-width": `${fit.maxCssWidth}px`,
+      "--reader-fit-height": `${fit.maxCssHeight}px`,
+    } as CSSProperties;
   }
 
   function jumpToEpubChapter(item: EpubTocItem) {
@@ -2487,7 +2523,7 @@ export function App() {
                             data-page-index={page.index}
                             data-page-key={webtoonPageKey(page)}
                             key={`${selectedBook.id}-${page.index}`}
-                            style={{ minHeight: measuredHeight }}
+                            style={{ minHeight: measuredHeight, ...comicImageFitStyle(page, "webtoon") }}
                           >
                             {shouldRenderImage ? (
                               <img
@@ -2512,6 +2548,8 @@ export function App() {
                           src={authenticatedResourcePath(comicPageDisplayPath(selectedBook.id, pages[visibleIndex], visibleIndex))}
                           alt={pages[visibleIndex]?.name ?? ""}
                           draggable={false}
+                          style={comicImageFitStyle(pages[visibleIndex], readerPageMode)}
+                          onLoad={(event) => handleComicImageLoad(event, pages[visibleIndex])}
                         />
                       ))}
                     </div>

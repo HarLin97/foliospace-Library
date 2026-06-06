@@ -2101,8 +2101,23 @@ button.danger:hover {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.32);
 }
 
+.reader.immersiveMode .pageSpread {
+  gap: clamp(4px, 1vw, 16px);
+  padding: clamp(4px, 0.8vw, 12px);
+}
+
+.reader.immersiveMode .pageSpread img {
+  max-width: min(100%, var(--reader-fit-width, 100%));
+  max-height: min(100%, var(--reader-fit-height, 100%));
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.42);
+}
+
 .pageStage.double .pageSpread img {
   max-width: calc((100% - clamp(8px, 1.4vw, 20px)) / 2);
+}
+
+.reader.immersiveMode .pageStage.double .pageSpread img {
+  max-width: min(calc((100% - clamp(4px, 1vw, 16px)) / 2), var(--reader-fit-width, calc((100% - clamp(4px, 1vw, 16px)) / 2)));
 }
 
 .webtoonReader {
@@ -2149,6 +2164,46 @@ button.danger:hover {
   max-width: 100%;
   user-select: none;
   -webkit-user-drag: none;
+}
+
+.reader.immersiveMode .webtoonReader {
+  padding: 0 clamp(0px, 0.8vw, 12px) calc(28px + env(safe-area-inset-bottom));
+  background: #080c0e;
+  scrollbar-color: rgba(148, 163, 184, 0.42) transparent;
+  scrollbar-width: thin;
+}
+
+.reader.immersiveMode .webtoonReader::-webkit-scrollbar {
+  width: 10px;
+}
+
+.reader.immersiveMode .webtoonReader::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.reader.immersiveMode .webtoonReader::-webkit-scrollbar-thumb {
+  min-height: 64px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.32);
+  background-clip: padding-box;
+}
+
+.reader.immersiveMode .webtoonReader:hover::-webkit-scrollbar-thumb {
+  background: rgba(203, 213, 225, 0.52);
+  background-clip: padding-box;
+}
+
+.reader.immersiveMode .webtoonReader::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.reader.immersiveMode .webtoonPage img {
+  width: min(100%, var(--reader-fit-width, 1180px));
+}
+
+.reader.immersiveMode .webtoonPlaceholder {
+  width: min(100%, var(--reader-fit-width, 1180px));
 }
 
 @media (max-width: 760px) {
