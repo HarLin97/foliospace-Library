@@ -68,6 +68,21 @@ export function resolveWebtoonRestoreTarget({
   };
 }
 
+export function stabilizeWebtoonDocumentProgress(
+  position: WebtoonPosition,
+  previousPosition: WebtoonPosition | null | undefined,
+  pages: WebtoonPageMetric[],
+): WebtoonPosition {
+  if (hasCompleteLogicalHeights(pages) || !previousPosition) return position;
+  const previousProgress = clampUnit(previousPosition.documentProgress);
+  const pageCount = safePositive(position.pageCount, safePositive(previousPosition.pageCount, pages.length));
+  if (pageCount <= 0 || position.pageIndex < 0 || previousPosition.pageIndex < 0) {
+    return { ...position, documentProgress: previousProgress };
+  }
+  const deltaPages = position.pageIndex - previousPosition.pageIndex + clampUnit(position.pageYOffsetRatio) - clampUnit(previousPosition.pageYOffsetRatio);
+  return { ...position, documentProgress: clampUnit(previousProgress + deltaPages / pageCount) };
+}
+
 function findAnchorPage(pages: WebtoonPageMetric[], anchorY: number): WebtoonPageMetric | null {
   if (pages.length === 0) return null;
   for (const page of pages) {
@@ -141,6 +156,10 @@ function pageRatioFromDocumentProgress(pages: WebtoonPageMetric[], pageIndex: nu
 
 function totalLogicalHeight(pages: WebtoonPageMetric[]): number {
   return pages.reduce((sum, page) => sum + logicalHeight(page), 0);
+}
+
+function hasCompleteLogicalHeights(pages: WebtoonPageMetric[]): boolean {
+  return pages.length > 0 && pages.every((page) => safePositive(page.logicalHeight, 0) > 0);
 }
 
 function logicalHeight(page: WebtoonPageMetric): number {

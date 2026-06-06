@@ -54,3 +54,97 @@ test("webtoon pages hide image join seams without drawing reading dividers", asy
   assert.match(styleSource, /\.webtoonPage\s*\+\s*\.webtoonPage\s*\{[^}]*margin-top:\s*-1px;/s, "webtoon pages should slightly overlap to hide subpixel seams");
   assert.doesNotMatch(styleSource, /\.webtoonPage[^{]*\{[^}]*border-(top|bottom):/s, "webtoon pages should not draw visible page divider borders");
 });
+
+test("webtoon structured progress falls back to the legacy progress API", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+
+  assert.match(
+    appSource,
+    /api\.saveWebtoonReadingPosition\(selectedBook\.id,\s*webtoonPosition\)[\s\S]*api\s*\.\s*progressDetail\([\s\S]*`webtoon:\$\{webtoonPosition\.documentProgress\}/,
+    "webtoon saves should fall back to legacy progress when the structured endpoint is unavailable",
+  );
+});
+
+test("webtoon restore is not overwritten by passive image-load position updates", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+
+  assert.match(
+    appSource,
+    /if\s*\(\s*webtoonRestorePosition\s*!==\s*null\s*&&\s*!userInitiated\s*\)\s*return;/,
+    "image loads during restore should not reset the saved webtoon anchor back to the current scrollTop",
+  );
+});
+
+test("webtoon programmatic restore scrolls do not update the current page window", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+
+  assert.ok(appSource.includes("const webtoonUserScrollUntil = useRef(0);"), "webtoon scroll saves should be gated by recent user input");
+  assert.match(
+    appSource,
+    /function\s+handleWebtoonScroll\(\)\s*\{[\s\S]*if\s*\(\s*webtoonRestoring\.current\s*\|\|\s*webtoonRestorePosition\s*!==\s*null\s*\)\s*return;[\s\S]*if\s*\(\s*Date\.now\(\)\s*>\s*webtoonUserScrollUntil\.current\s*\)\s*return;[\s\S]*updateWebtoonPosition\(true\);/s,
+    "programmatic restore scroll events should not move the virtual render window away from the saved page",
+  );
+  assert.match(
+    appSource,
+    /className="webtoonReader"[\s\S]*onWheel=\{markWebtoonUserScroll\}[\s\S]*onTouchStart=\{markWebtoonUserScroll\}[\s\S]*onPointerDown=\{markWebtoonUserScroll\}/,
+    "webtoon reader should mark real user input before accepting scroll progress updates",
+  );
+  assert.doesNotMatch(
+    appSource,
+    /requestAnimationFrame\(\(\)\s*=>\s*\{[\s\S]*updateWebtoonPosition\(false\);[\s\S]*setWebtoonRestorePosition\(null\);/,
+    "restore completion should not recalculate pageIndex from an estimated scrollTop",
+  );
+});
+
+test("webtoon restore accepts cached target images without waiting for onLoad state", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+
+  assert.ok(appSource.includes("function isWebtoonRestoreTargetReady"), "webtoon restore should inspect the DOM target image readiness");
+  assert.match(
+    appSource,
+    /if\s*\(\s*!isWebtoonRestoreTargetReady\(node,\s*targetPageIndex\)\s*\)\s*return;/,
+    "restore should continue when a cached target image is already complete even if onLoad did not update state",
+  );
+  assert.doesNotMatch(
+    appSource,
+    /webtoonPageHeights\[targetPageIndex\]\s*===\s*undefined/,
+    "restore should not depend only on the webtoonPageHeights state, because cached images may miss onLoad",
+  );
+});
+
+test("switching back to webtoon restores the current page before accepting scroll progress", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+
+  assert.ok(appSource.includes("function changeComicReaderPageMode"), "comic page mode changes should go through a shared handler");
+  assert.match(
+    appSource,
+    /function\s+changeComicReaderPageMode\(nextMode:\s*ReaderPageMode\)[\s\S]*if\s*\(\s*nextMode\s*===\s*"webtoon"[\s\S]*setWebtoonRestorePosition\(nextPosition\)[\s\S]*webtoonRestoring\.current\s*=\s*true;/s,
+    "entering webtoon mode should restore to the current page anchor before scroll events can update progress",
+  );
+  assert.match(
+    appSource,
+    /onClick=\{\(\)\s*=>\s*changeComicReaderPageMode\("webtoon"\)\}/,
+    "the webtoon mode button should use the guarded mode switch handler",
+  );
+  assert.doesNotMatch(
+    appSource,
+    /onClick=\{\(\)\s*=>\s*\{\s*setReaderPageMode\("webtoon"\);[\s\S]*setReaderLoadState\("ready"\);[\s\S]*\}\s*\}/,
+    "the webtoon mode button should not switch modes without preparing a restore anchor",
+  );
+});
+
+test("switching comic page modes does not immediately overwrite legacy progress", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+
+  assert.ok(appSource.includes("const suppressPagedProgressSave = useRef(false);"), "paged progress saves should be suppressible during mode-only switches");
+  assert.match(
+    appSource,
+    /if\s*\(\s*suppressPagedProgressSave\.current\s*\)\s*\{\s*suppressPagedProgressSave\.current\s*=\s*false;\s*return;\s*\}/s,
+    "the next non-webtoon progress save after a mode-only switch should be skipped",
+  );
+  assert.match(
+    appSource,
+    /if\s*\(\s*nextMode\s*!==\s*"webtoon"\s*\)\s*\{[\s\S]*suppressPagedProgressSave\.current\s*=\s*true;/s,
+    "switching between paged comic modes should not rewrite the saved progress until the user changes pages",
+  );
+});

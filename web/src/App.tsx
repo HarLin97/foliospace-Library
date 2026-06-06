@@ -9,6 +9,7 @@ import {
   WEBTOON_POSITION_SCHEMA,
   buildWebtoonPosition,
   resolveWebtoonRestoreTarget,
+  stabilizeWebtoonDocumentProgress,
   type WebtoonPageMetric,
   type WebtoonPosition,
 } from "./webtoon-position";
@@ -144,6 +145,8 @@ export function App() {
   const epubRestorePosition = useRef<number | null>(null);
   const webtoonRestoring = useRef(false);
   const webtoonUserActivated = useRef(false);
+  const webtoonUserScrollUntil = useRef(0);
+  const suppressPagedProgressSave = useRef(false);
   const preferencesLoaded = useRef(false);
 
   function applyClientPreferences(preferences: ClientPreferences) {
@@ -505,9 +508,22 @@ export function App() {
     if (useWebtoonMode) {
       if (!webtoonPosition || !webtoonUserActivated.current) return;
       const timer = window.setTimeout(() => {
-        api.saveWebtoonReadingPosition(selectedBook.id, webtoonPosition).catch(() => undefined);
+        api.saveWebtoonReadingPosition(selectedBook.id, webtoonPosition).catch(() =>
+          api
+            .progressDetail(
+              selectedBook.id,
+              webtoonPosition.pageIndex,
+              `webtoon:${webtoonPosition.documentProgress}`,
+              webtoonPosition.documentProgress,
+            )
+            .catch(() => undefined),
+        );
       }, 650);
       return () => window.clearTimeout(timer);
+    }
+    if (suppressPagedProgressSave.current) {
+      suppressPagedProgressSave.current = false;
+      return;
     }
     const progressFraction = useWebtoonMode
       ? webtoonProgress
@@ -810,6 +826,8 @@ export function App() {
     setWebtoonRestorePosition(null);
     webtoonRestoring.current = false;
     webtoonUserActivated.current = false;
+    webtoonUserScrollUntil.current = 0;
+    suppressPagedProgressSave.current = false;
     setEpubTocOpen(false);
     setReaderLoadState("idle");
     setBooks([]);
@@ -1050,6 +1068,8 @@ export function App() {
     setWebtoonRestorePosition(null);
     webtoonRestoring.current = false;
     webtoonUserActivated.current = false;
+    webtoonUserScrollUntil.current = 0;
+    suppressPagedProgressSave.current = false;
     setEpubTocOpen(false);
     setReaderLoadState("loading");
     try {
@@ -1166,10 +1186,40 @@ export function App() {
     if (readerPageMode === "webtoon" && book.format !== "epub" && book.format !== "pdf") {
       requestAnimationFrame(() => scrollWebtoonToPage(clamped));
     }
+    suppressPagedProgressSave.current = false;
     if (clamped !== pageIndex) {
       setReaderLoadState("loading");
     }
     setPageIndex(clamped);
+  }
+
+  function changeComicReaderPageMode(nextMode: ReaderPageMode) {
+    if (readerPageMode === nextMode) return;
+    if (nextMode === "webtoon" && selectedBook && selectedBook.format !== "epub" && selectedBook.format !== "pdf") {
+      const currentPageKey = webtoonPageKey(pages[pageIndex]);
+      const canReuseWebtoonPosition =
+        webtoonPosition !== null &&
+        ((currentPageKey !== "" && webtoonPosition.pageKey === currentPageKey) || webtoonPosition.pageIndex === pageIndex);
+      const nextPosition = canReuseWebtoonPosition ? webtoonPosition : webtoonPositionForPage(pageIndex, pages);
+      const nextPageIndex = webtoonInitialPageIndex(nextPosition, pages);
+      setWebtoonPosition(nextPosition);
+      setWebtoonProgress(nextPosition.documentProgress);
+      setWebtoonRestorePosition(nextPosition);
+      setPageIndex(nextPageIndex);
+      setDisplayedPageIndex(nextPageIndex);
+      webtoonRestoring.current = true;
+      webtoonUserActivated.current = false;
+      webtoonUserScrollUntil.current = 0;
+      setReaderLoadState("ready");
+    } else {
+      setWebtoonRestorePosition(null);
+      webtoonRestoring.current = false;
+      webtoonUserScrollUntil.current = 0;
+      if (nextMode !== "webtoon") {
+        suppressPagedProgressSave.current = true;
+      }
+    }
+    setReaderPageMode(nextMode);
   }
 
   useEffect(() => {
@@ -1210,7 +1260,7 @@ export function App() {
       const node = webtoonRef.current;
       if (!node) return;
       const targetPageIndex = webtoonInitialPageIndex(target, pages);
-      if (webtoonPageHeights[targetPageIndex] === undefined) return;
+      if (!isWebtoonRestoreTargetReady(node, targetPageIndex)) return;
       const restoreTarget = resolveWebtoonRestoreTarget({
         position: target,
         pages: collectWebtoonPageMetrics(node, pages),
@@ -1222,7 +1272,6 @@ export function App() {
       setPageIndex((value) => (value === restoreTarget.pageIndex ? value : restoreTarget.pageIndex));
       setDisplayedPageIndex((value) => (value === restoreTarget.pageIndex ? value : restoreTarget.pageIndex));
       window.requestAnimationFrame(() => {
-        updateWebtoonPosition(false);
         setWebtoonRestorePosition(null);
         webtoonRestoring.current = false;
       });
@@ -1377,6 +1426,7 @@ export function App() {
   function scrollWebtoonByPage(direction: 1 | -1) {
     const node = webtoonRef.current;
     if (!node) return;
+    markWebtoonUserScroll();
     node.scrollBy({ top: direction * Math.max(320, node.clientHeight * 0.88), behavior: "smooth" });
   }
 
@@ -1384,30 +1434,42 @@ export function App() {
     const node = webtoonRef.current;
     const target = node?.querySelector<HTMLElement>(`[data-page-index="${index}"]`);
     if (!node || !target) return;
+    markWebtoonUserScroll();
     node.scrollTo({ top: Math.max(0, target.offsetTop - 10), behavior: "smooth" });
   }
 
+  function markWebtoonUserScroll() {
+    webtoonUserScrollUntil.current = Date.now() + 1200;
+  }
+
   function handleWebtoonScroll() {
-    updateWebtoonPosition(!webtoonRestoring.current);
+    if (webtoonRestoring.current || webtoonRestorePosition !== null) return;
+    if (Date.now() > webtoonUserScrollUntil.current) return;
+    updateWebtoonPosition(true);
   }
 
   function updateWebtoonPosition(userInitiated = false) {
     const node = webtoonRef.current;
     if (!node) return;
+    if (webtoonRestorePosition !== null && !userInitiated) return;
     const metrics = collectWebtoonPageMetrics(node, pages);
     if (metrics.length === 0) return;
-    const position = buildWebtoonPosition({
-      pages: metrics,
-      scrollTop: node.scrollTop,
-      viewportHeight: node.clientHeight,
-    });
-    setWebtoonProgress(position.documentProgress);
-    setWebtoonPosition(position);
+    const position = stabilizeWebtoonDocumentProgress(
+      buildWebtoonPosition({
+        pages: metrics,
+        scrollTop: node.scrollTop,
+        viewportHeight: node.clientHeight,
+      }),
+      webtoonPosition,
+      metrics,
+    );
     if (userInitiated) {
       webtoonUserActivated.current = true;
+      setWebtoonPosition(position);
+      setPageIndex((value) => (value === position.pageIndex ? value : position.pageIndex));
+      setDisplayedPageIndex((value) => (value === position.pageIndex ? value : position.pageIndex));
     }
-    setPageIndex((value) => (value === position.pageIndex ? value : position.pageIndex));
-    setDisplayedPageIndex((value) => (value === position.pageIndex ? value : position.pageIndex));
+    setWebtoonProgress(position.documentProgress);
   }
 
   function handleWebtoonImageLoad(event: SyntheticEvent<HTMLImageElement>, page: Page) {
@@ -2239,22 +2301,19 @@ export function App() {
                       <div className="segmentedControl" role="group" aria-label="Page mode">
                         <button
                           className={readerPageMode === "single" ? "selected" : ""}
-                          onClick={() => setReaderPageMode("single")}
+                          onClick={() => changeComicReaderPageMode("single")}
                         >
                           {t.single}
                         </button>
                         <button
                           className={readerPageMode === "double" ? "selected" : ""}
-                          onClick={() => setReaderPageMode("double")}
+                          onClick={() => changeComicReaderPageMode("double")}
                         >
                           {t.double}
                         </button>
                         <button
                           className={readerPageMode === "webtoon" ? "selected" : ""}
-                          onClick={() => {
-                            setReaderPageMode("webtoon");
-                            setReaderLoadState("ready");
-                          }}
+                          onClick={() => changeComicReaderPageMode("webtoon")}
                         >
                           {t.webtoon}
                         </button>
@@ -2410,7 +2469,15 @@ export function App() {
                       }}
                     />
                   ) : useWebtoonReader ? (
-                    <div ref={webtoonRef} className="webtoonReader" onScroll={handleWebtoonScroll} aria-live="polite">
+                    <div
+                      ref={webtoonRef}
+                      className="webtoonReader"
+                      onScroll={handleWebtoonScroll}
+                      onWheel={markWebtoonUserScroll}
+                      onTouchStart={markWebtoonUserScroll}
+                      onPointerDown={markWebtoonUserScroll}
+                      aria-live="polite"
+                    >
                       {pages.map((page) => {
                         const shouldRenderImage = Math.abs(page.index - pageIndex) <= WEBTOON_RENDER_RADIUS;
                         const measuredHeight = webtoonPageHeights[page.index] || WEBTOON_PLACEHOLDER_HEIGHT;
@@ -3771,6 +3838,19 @@ function legacyWebtoonProgressPosition(documentProgress: number, pageCount: numb
   };
 }
 
+function webtoonPositionForPage(pageIndex: number, pages: Page[]): WebtoonPosition {
+  const clampedPageIndex = pages.length > 0 ? Math.max(0, Math.min(pageIndex, pages.length - 1)) : 0;
+  return {
+    schema: WEBTOON_POSITION_SCHEMA,
+    pageIndex: clampedPageIndex,
+    pageKey: webtoonPageKey(pages[clampedPageIndex]),
+    pageYOffsetRatio: 0,
+    viewportAnchorRatio: DEFAULT_WEBTOON_ANCHOR_RATIO,
+    documentProgress: pages.length > 1 ? clampedPageIndex / (pages.length - 1) : 0,
+    pageCount: pages.length,
+  };
+}
+
 function collectWebtoonPageMetrics(node: HTMLElement, pages: Page[]): WebtoonPageMetric[] {
   return Array.from(node.querySelectorAll<HTMLElement>("[data-page-index]"))
     .map((marker) => {
@@ -3787,6 +3867,14 @@ function collectWebtoonPageMetrics(node: HTMLElement, pages: Page[]): WebtoonPag
       };
     })
     .filter((page) => Number.isFinite(page.index));
+}
+
+function isWebtoonRestoreTargetReady(node: HTMLElement, targetPageIndex: number) {
+  const target = node.querySelector<HTMLElement>(`[data-page-index="${targetPageIndex}"]`);
+  const image = target?.querySelector<HTMLImageElement>("img");
+  if (!target || !image) return false;
+  if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) return false;
+  return target.getBoundingClientRect().height > 0;
 }
 
 function encodeResourcePath(value: string) {

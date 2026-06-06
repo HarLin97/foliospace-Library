@@ -85,3 +85,35 @@ test("webtoon restore falls back to document progress when page key and index ar
 
   assert.deepEqual(target, { pageIndex: 2, scrollTop: 2720 });
 });
+
+test("webtoon document progress preserves the previous value when full logical heights are unavailable", async () => {
+  const { buildWebtoonPosition, stabilizeWebtoonDocumentProgress } = await loadWebtoonPositionModule();
+  const pages = [
+    { index: 0, pageKey: "archive:0000.webp", displayedTop: 0, displayedHeight: 2200 },
+    { index: 1, pageKey: "archive:0001.webp", displayedTop: 2200, displayedHeight: 2200 },
+    { index: 2, pageKey: "archive:0002.webp", displayedTop: 4400, displayedHeight: 2200, logicalHeight: 10 },
+  ];
+  const position = buildWebtoonPosition({
+    pages,
+    scrollTop: 5280,
+    viewportHeight: 1000,
+    viewportAnchorRatio: 0.28,
+  });
+
+  const stabilized = stabilizeWebtoonDocumentProgress(
+    position,
+    {
+      schema: "webtoon-position-v1",
+      pageIndex: 2,
+      pageKey: "archive:0002.webp",
+      pageYOffsetRatio: 0.4,
+      viewportAnchorRatio: 0.28,
+      documentProgress: 0.5,
+      pageCount: 3,
+    },
+    pages,
+  );
+
+  assert.equal(Number(position.documentProgress.toFixed(3)), 0.999);
+  assert.equal(Number(stabilized.documentProgress.toFixed(3)), 0.542);
+});

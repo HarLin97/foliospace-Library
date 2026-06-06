@@ -165,8 +165,8 @@ func TestStorePersistsWebtoonReadingPositionPerProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if progress.PageIndex != 40 || progress.ProgressFraction != 0.66 || progress.Locator != "" {
-		t.Fatalf("legacy progress = %#v, want page/document progress sync without webtoon locator", progress)
+	if progress.PageIndex != 40 || progress.ProgressFraction != 0.66 || progress.Locator != "webtoon:0.66" {
+		t.Fatalf("legacy progress = %#v, want page/document progress sync with webtoon locator fallback", progress)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -2017,11 +2018,15 @@ func (s *Store) SaveReadingPositionForProfile(bookID int64, profileID int64, rea
 		return domain.ReadingPosition{}, err
 	}
 	if readerMode == "webtoon" {
-		if err := s.SaveProgressDetailForProfile(bookID, profileID, position.PageIndex, "", position.DocumentProgress); err != nil {
+		if err := s.SaveProgressDetailForProfile(bookID, profileID, position.PageIndex, webtoonLegacyLocator(position.DocumentProgress), position.DocumentProgress); err != nil {
 			return domain.ReadingPosition{}, err
 		}
 	}
 	return s.ReadingPositionForProfile(bookID, profileID, readerMode)
+}
+
+func webtoonLegacyLocator(documentProgress float64) string {
+	return "webtoon:" + strconv.FormatFloat(documentProgress, 'f', -1, 64)
 }
 
 func (s *Store) ReadingPositionsForProfile(bookID int64, profileID int64) (map[string]domain.ReadingPosition, error) {

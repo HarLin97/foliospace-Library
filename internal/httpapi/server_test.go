@@ -271,9 +271,9 @@ func TestAPIReadingPositionWebtoonV1(t *testing.T) {
 
 	progressBody := get(t, ts.URL+"/api/books/"+itoa(book.ID)+"/progress")
 	if !strings.Contains(progressBody, `"pageIndex":1`) ||
-		!strings.Contains(progressBody, `"locator":""`) ||
+		!strings.Contains(progressBody, `"locator":"webtoon:0"`) ||
 		!strings.Contains(progressBody, `"progressFraction":0`) {
-		t.Fatalf("legacy progress body = %q, want synced legacy progress without locator", progressBody)
+		t.Fatalf("legacy progress body = %q, want synced legacy progress with webtoon locator fallback", progressBody)
 	}
 
 	manifestBody := get(t, ts.URL+"/api/client/books/"+itoa(book.ID)+"/manifest")
