@@ -2245,6 +2245,16 @@ button.danger:hover {
   border-radius: 4px;
 }
 
+.pdfPagePlaceholder {
+  display: block;
+  width: min(100%, 980px);
+  margin: 0 auto clamp(10px, 1.6vw, 18px);
+  border-radius: 4px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015)),
+    rgba(255, 255, 255, 0.025);
+}
+
 .pdfReaderError {
   position: absolute;
   inset: auto 18px 18px;

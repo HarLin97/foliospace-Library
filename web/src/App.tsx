@@ -22,6 +22,8 @@ type EpubPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
 const WEBTOON_RENDER_RADIUS = 2;
 const WEBTOON_PLACEHOLDER_HEIGHT = 2200;
+const PDF_WEBTOON_RENDER_RADIUS = 1;
+const PDF_WEBTOON_PLACEHOLDER_HEIGHT = 1600;
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
 type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
@@ -3132,12 +3134,13 @@ function PdfReader({
   onPageChange?: (pageIndex: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
-  const renderTasksRef = useRef<Array<{ cancel: () => void } | null>>([]);
+  const canvasRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
+  const renderTasksRef = useRef<Record<number, { cancel: () => void } | null>>({});
   const scrollFrameRef = useRef<number | null>(null);
   const [documentProxy, setDocumentProxy] = useState<PDFDocumentProxy | null>(null);
   const [renderError, setRenderError] = useState("");
   const [sizeTick, setSizeTick] = useState(0);
+  const [pdfWebtoonPageHeights, setPDFWebtoonPageHeights] = useState<Record<number, number>>({});
 
   useEffect(() => {
     const node = containerRef.current;
@@ -3151,6 +3154,10 @@ function PdfReader({
     let cancelled = false;
     setDocumentProxy(null);
     setRenderError("");
+    setPDFWebtoonPageHeights({});
+    canvasRefs.current = {};
+    Object.values(renderTasksRef.current).forEach((task) => task?.cancel());
+    renderTasksRef.current = {};
     const token = getAuthToken();
     const task = getDocument({
       url: authenticatedResourcePath(`/api/books/${book.id}/pages/0`),
@@ -3177,19 +3184,19 @@ function PdfReader({
     };
   }, [book.id]);
 
-  const renderPageIndex = pageMode === "webtoon" ? 0 : pageIndex;
+  const renderPageIndex = pageIndex;
 
   useEffect(() => {
     if (!documentProxy || !containerRef.current) return;
     let cancelled = false;
     const pdf = documentProxy;
     const container = containerRef.current;
-    renderTasksRef.current.forEach((task) => task?.cancel());
-    renderTasksRef.current = [];
+    Object.values(renderTasksRef.current).forEach((task) => task?.cancel());
+    renderTasksRef.current = {};
     const rect = container.getBoundingClientRect();
     const isWebtoonMode = pageMode === "webtoon";
     const gap = pageMode === "double" ? 18 : 0;
-    const pagesToRender = pdfVisiblePages(renderPageIndex, pdf.numPages, pageMode);
+    const pagesToRender = pdfRenderablePages(renderPageIndex, pdf.numPages, pageMode);
     const slotWidth = isWebtoonMode
       ? Math.max(160, Math.min(rect.width - 32, 980))
       : Math.max(120, (rect.width - gap) / Math.max(1, pagesToRender.length));
@@ -3197,29 +3204,34 @@ function PdfReader({
 
     async function render() {
       try {
-        for (const [index, pageNumber] of pagesToRender.entries()) {
-          const canvas = canvasRefs.current[index];
+        for (const pageNumber of pagesToRender) {
+          const canvas = canvasRefs.current[pageNumber];
           if (!canvas) continue;
           const page = await pdf.getPage(pageNumber);
           if (cancelled) return;
           const baseViewport = page.getViewport({ scale: 1 });
-          const dpr = Math.max(1, window.devicePixelRatio || 1);
+          const rawDpr = Math.max(1, window.devicePixelRatio || 1);
+          const dpr = isWebtoonMode ? Math.min(rawDpr, 2) : rawDpr;
           const cssScale = isWebtoonMode
             ? slotWidth / baseViewport.width
             : Math.min(slotWidth / baseViewport.width, slotHeight / baseViewport.height);
           const viewport = page.getViewport({ scale: cssScale * dpr });
           const context = canvas.getContext("2d");
           if (!context) continue;
-          renderTasksRef.current[index]?.cancel();
+          renderTasksRef.current[pageNumber]?.cancel();
           canvas.width = Math.floor(viewport.width);
           canvas.height = Math.floor(viewport.height);
           canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
           canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
+          if (isWebtoonMode) {
+            const cssHeight = Math.floor(viewport.height / dpr);
+            setPDFWebtoonPageHeights((items) => (items[pageNumber] === cssHeight ? items : { ...items, [pageNumber]: cssHeight }));
+          }
           const task = page.render({ canvasContext: context, viewport });
-          renderTasksRef.current[index] = task;
+          renderTasksRef.current[pageNumber] = task;
           await task.promise;
-          if (renderTasksRef.current[index] === task) {
-            renderTasksRef.current[index] = null;
+          if (renderTasksRef.current[pageNumber] === task) {
+            renderTasksRef.current[pageNumber] = null;
           }
         }
         if (!cancelled) setRenderError("");
@@ -3233,8 +3245,8 @@ function PdfReader({
     void render();
     return () => {
       cancelled = true;
-      renderTasksRef.current.forEach((task) => task?.cancel());
-      renderTasksRef.current = [];
+      Object.values(renderTasksRef.current).forEach((task) => task?.cancel());
+      renderTasksRef.current = {};
     };
   }, [documentProxy, renderPageIndex, pageMode, sizeTick]);
 
@@ -3246,7 +3258,8 @@ function PdfReader({
     };
   }, []);
 
-  const pages = documentProxy ? pdfVisiblePages(renderPageIndex, documentProxy.numPages, pageMode) : [];
+  const pages = documentProxy ? pdfLayoutPages(renderPageIndex, documentProxy.numPages, pageMode) : [];
+  const renderablePages = new Set(documentProxy ? pdfRenderablePages(renderPageIndex, documentProxy.numPages, pageMode) : []);
 
   function updatePDFWebtoonPosition() {
     if (pageMode !== "webtoon" || !containerRef.current || !onPageChange) return;
@@ -3257,7 +3270,7 @@ function PdfReader({
       scrollFrameRef.current = null;
       const node = containerRef.current;
       if (!node) return;
-      const markers = Array.from(node.querySelectorAll<HTMLCanvasElement>("[data-page-index]"));
+      const markers = Array.from(node.querySelectorAll<HTMLElement>("[data-page-index]"));
       const viewportAnchor = node.scrollTop + node.clientHeight * 0.28;
       let current = 0;
       for (const marker of markers) {
@@ -3276,25 +3289,44 @@ function PdfReader({
   return (
     <div ref={containerRef} className={`pdfReader ${pageMode}`} onScroll={updatePDFWebtoonPosition}>
       {renderError && <div className="pdfReaderError">{renderError}</div>}
-      {pages.map((pageNumber, index) => (
-        <canvas
-          key={`${book.id}-${pageNumber}`}
-          ref={(node) => {
-            canvasRefs.current[index] = node;
-          }}
-          data-page-index={pageNumber - 1}
-          aria-label={`PDF page ${pageNumber}`}
-        />
-      ))}
+      {pages.map((pageNumber) => {
+        const shouldRenderCanvas = pageMode !== "webtoon" || renderablePages.has(pageNumber);
+        return shouldRenderCanvas ? (
+          <canvas
+            key={`${book.id}-${pageNumber}`}
+            ref={(node) => {
+              canvasRefs.current[pageNumber] = node;
+            }}
+            data-page-index={pageNumber - 1}
+            aria-label={`PDF page ${pageNumber}`}
+          />
+        ) : (
+          <div
+            className="pdfPagePlaceholder"
+            data-page-index={pageNumber - 1}
+            key={`${book.id}-${pageNumber}-placeholder`}
+            style={{ minHeight: pdfWebtoonPageHeights[pageNumber] || PDF_WEBTOON_PLACEHOLDER_HEIGHT }}
+            aria-label={`PDF page ${pageNumber} placeholder`}
+          />
+        );
+      })}
     </div>
   );
 }
 
-function pdfVisiblePages(index: number, total: number, mode: ReaderPageMode) {
+function pdfLayoutPages(index: number, total: number, mode: ReaderPageMode) {
   const first = Math.max(1, Math.min(total, index + 1));
-  if (mode === "single") return [first];
   if (mode === "webtoon") return Array.from({ length: total }, (_, offset) => offset + 1);
+  if (mode === "single") return [first];
   return [first, first + 1].filter((page) => page >= 1 && page <= total);
+}
+
+function pdfRenderablePages(index: number, total: number, mode: ReaderPageMode) {
+  const first = Math.max(1, Math.min(total, index + 1));
+  if (mode !== "webtoon") return pdfLayoutPages(index, total, mode);
+  const start = Math.max(1, first - PDF_WEBTOON_RENDER_RADIUS);
+  const end = Math.min(total, first + PDF_WEBTOON_RENDER_RADIUS);
+  return Array.from({ length: end - start + 1 }, (_, offset) => start + offset);
 }
 
 function isPDFRenderCancelled(error: unknown) {

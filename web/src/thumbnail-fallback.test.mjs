@@ -148,3 +148,20 @@ test("switching comic page modes does not immediately overwrite legacy progress"
     "switching between paged comic modes should not rewrite the saved progress until the user changes pages",
   );
 });
+
+test("PDF webtoon mode does not render every page at once", async () => {
+  const appSource = await readFile(path.join(srcDir, "App.tsx"), "utf8");
+  const start = appSource.indexOf("function pdfRenderablePages");
+  const end = appSource.indexOf("function isPDFRenderCancelled", start);
+  const renderableSource = start >= 0 && end > start ? appSource.slice(start, end) : "";
+
+  assert.doesNotMatch(
+    renderableSource,
+    /if\s*\(\s*mode\s*===\s*"webtoon"\s*\)\s*return\s+Array\.from\(\{\s*length:\s*total\s*\}/,
+    "PDF webtoon mode should window rendered canvases instead of allocating one canvas per PDF page",
+  );
+  assert.ok(
+    renderableSource.includes("PDF_WEBTOON_RENDER_RADIUS"),
+    "PDF webtoon mode should use an explicit render radius like image webtoon mode",
+  );
+});
