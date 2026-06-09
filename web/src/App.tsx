@@ -1072,6 +1072,8 @@ export function App() {
 
   async function openBook(book: Book) {
     setActiveTask(`Opening ${book.title}`);
+    setSelectedBook(book);
+    setView("reader");
     setEpubManifest(null);
     setPageIndex(0);
     setDisplayedPageIndex(0);
@@ -1089,11 +1091,10 @@ export function App() {
     setEpubTocOpen(false);
     setReaderLoadState("loading");
     try {
+      await nextFrame();
       const nextPages = await api.pages(book.id);
       setPages(nextPages);
       if (book.format === "epub") {
-        setSelectedBook(book);
-        setView("reader");
         const [manifestResult, progressResult] = await Promise.allSettled([api.epubManifest(book.id), api.readProgress(book.id)]);
         const manifest = manifestResult.status === "fulfilled" ? manifestResult.value : fallbackEpubManifest(book, nextPages);
         const progress = progressResult.status === "fulfilled" ? progressResult.value : null;
@@ -1136,8 +1137,6 @@ export function App() {
         }
         setReaderLoadState("ready");
       }
-      setSelectedBook(book);
-      setView("reader");
     } catch (error) {
       setReaderLoadState("error");
       setStatus(error instanceof Error ? error.message : `Failed to open ${book.title}`);
@@ -4006,6 +4005,12 @@ function encodeResourcePath(value: string) {
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
+}
+
+function nextFrame() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
 }
 
 function authenticatedResourcePath(path: string | undefined) {
