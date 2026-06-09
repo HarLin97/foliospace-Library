@@ -764,12 +764,16 @@ export function App() {
   }
 
   function scrollCollectionContentIntoView() {
+    const scroll = (behavior: ScrollBehavior) => {
+      const node = collectionContentRef.current;
+      if (!node) return;
+      const targetTop = Math.max(0, node.getBoundingClientRect().top + window.scrollY - 12);
+      window.scrollTo({ top: targetTop, behavior });
+    };
     window.requestAnimationFrame(() => {
-      collectionContentRef.current?.scrollIntoView({
-        block: "start",
-        behavior: "smooth",
-      });
+      window.requestAnimationFrame(() => scroll("smooth"));
     });
+    window.setTimeout(() => scroll("auto"), 300);
   }
 
   const loadBooksPage = useCallback(
