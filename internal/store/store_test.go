@@ -465,6 +465,66 @@ func TestStoreScopesCollectionPrivateStateByProfile(t *testing.T) {
 	}
 }
 
+func TestUpdateBookIdentityCarriesCollectionPrivateState(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	defaultProfile, err := s.DefaultProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestProfile, err := s.CreateProfile("Guest", "comic", "teal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := s.CreateLibrary("Comics", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSeries, err := s.UpsertSeries(lib.ID, "Old Series", "Old Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSeries, err := s.UpsertSeries(lib.ID, "New Series", "New Series")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := s.UpsertBook(oldSeries.ID, "Book A", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.UpdateCollectionPrivateStateForProfile(oldSeries.ID, defaultProfile.ID, domain.CollectionPrivateState{Favorite: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateCollectionPrivateStateForProfile(oldSeries.ID, guestProfile.ID, domain.CollectionPrivateState{Liked: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.UpdateBookIdentity(book.ID, newSeries.ID, book.Title, book.Format); err != nil {
+		t.Fatal(err)
+	}
+
+	defaultSeries, err := s.SeriesByIDForProfile(newSeries.ID, defaultProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !defaultSeries.Favorite || defaultSeries.Liked {
+		t.Fatalf("default new series = %#v, want carried favorite only", defaultSeries)
+	}
+	guestSeries, err := s.SeriesByIDForProfile(newSeries.ID, guestProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guestSeries.Favorite || !guestSeries.Liked {
+		t.Fatalf("guest new series = %#v, want carried liked only", guestSeries)
+	}
+}
+
 func TestStoreScopesClientPreferencesByProfile(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

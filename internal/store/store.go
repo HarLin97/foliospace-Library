@@ -649,13 +649,50 @@ func (s *Store) BookByIDForProfile(id int64, profileID int64) (domain.Book, erro
 }
 
 func (s *Store) UpdateBookIdentity(bookID int64, seriesID int64, title string, format string) (domain.Book, error) {
-	_, err := s.db.Exec(`UPDATE books
+	tx, err := s.db.Begin()
+	if err != nil {
+		return domain.Book{}, err
+	}
+	defer tx.Rollback()
+
+	var previousSeriesID int64
+	if err := tx.QueryRow(`SELECT series_id FROM books WHERE id = ?`, bookID).Scan(&previousSeriesID); err != nil {
+		return domain.Book{}, err
+	}
+
+	_, err = tx.Exec(`UPDATE books
 		SET series_id = ?, title = ?, format = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`, seriesID, title, format, bookID)
 	if err != nil {
 		return domain.Book{}, err
 	}
+	if previousSeriesID != seriesID {
+		if err := mergeCollectionPrivateStatesTx(tx, previousSeriesID, seriesID); err != nil {
+			return domain.Book{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Book{}, err
+	}
 	return s.BookByID(bookID)
+}
+
+func mergeCollectionPrivateStatesTx(tx *sql.Tx, fromSeriesID int64, toSeriesID int64) error {
+	_, err := tx.Exec(`INSERT INTO collection_private_states(profile_id, series_id, favorite, liked, updated_at)
+		SELECT profile_id, ?, favorite, liked, CURRENT_TIMESTAMP
+		FROM collection_private_states
+		WHERE series_id = ? AND (favorite <> 0 OR liked <> 0)
+		ON CONFLICT(profile_id, series_id) DO UPDATE SET
+			favorite = CASE
+				WHEN collection_private_states.favorite <> 0 OR excluded.favorite <> 0 THEN 1
+				ELSE 0
+			END,
+			liked = CASE
+				WHEN collection_private_states.liked <> 0 OR excluded.liked <> 0 THEN 1
+				ELSE 0
+			END,
+			updated_at = CURRENT_TIMESTAMP`, toSeriesID, fromSeriesID)
+	return err
 }
 
 func (s *Store) UpdateBookMetadata(bookID int64, creator string, description string) (domain.Book, error) {

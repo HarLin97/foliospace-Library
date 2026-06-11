@@ -1635,6 +1635,7 @@ export function App() {
   }, [filteredSeries, libraries, t]);
   const favoriteCollections = useMemo(() => series.filter((item) => item.favorite), [series]);
   const likedCollections = useMemo(() => series.filter((item) => item.liked), [series]);
+  const favoritePageItemCount = favoriteCollections.length + likedCollections.length + favoriteBooks.length;
 
   useEffect(() => {
     const node = collectionSectionsRef.current;
@@ -2086,7 +2087,7 @@ export function App() {
                 <h1>{t.favorites}</h1>
                 <small>{t.favoriteSubtitle}</small>
               </div>
-              <span>{t.catalogLoadedCount(favoriteCollections.length + favoriteBooks.length, favoriteCollections.length + likedCollections.length + favoriteBooks.length)}</span>
+              <span>{t.catalogLoadedCount(favoritePageItemCount, favoritePageItemCount)}</span>
             </div>
 
             <div className="favoritesSections">
@@ -2537,7 +2538,7 @@ export function App() {
                             data-page-index={page.index}
                             data-page-key={webtoonPageKey(page)}
                             key={`${selectedBook.id}-${page.index}`}
-                            style={{ minHeight: measuredHeight, ...comicImageFitStyle(page, "webtoon") }}
+                            style={{ ...(shouldRenderImage ? {} : { minHeight: measuredHeight }), ...comicImageFitStyle(page, "webtoon") }}
                           >
                             {shouldRenderImage ? (
                               <img
