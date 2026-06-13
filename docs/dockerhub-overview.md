@@ -4,15 +4,27 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
-## 0.96 Release
+## 0.96 Release: Fast Recent Scans
 
-Release `0.96` adds a fast import path for large libraries while keeping the 0.95 reader and library-state fixes:
+Release `0.96` focuses on faster day-to-day imports for very large libraries. When you add several new comics or books to a directory with thousands of existing files, you no longer need to kick off a heavy full-library scan.
 
-- Recent-file scans index only the newest new or changed files under a library or subdirectory.
-- The Tasks page exposes a "scan latest added" action with selectable limits for manga import batches.
+- New "scan latest added" action in the Tasks page.
+- Selectable recent limits for common import batches, such as 10, 20, 50, 100, or 200 files.
+- Recent scans index only new or changed files under a selected library or subdirectory.
 - Duplicate running scans for the same library and target path are reused instead of creating overlapping jobs.
-- MCP now exposes `foliospace.scan_recent`, matching the HTTP API.
+- HTTP API supports `POST /api/libraries/:id/scan` with `mode: "recent"`.
+- MCP exposes `foliospace.scan_recent`, so local agents can trigger the same fast scan path.
 - `/api/client/info` advertises `recentScan: true` for client capability discovery.
+
+Example API request after adding new files under a large manga folder:
+
+```json
+{
+  "mode": "recent",
+  "path": "/library/韩漫",
+  "recentLimit": 20
+}
+```
 
 ## Quick Start
 
