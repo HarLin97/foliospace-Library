@@ -51,7 +51,7 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-const serviceVersion = "0.95"
+const serviceVersion = "0.96"
 
 func New(baseURL string, token string) *Server {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -140,6 +140,7 @@ func tools() []Tool {
 		{Name: "foliospace.list_collection_volumes", Description: "List books/comics in a collection with optional pagination and filtering.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "sort": stringSchema("Server-supported sort key."), "profileId": integerSchema("Optional profile id for scoped progress and private state.")}, []string{"collectionId"})},
 		{Name: "foliospace.list_collection_assets", Description: "List mixed assets in a collection, including books, comics, games, documents, and media as available.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "profileId": integerSchema("Optional profile id for scoped book state.")}, []string{"collectionId"})},
 		{Name: "foliospace.scan_library", Description: "Start a scan for a configured library. Optional path scans one container-visible subdirectory or file inside the library root.", InputSchema: objectSchema(map[string]any{"libraryId": integerSchema("Library id."), "path": stringSchema("Optional target path, absolute inside the container or relative to the library root.")}, []string{"libraryId"})},
+		{Name: "foliospace.scan_recent", Description: "Scan only the latest new or changed files under a library or optional target path, avoiding a full-library walk for common imports.", InputSchema: objectSchema(map[string]any{"libraryId": integerSchema("Library id."), "path": stringSchema("Optional target path, absolute inside the container or relative to the library root. Empty means the library root."), "recentLimit": integerSchema("How many newest changed files to index. Defaults to 20 and is capped by the server.")}, []string{"libraryId"})},
 		{Name: "foliospace.list_jobs", Description: "List scan/import jobs.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.job_events", Description: "List events for a scan/import job.", InputSchema: objectSchema(map[string]any{"jobId": integerSchema("Job id.")}, []string{"jobId"})},
 		{Name: "foliospace.pause_job", Description: "Request pause for a running scan job.", InputSchema: objectSchema(map[string]any{"jobId": integerSchema("Job id.")}, []string{"jobId"})},
@@ -301,6 +302,15 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		body := map[string]any{}
 		if path := strings.TrimSpace(stringArg(params.Arguments, "path")); path != "" {
 			body["path"] = path
+		}
+		data, err = s.post(ctx, fmt.Sprintf("/api/libraries/%d/scan", intArg(params.Arguments, "libraryId")), body)
+	case "foliospace.scan_recent":
+		body := map[string]any{"mode": "recent"}
+		if path := strings.TrimSpace(stringArg(params.Arguments, "path")); path != "" {
+			body["path"] = path
+		}
+		if limit := intArg(params.Arguments, "recentLimit"); limit > 0 {
+			body["recentLimit"] = limit
 		}
 		data, err = s.post(ctx, fmt.Sprintf("/api/libraries/%d/scan", intArg(params.Arguments, "libraryId")), body)
 	case "foliospace.list_jobs":

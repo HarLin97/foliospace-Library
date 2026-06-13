@@ -483,6 +483,53 @@ func TestScanLibraryPathIndexesSingleFile(t *testing.T) {
 	}
 }
 
+func TestScanLibraryRecentIndexesNewestChangedFiles(t *testing.T) {
+	root := t.TempDir()
+	oldPath := filepath.Join(root, "Series", "old.cbz")
+	midPath := filepath.Join(root, "Series", "mid.cbz")
+	newPath := filepath.Join(root, "Series", "new.cbz")
+	makeZip(t, oldPath, map[string]string{"001.jpg": "image"})
+	makeZip(t, midPath, map[string]string{"001.jpg": "image"})
+	makeZip(t, newPath, map[string]string{"001.jpg": "image"})
+	base := time.Now().Add(-1 * time.Hour)
+	for i, path := range []string{oldPath, midPath, newPath} {
+		when := base.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).RunRecentScanJobPath(lib, mustStartScanJob(t, st, lib.ID), root, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.DiscoveredFiles != 2 || job.IndexedFiles != 2 {
+		t.Fatalf("job = %#v, want two newest files indexed", job)
+	}
+
+	if _, err := st.FileIndexByPath(oldPath); err == nil {
+		t.Fatalf("old file was indexed, want recent limit to skip it")
+	}
+	if _, err := st.FileIndexByPath(midPath); err != nil {
+		t.Fatalf("mid file not indexed: %v", err)
+	}
+	if _, err := st.FileIndexByPath(newPath); err != nil {
+		t.Fatalf("new file not indexed: %v", err)
+	}
+}
+
 func TestRunScanJobHonorsPauseRequest(t *testing.T) {
 	root := t.TempDir()
 	makeZip(t, filepath.Join(root, "Series A", "book1.cbz"), map[string]string{"001.jpg": "image"})
@@ -1048,6 +1095,15 @@ func makeZip(t *testing.T, path string, entries map[string]string) {
 
 func sampleEPUBEntries() map[string]string {
 	return sampleEPUBEntriesWithMetadata("Sample EPUB", "", "")
+}
+
+func mustStartScanJob(t *testing.T, st *store.Store, libraryID int64) domain.ScanJob {
+	t.Helper()
+	job, err := st.StartScanJob(libraryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return job
 }
 
 func sampleEPUBEntriesWithTitle(title string) map[string]string {

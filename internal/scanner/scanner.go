@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,6 +103,22 @@ func (s *Scanner) StartScanJobPath(library domain.Library, targetPath string) (d
 	return job, nil
 }
 
+func (s *Scanner) StartRecentScanJobPath(library domain.Library, targetPath string, limit int) (domain.ScanJob, error) {
+	scope, err := scanScopeForPath(library, targetPath)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	limit = NormalizeRecentScanLimit(limit)
+	job, err := s.store.StartScanJobWithTarget(library.ID, recentScanTargetLabel(scope.rootPath, limit))
+	if err != nil {
+		return job, err
+	}
+	go func() {
+		_, _ = s.runRecentScanJob(library, job, scope, limit)
+	}()
+	return job, nil
+}
+
 func (s *Scanner) RunScanJob(library domain.Library, job domain.ScanJob) (domain.ScanJob, error) {
 	return s.runScanJob(library, job, scanScope{rootPath: library.RootPath, fullScan: true})
 }
@@ -118,6 +135,20 @@ func (s *Scanner) RunScanJobPath(library domain.Library, job domain.ScanJob, tar
 		return job, err
 	}
 	return s.runScanJob(library, job, scope)
+}
+
+func (s *Scanner) RunRecentScanJobPath(library domain.Library, job domain.ScanJob, targetPath string, limit int) (domain.ScanJob, error) {
+	scope, err := scanScopeForPath(library, targetPath)
+	if err != nil {
+		job.Status = "failed"
+		job.CurrentPath = ""
+		job.ErrorCount++
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "error", "recent scan target failed: "+err.Error())
+		return job, err
+	}
+	return s.runRecentScanJob(library, job, scope, NormalizeRecentScanLimit(limit))
 }
 
 func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope scanScope) (domain.ScanJob, error) {
@@ -332,11 +363,131 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 	return job, nil
 }
 
+func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, scope scanScope, limit int) (domain.ScanJob, error) {
+	limit = NormalizeRecentScanLimit(limit)
+	scope.fullScan = false
+	scope.deferPageIndex = true
+	_ = s.store.AddJobEvent(job.ID, "info", "recent scan started")
+	_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("finding latest %d under %s", limit, scope.rootPath))
+
+	dirStates := map[string]*scanDirState{}
+	fileIndexes, _ := s.store.ListFileIndexesByLibrary(library.ID)
+	candidates := make([]recentScanCandidate, 0, limit)
+	walkErr := s.walkScanScope(library, scope, dirStates, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := s.applyScanControl(&job); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			if shouldSkipScanDir(library.RootPath, path) {
+				return filepath.SkipDir
+			}
+			job.CurrentPath = path
+			job.ErrorCount++
+			_ = s.recordPathError(library.ID, job.ID, path, classifyWalkError(walkErr), walkErr.Error())
+			_ = s.store.AddJobEvent(job.ID, "error", "walk failed: "+path)
+			_ = s.store.UpdateScanJob(job)
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(path))
+		kind := classifyFileKind(library, path, ext)
+		if kind == "" {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			job.CurrentPath = path
+			job.ErrorCount++
+			_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+			_ = s.store.AddJobEvent(job.ID, "error", "stat failed: "+path)
+			_ = s.store.UpdateScanJob(job)
+			return nil
+		}
+		task := scanFileTask{path: path, info: info, ext: ext, kind: kind}
+		if !s.scanTaskNeedsIndex(library, task, fileIndexes) {
+			return nil
+		}
+		candidates = append(candidates, recentScanCandidate{task: task, modTime: info.ModTime()})
+		job.CurrentPath = path
+		_ = s.store.UpdateScanJob(job)
+		return nil
+	})
+	if errors.Is(walkErr, errScanPaused) || errors.Is(walkErr, errScanCancelled) {
+		return job, nil
+	}
+	if walkErr != nil {
+		job.Status = "failed"
+		job.CurrentPath = ""
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "error", "recent scan failed: "+walkErr.Error())
+		return job, walkErr
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].modTime.Equal(candidates[j].modTime) {
+			return candidates[i].task.path > candidates[j].task.path
+		}
+		return candidates[i].modTime.After(candidates[j].modTime)
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	job.DiscoveredFiles = len(candidates)
+	_ = s.store.UpdateScanJob(job)
+	_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("recent candidates: %d", len(candidates)))
+
+	updateJob := func(change func(*domain.ScanJob)) {
+		change(&job)
+		_ = s.store.UpdateScanJob(job)
+	}
+	for _, candidate := range candidates {
+		if err := s.applyScanControl(&job); err != nil {
+			return job, nil
+		}
+		s.processScanTask(library, job.ID, candidate.task, scope, fileIndexes, updateJob)
+	}
+
+	if err := s.persistScanDirectories(library.ID, dirStates); err != nil {
+		job.Status = "failed"
+		job.CurrentPath = ""
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "error", "directory cache failed: "+err.Error())
+		return job, err
+	}
+	if err := s.store.DeleteEmptySeries(library.ID); err != nil {
+		job.Status = "failed"
+		job.CurrentPath = ""
+		job.FinishedAt = time.Now()
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "error", "cleanup failed: "+err.Error())
+		return job, err
+	}
+
+	job.Status = "completed"
+	job.CurrentPath = ""
+	job.FinishedAt = time.Now()
+	if err := s.store.UpdateScanJob(job); err != nil {
+		return job, err
+	}
+	_ = s.store.AddJobEvent(job.ID, "info", "recent scan completed")
+	return job, nil
+}
+
 type scanFileTask struct {
 	path string
 	info fs.FileInfo
 	ext  string
 	kind string
+}
+
+type recentScanCandidate struct {
+	task    scanFileTask
+	modTime time.Time
 }
 
 func scanScopeForPath(library domain.Library, targetPath string) (scanScope, error) {
@@ -402,6 +553,10 @@ func (s *Scanner) persistScanDirectories(libraryID int64, dirStates map[string]*
 		}
 	}
 	return nil
+}
+
+func recentScanTargetLabel(rootPath string, limit int) string {
+	return fmt.Sprintf("%s [recent:%d]", filepath.Clean(rootPath), NormalizeRecentScanLimit(limit))
 }
 
 func (s *Scanner) runScanJobConcurrent(library domain.Library, job domain.ScanJob, workers int, scope scanScope) (domain.ScanJob, error) {
@@ -702,6 +857,32 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 	})
 }
 
+func (s *Scanner) scanTaskNeedsIndex(library domain.Library, task scanFileTask, fileIndexes map[string]store.FileIndex) bool {
+	if task.info.Size() == 0 {
+		return true
+	}
+	switch task.kind {
+	case "game":
+		relPath, err := filepath.Rel(library.RootPath, task.path)
+		if err != nil {
+			return true
+		}
+		return !s.store.CanSkipGame(task.path, task.info.Size(), task.info.ModTime(), inferGamePlatform(task.ext, relPath))
+	case "video":
+		return !s.store.CanSkipVideo(task.path, task.info.Size(), task.info.ModTime())
+	default:
+		if task.ext != ".epub" {
+			if index, ok := s.unchangedMetadataOnlyFile(fileIndexes, task.path, task.info, task.ext); ok && canSkipUnchangedBook(library, task.path, index, task.ext) {
+				return false
+			}
+		}
+		if index, ok := s.unchangedFileIndex(fileIndexes, task.path, task.info, task.ext); ok && canSkipUnchangedBook(library, task.path, index, task.ext) {
+			return false
+		}
+		return true
+	}
+}
+
 func (s *Scanner) cleanupSkippedEntries(library domain.Library, job *domain.ScanJob) error {
 	deleted, err := s.store.DeleteSkippedDirectoryEntries(library.ID, skippedScanDirNames())
 	if err != nil {
@@ -740,6 +921,16 @@ func NormalizeWorkerCount(value string) int {
 		return 8
 	}
 	return workers
+}
+
+func NormalizeRecentScanLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
 }
 
 func (s *Scanner) applyScanControl(job *domain.ScanJob) error {

@@ -21,10 +21,10 @@ This installs `foliospace-mcp` to:
 Release packages are expected at:
 
 ```text
-https://foliospace.app/releases/foliospace-mcp_0.95_darwin_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.95_darwin_amd64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.95_linux_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.95_linux_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.96_darwin_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.96_darwin_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.96_linux_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.96_linux_amd64.tar.gz
 https://foliospace.app/releases/checksums.txt
 ```
 
@@ -91,6 +91,10 @@ List my configured FolioSpace libraries, then start a scan for the Books library
 ```
 
 ```text
+Scan the latest 20 files added under my Hanman library without walking the whole ComicCenter library.
+```
+
+```text
 Show recent scan jobs and summarize the latest errors.
 ```
 
@@ -146,6 +150,7 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.list_collection_volumes`: list books/comics in a collection with optional `limit`, `offset`, `q`, and `sort`.
 - `foliospace.list_collection_assets`: list mixed collection assets by `collectionId`.
 - `foliospace.scan_library`: start a library scan by `libraryId`; optional `path` scans one container-visible subdirectory or file inside the library root.
+- `foliospace.scan_recent`: scan only the latest new or changed files under a library or optional target path. Use this after adding several files to a large directory; `recentLimit` defaults to 20.
 - `foliospace.list_jobs`: list scan/import jobs.
 - `foliospace.job_events`: list job events by `jobId`.
 - `foliospace.pause_job`: request pause for a running scan job.
@@ -249,6 +254,12 @@ Scan one newly added chapter without walking the full library:
 
 ```json
 {"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"foliospace.scan_library","arguments":{"libraryId":1,"path":"/library/韩漫/某作品/Chap.263.zip"}}}
+```
+
+Scan the latest 20 new or changed files under a large directory:
+
+```json
+{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"foliospace.scan_recent","arguments":{"libraryId":21,"path":"/library/韩漫","recentLimit":20}}}
 ```
 
 Pause a running scan job:

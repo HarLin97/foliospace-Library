@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.95`.
+Current release branch: `0.96`.
 
 ## Screenshots
 
@@ -65,7 +65,7 @@ FOLIOSPACE_API_TOKEN=
 FOLIOSPACE_SCAN_WORKERS=2
 ```
 
-Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.95` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
+Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.96` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
 
 Authentication helpers:
 
@@ -92,6 +92,7 @@ Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/clien
 - `GET/PUT /api/client/preferences`: client UI language and reader preference sync.
 - `GET/PUT /api/settings/scan`: scan worker settings for NAS devices with different CPU and memory budgets.
 - `GET /api/client/search`, `/api/client/books/favorites`, and `/api/client/books/private-status/:status`: private-state-aware discovery shelves.
+- `POST /api/libraries/:id/scan` supports full scans, targeted `path` scans, and `mode: "recent"` scans for only the latest new or changed files.
 
 Client API book and collection responses omit local NAS file paths. Returned cover, thumbnail, page, EPUB, game, and video URLs are opaque service URLs; clients should preserve query parameters because FolioSpace uses them for cache-compatible media refreshes while keeping older routes valid.
 
@@ -148,9 +149,19 @@ Release `0.95` collects the post-`0.932` reader and library-state fixes:
 - Image webtoon mode no longer leaves large black gaps in compact or fullscreen layouts after viewport width changes.
 - Loaded webtoon images now size from the real image dimensions while unloaded placeholders keep scroll height stable.
 
+## Release 0.96
+
+Release `0.96` adds a fast import path for large libraries:
+
+- Library scans can now run in `mode: "recent"` to index only the newest new or changed files under a library or subdirectory.
+- The Tasks page exposes a "scan latest added" action with selectable limits for common manga import batches.
+- Duplicate running scans for the same library and target path are reused instead of creating overlapping jobs.
+- MCP now exposes `foliospace.scan_recent`, matching the HTTP API and allowing agents to trigger recent-file scans safely.
+- Client capability discovery advertises `recentScan: true` from `/api/client/info`.
+
 ## MCP
 
-Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, progress, scan jobs, scan worker settings, job control, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
+Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, progress, scan jobs, recent-file scans, scan worker settings, job control, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
 
 End users can install the MCP binary on the machine where their agent client runs:
 
@@ -161,7 +172,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.95 ./scripts/build-mcp-release.sh
+VERSION=0.96 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -181,10 +192,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.95` image tag:
+Release `0.96` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.95
+docker pull funland/foliospace-library:0.96
 ```
 
 For local verification:
@@ -203,7 +214,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.95
+  funland/foliospace-library:0.96
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -218,11 +229,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.95
-git push github v0.95
+git tag v0.96
+git push github v0.96
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.95` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.96` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

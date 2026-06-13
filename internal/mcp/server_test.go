@@ -37,6 +37,7 @@ func TestServerListsTools(t *testing.T) {
 		!strings.Contains(body, "foliospace.get_scan_settings") ||
 		!strings.Contains(body, "foliospace.save_scan_settings") ||
 		!strings.Contains(body, "foliospace.list_collection_volumes") ||
+		!strings.Contains(body, "foliospace.scan_recent") ||
 		!strings.Contains(body, "foliospace.pause_job") ||
 		!strings.Contains(body, "foliospace.library_health") {
 		t.Fatalf("tools/list response %s missing expected tools", body)
@@ -357,6 +358,37 @@ func TestServerCallsTargetedScanLibraryTool(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, `"path":"/library/韩漫/某作品/Chap.263.zip"`) {
 		t.Fatalf("body = %q, want target path", gotBody)
+	}
+}
+
+func TestServerCallsRecentScanTool(t *testing.T) {
+	var gotMethod string
+	var gotPath string
+	var gotBody string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotMethod = r.Method
+		gotPath = r.URL.RequestURI()
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		return jsonResponse(`{"id":6,"status":"running","targetPath":"/library/韩漫 [recent:20]"}`), nil
+	})}
+
+	response := server.Handle(context.Background(), toolCall(t, "foliospace.scan_recent", map[string]any{
+		"libraryId":   7,
+		"path":        "/library/韩漫",
+		"recentLimit": float64(20),
+	}))
+	if response.Error != nil {
+		t.Fatalf("scan_recent error = %#v", response.Error)
+	}
+	if gotMethod != "POST" || gotPath != "/api/libraries/7/scan" {
+		t.Fatalf("call = %s %s, want scan POST", gotMethod, gotPath)
+	}
+	if !strings.Contains(gotBody, `"mode":"recent"`) ||
+		!strings.Contains(gotBody, `"path":"/library/韩漫"`) ||
+		!strings.Contains(gotBody, `"recentLimit":20`) {
+		t.Fatalf("body = %q, want recent scan body", gotBody)
 	}
 }
 

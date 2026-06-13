@@ -247,7 +247,7 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.95",
+  "serviceVersion": "0.96",
   "apiVersion": "v1",
   "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"],
   "capabilities": {
@@ -275,7 +275,8 @@ Response:
     "setupWizard": true,
     "scannerJobEvents": true,
     "scannerJobControl": true,
-    "scanSettings": true
+    "scanSettings": true,
+    "recentScan": true
   }
 }
 ```
@@ -1145,6 +1146,18 @@ Request body is optional. Omit it to scan the full library. Pass `path` to scan 
 
 `path` can also be relative to the library root, for example `韩漫/某作品`. The server rejects paths outside the configured library root.
 
+To scan only the newest new or changed files, pass `mode: "recent"` and an optional `recentLimit`. This still walks the selected scope to find candidates, but it indexes only the latest files that are missing from the index or whose size/mtime changed. It is intended for adding several new archives under a large library without rescanning every unchanged file:
+
+```json
+{
+  "mode": "recent",
+  "path": "/library/韩漫",
+  "recentLimit": 20
+}
+```
+
+`recentLimit` defaults to `20` and is capped by the server. If `path` is omitted, the recent scan uses the library root.
+
 ### `GET /api/jobs`
 
 Lists recent scan jobs.
@@ -1251,6 +1264,7 @@ Good MCP tools:
 - `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection.
 - `foliospace.list_collections`, `foliospace.save_collection_state`, `foliospace.list_collection_volumes`, and `foliospace.list_collection_assets`: browse the indexed library and save profile-scoped collection favorite/liked flags.
 - `foliospace.scan_library`: start a scan for a configured library. Optional `path` scans one subdirectory or file inside the library root.
+- `foliospace.scan_recent`: scan only the latest new or changed files under a library or optional target path. Use this after adding several files to a large directory.
 - `foliospace.list_jobs`, `foliospace.job_events`, `foliospace.pause_job`, `foliospace.cancel_job`, and `foliospace.resume_job`: inspect and control scan progress.
 - `foliospace.list_errors`: surface broken archives, unsupported files, permission errors, and missing mounts.
 - `foliospace.library_health`: summarize scan status, error counts, stale books, empty collections, and missing covers.

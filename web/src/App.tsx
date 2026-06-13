@@ -101,6 +101,8 @@ export function App() {
   const [quickScanLibraryId, setQuickScanLibraryId] = useState(0);
   const [quickScanPath, setQuickScanPath] = useState("");
   const [quickScanRunning, setQuickScanRunning] = useState(false);
+  const [recentScanLimit, setRecentScanLimit] = useState(20);
+  const [recentScanRunning, setRecentScanRunning] = useState(false);
   const [activeTask, setActiveTask] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState(0);
@@ -482,8 +484,12 @@ export function App() {
   const activeScan = jobs.find((job) => isActiveScanStatus(job.status)) ?? null;
   const quickScanLibrary = libraries.find((item) => item.id === quickScanLibraryId) ?? libraries[0] ?? null;
   const quickScanTargetPath = quickScanLibrary ? normalizeQuickScanTarget(quickScanLibrary, quickScanPath) : "";
+  const recentScanTargetPath = quickScanLibrary ? recentScanTargetLabel(normalizeQuickScanTarget(quickScanLibrary, quickScanPath) || quickScanLibrary.rootPath, recentScanLimit) : "";
   const activeQuickScanJob = quickScanTargetPath
     ? jobs.find((job) => job.libraryId === quickScanLibrary?.id && job.targetPath === quickScanTargetPath && isActiveScanStatus(job.status)) ?? null
+    : null;
+  const activeRecentScanJob = recentScanTargetPath
+    ? jobs.find((job) => job.libraryId === quickScanLibrary?.id && job.targetPath === recentScanTargetPath && isActiveScanStatus(job.status)) ?? null
     : null;
 
   useEffect(() => {
@@ -613,6 +619,30 @@ export function App() {
       handleAPIError(error);
     } finally {
       setQuickScanRunning(false);
+      setActiveTask(null);
+    }
+  }
+
+  async function recentScan() {
+    const library = quickScanLibrary;
+    if (!library) return;
+    if (activeRecentScanJob) {
+      setSelectedJob(activeRecentScanJob);
+      setStatus(t.quickScanAlreadyRunning(activeRecentScanJob.id));
+      return;
+    }
+    const path = quickScanPath.trim();
+    setStatus(t.recentScanStarting(path || library.rootPath, recentScanLimit));
+    setRecentScanRunning(true);
+    setActiveTask(t.recentScan);
+    try {
+      const job = await api.scan(library.id, { path, mode: "recent", recentLimit: recentScanLimit });
+      setStatus(t.recentScanQueued(job.id));
+      await refreshAll();
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setRecentScanRunning(false);
       setActiveTask(null);
     }
   }
@@ -2695,7 +2725,22 @@ export function App() {
                 <button onClick={quickScan} disabled={quickScanRunning || !!activeQuickScanJob || !quickScanPath.trim() || libraries.length === 0}>
                   {activeQuickScanJob ? t.quickScanAlreadyRunning(activeQuickScanJob.id) : quickScanRunning ? t.quickScanRunning : t.quickScanAction}
                 </button>
+                <select
+                  value={recentScanLimit}
+                  onChange={(event) => setRecentScanLimit(Number(event.target.value))}
+                  aria-label={t.recentScanLimit}
+                >
+                  {[10, 20, 50, 100, 200].map((limit) => (
+                    <option value={limit} key={limit}>
+                      {t.recentScanLimitOption(limit)}
+                    </option>
+                  ))}
+                </select>
+                <button onClick={recentScan} disabled={recentScanRunning || !!activeRecentScanJob || libraries.length === 0}>
+                  {activeRecentScanJob ? t.quickScanAlreadyRunning(activeRecentScanJob.id) : recentScanRunning ? t.quickScanRunning : t.recentScanAction}
+                </button>
                 {activeQuickScanJob && <small>{t.quickScanAlreadyRunningHint(activeQuickScanJob.id)}</small>}
+                {activeRecentScanJob && <small>{t.recentScanAlreadyRunningHint(activeRecentScanJob.id)}</small>}
               </div>
               {jobs.map((job) => (
                 <button className="jobRow" key={job.id} onClick={() => openJob(job)}>
@@ -4186,6 +4231,13 @@ const translations = {
     quickScanQueued: (jobId: number) => `快速扫描已加入队列：job #${jobId}`,
     quickScanAlreadyRunning: (jobId: number) => `已有任务 #${jobId}`,
     quickScanAlreadyRunningHint: (jobId: number) => `这个路径已有扫描任务进行中：job #${jobId}`,
+    recentScan: "只扫最新添加",
+    recentScanAction: "只扫最新添加",
+    recentScanLimit: "最新扫描数量",
+    recentScanLimitOption: (count: number) => `最新 ${count} 个`,
+    recentScanStarting: (path: string, count: number) => `正在扫描 ${path} 下最新 ${count} 个新增或变更文件`,
+    recentScanQueued: (jobId: number) => `最新添加扫描已加入队列：job #${jobId}`,
+    recentScanAlreadyRunningHint: (jobId: number) => `最新添加扫描已在进行中：job #${jobId}`,
     pause: "暂停",
     resume: "恢复",
     cancel: "取消",
@@ -4390,6 +4442,13 @@ const translations = {
     quickScanQueued: (jobId: number) => `快速掃描已加入佇列：job #${jobId}`,
     quickScanAlreadyRunning: (jobId: number) => `已有任務 #${jobId}`,
     quickScanAlreadyRunningHint: (jobId: number) => `這個路徑已有掃描任務進行中：job #${jobId}`,
+    recentScan: "只掃最新加入",
+    recentScanAction: "只掃最新加入",
+    recentScanLimit: "最新掃描數量",
+    recentScanLimitOption: (count: number) => `最新 ${count} 個`,
+    recentScanStarting: (path: string, count: number) => `正在掃描 ${path} 下最新 ${count} 個新增或變更檔案`,
+    recentScanQueued: (jobId: number) => `最新加入掃描已加入佇列：job #${jobId}`,
+    recentScanAlreadyRunningHint: (jobId: number) => `最新加入掃描已在進行中：job #${jobId}`,
     pause: "暫停",
     resume: "恢復",
     cancel: "取消",
@@ -4594,6 +4653,13 @@ const translations = {
     quickScanQueued: (jobId: number) => `Quick scan queued: job #${jobId}`,
     quickScanAlreadyRunning: (jobId: number) => `Job #${jobId} is running`,
     quickScanAlreadyRunningHint: (jobId: number) => `A scan for this path is already running as job #${jobId}.`,
+    recentScan: "Scan latest additions",
+    recentScanAction: "Scan latest additions",
+    recentScanLimit: "Latest scan count",
+    recentScanLimitOption: (count: number) => `Latest ${count}`,
+    recentScanStarting: (path: string, count: number) => `Scanning latest ${count} new or changed files under ${path}`,
+    recentScanQueued: (jobId: number) => `Latest-additions scan queued: job #${jobId}`,
+    recentScanAlreadyRunningHint: (jobId: number) => `A latest-additions scan is already running as job #${jobId}.`,
     pause: "Pause",
     resume: "Resume",
     cancel: "Cancel",
@@ -4798,6 +4864,13 @@ const translations = {
     quickScanQueued: (jobId: number) => `クイックスキャンをキューに追加しました: job #${jobId}`,
     quickScanAlreadyRunning: (jobId: number) => `job #${jobId} が実行中`,
     quickScanAlreadyRunningHint: (jobId: number) => `このパスのスキャンはすでに job #${jobId} として実行中です。`,
+    recentScan: "最新追加のみスキャン",
+    recentScanAction: "最新追加のみスキャン",
+    recentScanLimit: "最新スキャン数",
+    recentScanLimitOption: (count: number) => `最新 ${count} 件`,
+    recentScanStarting: (path: string, count: number) => `${path} の最新 ${count} 件の新規または変更ファイルをスキャン中`,
+    recentScanQueued: (jobId: number) => `最新追加スキャンをキューに追加しました: job #${jobId}`,
+    recentScanAlreadyRunningHint: (jobId: number) => `最新追加スキャンはすでに job #${jobId} として実行中です。`,
     pause: "一時停止",
     resume: "再開",
     cancel: "キャンセル",
@@ -5002,6 +5075,13 @@ const translations = {
     quickScanQueued: (jobId: number) => `빠른 스캔 대기열 추가: job #${jobId}`,
     quickScanAlreadyRunning: (jobId: number) => `job #${jobId} 실행 중`,
     quickScanAlreadyRunningHint: (jobId: number) => `이 경로의 스캔이 이미 job #${jobId}로 실행 중입니다.`,
+    recentScan: "최근 추가만 스캔",
+    recentScanAction: "최근 추가만 스캔",
+    recentScanLimit: "최근 스캔 수",
+    recentScanLimitOption: (count: number) => `최근 ${count}개`,
+    recentScanStarting: (path: string, count: number) => `${path} 아래 최근 ${count}개의 신규 또는 변경 파일 스캔 중`,
+    recentScanQueued: (jobId: number) => `최근 추가 스캔 대기열 추가: job #${jobId}`,
+    recentScanAlreadyRunningHint: (jobId: number) => `최근 추가 스캔이 이미 job #${jobId}로 실행 중입니다.`,
     pause: "일시정지",
     resume: "재개",
     cancel: "취소",
@@ -5386,6 +5466,10 @@ function normalizeQuickScanTarget(library: Library, inputPath: string) {
     parts.push(part);
   });
   return `/${parts.join("/")}`;
+}
+
+function recentScanTargetLabel(path: string, limit: number) {
+  return `${path} [recent:${Math.max(1, Math.min(200, Math.trunc(limit) || 20))}]`;
 }
 
 function canPauseJob(job: ScanJob) {

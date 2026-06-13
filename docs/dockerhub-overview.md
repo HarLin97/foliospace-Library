@@ -4,20 +4,20 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
-## 0.95 Release
+## 0.96 Release
 
-Release `0.95` collects the post-`0.932` reader and library-state fixes:
+Release `0.96` adds a fast import path for large libraries while keeping the 0.95 reader and library-state fixes:
 
-- Narrow-screen cover cards now keep stable portrait frames, preventing tall or intrinsic cover images from stretching shelves and search results.
-- Collection favorite and liked state is preserved during book reclassification, so private collection state follows the active collection instead of being left on old series IDs.
-- The favorites page count now matches the visible favorite sections and no longer counts hidden empty collections.
-- Image webtoon mode no longer leaves large black gaps in compact or fullscreen layouts after viewport width changes.
-- Loaded webtoon images now size from the real image dimensions while unloaded placeholders keep scroll height stable.
+- Recent-file scans index only the newest new or changed files under a library or subdirectory.
+- The Tasks page exposes a "scan latest added" action with selectable limits for manga import batches.
+- Duplicate running scans for the same library and target path are reused instead of creating overlapping jobs.
+- MCP now exposes `foliospace.scan_recent`, matching the HTTP API.
+- `/api/client/info` advertises `recentScan: true` for client capability discovery.
 
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.95
+docker pull funland/foliospace-library:0.96
 ```
 
 ```bash
@@ -27,7 +27,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.95
+  funland/foliospace-library:0.96
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

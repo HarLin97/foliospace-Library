@@ -367,6 +367,12 @@ export type ScanSettings = {
   scanWorkers: number;
 };
 
+export type ScanOptions = {
+  path?: string;
+  mode?: "recent";
+  recentLimit?: number;
+};
+
 const authTokenKey = "foliospace_api_token";
 const activeProfileKey = "foliospace_active_profile_id";
 
@@ -530,11 +536,18 @@ export const api = {
     }),
   deleteLibrary: (libraryId: number) => request<{ ok: boolean }>(`/api/libraries/${libraryId}`, { method: "DELETE" }),
   directories: (path = "/") => request<DirectoryListing>(`/api/fs/directories?path=${encodeURIComponent(path)}`),
-  scan: (libraryId: number, path?: string) =>
-    request<ScanJob>(`/api/libraries/${libraryId}/scan`, {
+  scan: (libraryId: number, pathOrOptions?: string | ScanOptions) => {
+    const body =
+      typeof pathOrOptions === "string"
+        ? pathOrOptions
+          ? { path: pathOrOptions }
+          : undefined
+        : pathOrOptions;
+    return request<ScanJob>(`/api/libraries/${libraryId}/scan`, {
       method: "POST",
-      body: path ? JSON.stringify({ path }) : undefined,
-    }),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  },
   thumbnailWorkerStatus: (options?: { detail?: "summary" | "full"; timeoutMs?: number }) =>
     request<ThumbnailWorkerStatus>(
       `/api/thumbnail-worker/status${options?.detail === "full" ? "?detail=full" : ""}`,

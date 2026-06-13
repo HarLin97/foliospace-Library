@@ -27,7 +27,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.95"
+const serviceVersion = "0.96"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -310,6 +310,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			ScannerJobEvents:    true,
 			ScannerJobControl:   true,
 			ScanSettings:        true,
+			RecentScan:          true,
 		},
 	})
 }
@@ -902,7 +903,9 @@ func (s *Server) handleLibraryAction(w http.ResponseWriter, r *http.Request) {
 	}
 	var job domain.ScanJob
 	var err error
-	if strings.TrimSpace(req.Path) == "" {
+	if strings.EqualFold(strings.TrimSpace(req.Mode), "recent") || req.RecentLimit > 0 {
+		job, err = s.service.ScanLibraryRecent(id, req.Path, req.RecentLimit)
+	} else if strings.TrimSpace(req.Path) == "" {
 		job, err = s.service.ScanLibrary(id)
 	} else {
 		job, err = s.service.ScanLibraryPath(id, req.Path)
@@ -1585,6 +1588,7 @@ type clientCapabilities struct {
 	ScannerJobEvents    bool `json:"scannerJobEvents"`
 	ScannerJobControl   bool `json:"scannerJobControl"`
 	ScanSettings        bool `json:"scanSettings"`
+	RecentScan          bool `json:"recentScan"`
 }
 
 type clientHomeResponse struct {

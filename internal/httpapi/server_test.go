@@ -1252,6 +1252,50 @@ func TestLibraryScanAcceptsTargetPath(t *testing.T) {
 	}
 }
 
+func TestLibraryScanAcceptsRecentMode(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Series A", "old.cbz"), map[string]string{"001.jpg": "image"})
+	makeZip(t, filepath.Join(root, "Series B", "new.cbz"), map[string]string{"001.jpg": "image"})
+	oldTime := time.Now().Add(-1 * time.Hour)
+	newTime := time.Now()
+	if err := os.Chtimes(filepath.Join(root, "Series A", "old.cbz"), oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(root, "Series B", "new.cbz"), newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	ts := httptest.NewServer(New(service.New(st), nil).Routes())
+	defer ts.Close()
+
+	body := postJSONBody(t, ts.URL+"/api/libraries", `{"name":"Books","rootPath":"`+root+`"}`)
+	if !strings.Contains(body, `"id":`) {
+		t.Fatalf("library response = %q", body)
+	}
+	libs, err := st.ListLibraries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	postJSONBody(t, ts.URL+"/api/libraries/"+itoa(libs[0].ID)+"/scan", `{"mode":"recent","recentLimit":1}`)
+	waitFor(t, func() bool {
+		jobs, err := st.ListScanJobs()
+		return err == nil && len(jobs) > 0 && jobs[0].Status == "completed"
+	})
+
+	if _, err := st.FileIndexByPath(filepath.Join(root, "Series B", "new.cbz")); err != nil {
+		t.Fatalf("new file not indexed: %v", err)
+	}
+	if _, err := st.FileIndexByPath(filepath.Join(root, "Series A", "old.cbz")); err == nil {
+		t.Fatalf("old file was indexed, want recent limit to skip it")
+	}
+}
+
 func TestLibraryScanReturnsExistingRunningTargetJob(t *testing.T) {
 	root := t.TempDir()
 	targetPath := filepath.Join(root, "Series A")

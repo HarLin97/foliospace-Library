@@ -100,7 +100,9 @@ type ScanSettings struct {
 }
 
 type ScanRequest struct {
-	Path string `json:"path"`
+	Path        string `json:"path"`
+	Mode        string `json:"mode"`
+	RecentLimit int    `json:"recentLimit"`
 }
 
 type PageImageOptions struct {
@@ -431,6 +433,25 @@ func (s *Service) ScanLibraryPath(id int64, targetPath string) (domain.ScanJob, 
 		return domain.ScanJob{}, err
 	}
 	return s.scanner.StartScanJobPath(lib, targetPath)
+}
+
+func (s *Service) ScanLibraryRecent(id int64, targetPath string, limit int) (domain.ScanJob, error) {
+	lib, err := s.store.LibraryByID(id)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	targetPath, err = normalizeScanTargetPath(lib, targetPath)
+	if err != nil {
+		return domain.ScanJob{}, err
+	}
+	limit = scanner.NormalizeRecentScanLimit(limit)
+	targetLabel := fmt.Sprintf("%s [recent:%d]", filepath.Clean(targetPath), limit)
+	if existing, err := s.store.RunningScanJobByLibraryTarget(lib.ID, targetLabel); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.ScanJob{}, err
+	}
+	return s.scanner.StartRecentScanJobPath(lib, targetPath, limit)
 }
 
 func normalizeScanTargetPath(library domain.Library, targetPath string) (string, error) {
