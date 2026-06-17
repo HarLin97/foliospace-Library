@@ -901,6 +901,44 @@ func TestStoreListsBooksPageWithSearchAndSort(t *testing.T) {
 	if empty.Items == nil || len(empty.Items) != 0 || empty.Total != 0 {
 		t.Fatalf("empty page = %#v, want empty non-nil items", empty)
 	}
+
+	otherSeries, err := s.UpsertSeries(lib.ID, "Series B", "Series B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdfBook, err := s.UpsertBook(otherSeries.ID, "Zeta Manual", "pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertFile(pdfBook.ID, lib.ID, "/library/Series B/Zeta Manual.pdf", "Series B/Zeta Manual.pdf", 100, time.Now(), ".pdf"); err != nil {
+		t.Fatal(err)
+	}
+	allBooks, err := s.ListBooksPage(domain.BookListOptions{
+		Limit:     3,
+		Offset:    0,
+		Sort:      "title",
+		Direction: "desc",
+		Format:    "all",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allBooks.Total != 5 || len(allBooks.Items) != 3 || !allBooks.HasMore {
+		t.Fatalf("all books page = %#v, want first 3 of 5 books", allBooks)
+	}
+	if allBooks.Items[0].Title != "Zeta Manual" || allBooks.Items[1].Title != "Gamma" {
+		t.Fatalf("all books order = %#v, want title desc across collections", allBooks.Items)
+	}
+	pdfOnly, err := s.ListBooksPage(domain.BookListOptions{
+		Limit:  10,
+		Format: "pdf",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pdfOnly.Total != 1 || len(pdfOnly.Items) != 1 || pdfOnly.Items[0].Title != "Zeta Manual" {
+		t.Fatalf("pdf page = %#v, want only PDF book", pdfOnly)
+	}
 }
 
 func TestStoreSearchesBooksAndPersistsPrivateState(t *testing.T) {

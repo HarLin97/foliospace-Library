@@ -158,11 +158,13 @@ type VideoAsset struct {
 }
 
 type BookListOptions struct {
-	SeriesID int64
-	Limit    int
-	Offset   int
-	Query    string
-	Sort     string
+	SeriesID  int64
+	Limit     int
+	Offset    int
+	Query     string
+	Sort      string
+	Direction string
+	Format    string
 }
 
 type BookListPage struct {

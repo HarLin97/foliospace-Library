@@ -940,7 +940,7 @@ func (s *Store) ListBooksPageForProfile(options domain.BookListOptions, profileI
 
 	queryArgs := append([]any(nil), args...)
 	queryArgs = append(queryArgs, options.Limit, options.Offset)
-	rows, err := s.db.Query(bookSelectSQL(profileID)+where+bookListOrderBy(options.Sort)+`
+	rows, err := s.db.Query(bookSelectSQL(profileID)+where+bookListOrderByDirection(options.Sort, options.Direction)+`
 		LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return domain.BookListPage{}, err
@@ -978,28 +978,72 @@ func normalizeBookListLimit(limit int) int {
 }
 
 func bookListWhere(options domain.BookListOptions) (string, []any) {
-	where := " WHERE b.series_id = ?"
-	args := []any{options.SeriesID}
+	whereParts := make([]string, 0, 3)
+	args := make([]any, 0, 3)
+	if options.SeriesID > 0 {
+		whereParts = append(whereParts, "b.series_id = ?")
+		args = append(args, options.SeriesID)
+	}
 	query := strings.TrimSpace(options.Query)
 	if query != "" {
-		where += ` AND LOWER(b.title) LIKE LOWER(?) ESCAPE '\'`
+		whereParts = append(whereParts, `LOWER(b.title) LIKE LOWER(?) ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(query)+"%")
 	}
-	return where, args
+	format := strings.ToLower(strings.TrimSpace(options.Format))
+	if format != "" && format != "all" {
+		format = strings.TrimPrefix(format, ".")
+		whereParts = append(whereParts, "LOWER(b.format) = ?")
+		args = append(args, format)
+	}
+	if len(whereParts) == 0 {
+		return "", args
+	}
+	return " WHERE " + strings.Join(whereParts, " AND "), args
 }
 
 func bookListOrderBy(sort string) string {
+	return bookListOrderByDirection(sort, "")
+}
+
+func bookListOrderByDirection(sort string, direction string) string {
+	dir := normalizedSortDirection(direction, "ASC")
+	recencyDir := normalizedSortDirection(direction, "DESC")
 	switch sort {
 	case "recently_added":
+		if recencyDir == "ASC" {
+			return " ORDER BY b.created_at ASC, b.id ASC"
+		}
+		return " ORDER BY b.created_at DESC, b.id DESC"
+	case "recent":
+		if recencyDir == "ASC" {
+			return " ORDER BY b.created_at ASC, b.id ASC"
+		}
 		return " ORDER BY b.created_at DESC, b.id DESC"
 	case "last_read":
+		if recencyDir == "ASC" {
+			return " ORDER BY rp.updated_at IS NULL, rp.updated_at ASC, b.title"
+		}
 		return " ORDER BY rp.updated_at IS NULL, rp.updated_at DESC, b.title"
 	case "progress":
+		if recencyDir == "ASC" {
+			return " ORDER BY rp.progress_fraction ASC, rp.updated_at ASC, b.title"
+		}
 		return " ORDER BY rp.progress_fraction DESC, rp.updated_at DESC, b.title"
 	case "unread":
 		return " ORDER BY COALESCE(rp.progress_fraction, 0) ASC, b.title"
 	default:
-		return " ORDER BY b.title"
+		return " ORDER BY b.title " + dir + ", b.id " + dir
+	}
+}
+
+func normalizedSortDirection(direction string, fallback string) string {
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "asc":
+		return "ASC"
+	case "desc":
+		return "DESC"
+	default:
+		return fallback
 	}
 }
 

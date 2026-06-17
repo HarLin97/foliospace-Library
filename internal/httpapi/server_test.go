@@ -748,6 +748,9 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 		!strings.Contains(infoBody, `"scanSettings":true`) {
 		t.Fatalf("client info response %q does not include v1 capabilities", infoBody)
 	}
+	if !strings.Contains(infoBody, `"bookCatalog":true`) {
+		t.Fatalf("client info response %q does not advertise book catalog", infoBody)
+	}
 
 	homeBody := get(t, ts.URL+"/api/client/home")
 	if strings.Contains(homeBody, root) || strings.Contains(homeBody, "filePath") {
@@ -767,6 +770,23 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 	if !strings.Contains(homeBody, `"/api/books/`+itoa(cbzBookID)+`/cover?v=v1-cover-refresh-4"`) {
 		t.Fatalf("client home response %q does not include cover URL", homeBody)
+	}
+
+	catalogBody := get(t, ts.URL+"/api/client/books?limit=1&offset=0&sort=title&direction=desc&format=all")
+	if strings.Contains(catalogBody, root) || strings.Contains(catalogBody, "filePath") {
+		t.Fatalf("client book catalog leaked file path: %q", catalogBody)
+	}
+	if !strings.Contains(catalogBody, `"items"`) ||
+		!strings.Contains(catalogBody, `"total":2`) ||
+		!strings.Contains(catalogBody, `"limit":1`) ||
+		!strings.Contains(catalogBody, `"offset":0`) ||
+		!strings.Contains(catalogBody, `"hasMore":true`) ||
+		!strings.Contains(catalogBody, `"manifestUrl"`) {
+		t.Fatalf("client book catalog response %q is missing page metadata or client fields", catalogBody)
+	}
+	epubCatalogBody := get(t, ts.URL+"/api/client/books?format=epub&limit=10")
+	if !strings.Contains(epubCatalogBody, `"total":1`) || !strings.Contains(epubCatalogBody, `"format":"epub"`) || strings.Contains(epubCatalogBody, `"format":"cbz"`) {
+		t.Fatalf("client EPUB catalog response %q does not filter by format", epubCatalogBody)
 	}
 
 	cbzManifestBody := get(t, ts.URL+"/api/client/books/"+itoa(cbzBookID)+"/manifest")

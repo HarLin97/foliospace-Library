@@ -263,6 +263,7 @@ Response:
     "compactReader": true,
     "pageStreaming": true,
     "pageImageDownsample": true,
+    "bookCatalog": true,
     "gameShelf": true,
     "gameCatalog": true,
     "videoCatalog": true,
@@ -420,6 +421,67 @@ Response:
 Collection `coverBookId`, `thumbnailStatus`, and `thumbnailUrl` are additive optional fields. Clients can use them to render collection covers from the first response without calling the collection volumes endpoint first. Older servers may omit them, so clients should keep a local fallback for missing values.
 
 The client DTO intentionally omits local NAS paths such as `filePath`, `rootPath`, and `directoryPath`.
+
+### `GET /api/client/books`
+
+Returns a paginated client-safe catalog of all readable book, comic, EPUB, and PDF entries. Use this endpoint for native `All` or full library overview screens instead of trying to merge the limited shelves from `/api/client/home`.
+
+Query:
+
+- `limit`: optional, default `60`, max `200`.
+- `offset`: optional, default `0`.
+- `q`: optional text filter against book title.
+- `sort`: optional. Supported values are `title`, `recently_added`, `recent`, `last_read`, `progress`, and `unread`. Unknown values fall back to `title`.
+- `direction`: optional, `asc` or `desc`. Unknown values fall back to `asc`; recency/progress sorts keep their existing default descending behavior when omitted.
+- `format`: optional exact format filter such as `cbz`, `zip`, `epub`, or `pdf`. Use `all` or omit it to include every readable format.
+
+Example:
+
+```http
+GET /api/client/books?limit=60&offset=0&sort=title&direction=asc&format=all
+```
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "id": 42,
+      "collectionId": 7,
+      "seriesId": 7,
+      "collectionTitle": "Demo Series",
+      "title": "Volume 01",
+      "creator": "Author",
+      "bookType": "comic",
+      "format": "cbz",
+      "pageCount": 180,
+      "coverStatus": "ready",
+      "coverUrl": "/api/books/42/cover?v=v1-cover-refresh-4",
+      "thumbnailStatus": "ready",
+      "thumbnailUrl": "/api/books/42/thumbnail?size=small&v=v1-cover-refresh-4",
+      "manifestUrl": "/api/client/books/42/manifest",
+      "analyzed": true,
+      "addedAt": "2026-06-17T09:00:00Z",
+      "updatedAt": "2026-06-17T09:00:00Z",
+      "currentPage": 16,
+      "progressFraction": 0.42,
+      "lastReadAt": "2026-06-17T10:00:00Z",
+      "privateStatus": "reading",
+      "favorite": true,
+      "rating": 0,
+      "tags": [],
+      "summary": ""
+    }
+  ],
+  "total": 12345,
+  "limit": 60,
+  "offset": 0,
+  "hasMore": true
+}
+```
+
+Like other `/api/client/*` book DTOs, this response does not expose local NAS file paths. Use `manifestUrl` to open the item and preserve all query parameters on returned cover and thumbnail URLs.
 
 ### `GET /api/client/games`
 

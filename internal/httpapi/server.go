@@ -56,6 +56,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/client/games/", s.handleClientGameAction)
 	mux.HandleFunc("/api/client/videos", s.handleClientVideos)
 	mux.HandleFunc("/api/client/videos/", s.handleClientVideoAction)
+	mux.HandleFunc("/api/client/books", s.handleClientBooks)
 	mux.HandleFunc("/api/client/books/favorites", s.handleClientFavoriteBooks)
 	mux.HandleFunc("/api/client/books/private-status/", s.handleClientPrivateStatusBooks)
 	mux.HandleFunc("/api/client/books/", s.handleClientBookAction)
@@ -297,6 +298,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			CompactReader:       true,
 			PageStreaming:       true,
 			PageImageDownsample: true,
+			BookCatalog:         true,
 			GameShelf:           true,
 			GameCatalog:         true,
 			VideoCatalog:        true,
@@ -428,6 +430,25 @@ func (s *Server) handleClientBookAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	http.NotFound(w, r)
+}
+
+func (s *Server) handleClientBooks(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	page, err := s.service.ListBooksPageForProfile(domain.BookListOptions{
+		Limit:     queryInt(r, "limit", 60, 200),
+		Offset:    queryInt(r, "offset", 0, 0),
+		Query:     r.URL.Query().Get("q"),
+		Sort:      r.URL.Query().Get("sort"),
+		Direction: r.URL.Query().Get("direction"),
+		Format:    r.URL.Query().Get("format"),
+	}, s.requestProfileID(r))
+	writeJSONOrError(w, clientBookListPage(bookListPageWithThumbnails(page)), err)
 }
 
 func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) {
@@ -976,11 +997,13 @@ func (s *Server) handleCollectionAction(w http.ResponseWriter, r *http.Request) 
 	profileID := s.requestProfileID(r)
 	if hasBookListQuery(r) {
 		page, err := s.service.ListBooksPageForProfile(domain.BookListOptions{
-			SeriesID: id,
-			Limit:    queryInt(r, "limit", 60, 200),
-			Offset:   queryInt(r, "offset", 0, 0),
-			Query:    r.URL.Query().Get("q"),
-			Sort:     r.URL.Query().Get("sort"),
+			SeriesID:  id,
+			Limit:     queryInt(r, "limit", 60, 200),
+			Offset:    queryInt(r, "offset", 0, 0),
+			Query:     r.URL.Query().Get("q"),
+			Sort:      r.URL.Query().Get("sort"),
+			Direction: r.URL.Query().Get("direction"),
+			Format:    r.URL.Query().Get("format"),
 		}, profileID)
 		writeJSONOrError(w, bookListPageWithThumbnails(page), err)
 		return
@@ -1250,7 +1273,7 @@ func queryInt(r *http.Request, key string, fallback int, max int) int {
 
 func hasBookListQuery(r *http.Request) bool {
 	query := r.URL.Query()
-	return query.Has("limit") || query.Has("offset") || query.Has("q") || query.Has("sort")
+	return query.Has("limit") || query.Has("offset") || query.Has("q") || query.Has("sort") || query.Has("direction") || query.Has("format")
 }
 
 func (s *Server) streamPage(w http.ResponseWriter, r *http.Request, bookID int64, pageIndex int) {
@@ -1575,6 +1598,7 @@ type clientCapabilities struct {
 	CompactReader       bool `json:"compactReader"`
 	PageStreaming       bool `json:"pageStreaming"`
 	PageImageDownsample bool `json:"pageImageDownsample"`
+	BookCatalog         bool `json:"bookCatalog"`
 	GameShelf           bool `json:"gameShelf"`
 	GameCatalog         bool `json:"gameCatalog"`
 	VideoCatalog        bool `json:"videoCatalog"`
@@ -1641,6 +1665,7 @@ type clientBook struct {
 	CoverURL         string   `json:"coverUrl"`
 	ThumbnailStatus  string   `json:"thumbnailStatus"`
 	ThumbnailURL     string   `json:"thumbnailUrl"`
+	ManifestURL      string   `json:"manifestUrl"`
 	Analyzed         bool     `json:"analyzed"`
 	AddedAt          string   `json:"addedAt"`
 	UpdatedAt        string   `json:"updatedAt"`
@@ -1978,6 +2003,7 @@ func clientBookItem(book domain.Book) clientBook {
 		CoverURL:         clientCoverURL(book.ID),
 		ThumbnailStatus:  thumbnailStatus(book),
 		ThumbnailURL:     clientThumbnailURL(book.ID, "small"),
+		ManifestURL:      fmt.Sprintf("/api/client/books/%d/manifest", book.ID),
 		Analyzed:         book.Analyzed,
 		AddedAt:          formatClientTime(book.AddedAt),
 		UpdatedAt:        formatClientTime(book.UpdatedAt),
