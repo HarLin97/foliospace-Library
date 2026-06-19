@@ -161,6 +161,65 @@ func TestScanLibraryUsesEPUBMetadataForTitleCollectionAndBookDetails(t *testing.
 	}
 }
 
+func TestScanLibraryUsesEmbeddedComicJSONMetadata(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Comics", "ugly-file-name.cbz"), map[string]string{
+		"metadata.json": `{
+			"name": "Archive Metadata Title",
+			"description": "Archive description.",
+			"author": ["mignon"],
+			"tags": ["C106", "中文", "巨乳"]
+		}`,
+		"chapter/001.jpg": "image",
+	})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.IndexedFiles != 1 {
+		t.Fatalf("job = %#v, want one indexed comic", job)
+	}
+
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].Title != "mignon" {
+		t.Fatalf("series = %#v, want creator collection", series)
+	}
+	books, err := st.ListBooks(series[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 || books[0].Title != "Archive Metadata Title" || books[0].Creator != "mignon" || books[0].Description != "Archive description." {
+		t.Fatalf("books = %#v, want embedded JSON metadata details", books)
+	}
+	if strings.Join(books[0].Tags, ",") != "C106,中文,巨乳" {
+		t.Fatalf("book tags = %#v, want embedded JSON tags", books[0].Tags)
+	}
+
+	results, err := st.SearchBooks("巨乳", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ID != books[0].ID {
+		t.Fatalf("tag search = %#v, want embedded JSON tagged book", results)
+	}
+}
+
 func TestScanLibraryDoesNotReopenUnchangedEPUBWhenMetadataExists(t *testing.T) {
 	root := t.TempDir()
 	epubPath := filepath.Join(root, "Books", "cached.epub")

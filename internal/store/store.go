@@ -805,10 +805,10 @@ func mergeCollectionPrivateStatesTx(tx *sql.Tx, fromSeriesID int64, toSeriesID i
 	return err
 }
 
-func (s *Store) UpdateBookMetadata(bookID int64, creator string, description string) (domain.Book, error) {
+func (s *Store) UpdateBookMetadata(bookID int64, creator string, description string, tags []string) (domain.Book, error) {
 	_, err := s.db.Exec(`UPDATE books
-		SET creator = ?, description = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`, strings.TrimSpace(creator), strings.TrimSpace(description), bookID)
+		SET creator = ?, description = ?, tags = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?`, strings.TrimSpace(creator), strings.TrimSpace(description), encodeTags(tags), bookID)
 	if err != nil {
 		return domain.Book{}, err
 	}
@@ -979,11 +979,13 @@ func (s *Store) SearchBooksForProfile(query string, profileID int64, limit int) 
 	rows, err := s.db.Query(bookSelectSQL(profileID)+`
 		WHERE LOWER(b.title) LIKE LOWER(?) ESCAPE '\'
 			OR LOWER(s.title) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(COALESCE(b.creator, '')) LIKE LOWER(?) ESCAPE '\'
 			OR LOWER(b.format) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(COALESCE(b.tags, '')) LIKE LOWER(?) ESCAPE '\'
 			OR LOWER(COALESCE(ps.tags, '')) LIKE LOWER(?) ESCAPE '\'
 			OR LOWER(COALESCE(ps.summary, '')) LIKE LOWER(?) ESCAPE '\'
 		ORDER BY COALESCE(ps.favorite, 0) DESC, rp.updated_at IS NULL, rp.updated_at DESC, b.updated_at DESC, b.title
-		LIMIT ?`, pattern, pattern, pattern, pattern, pattern, limit)
+		LIMIT ?`, pattern, pattern, pattern, pattern, pattern, pattern, pattern, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1082,8 +1084,12 @@ func bookListWhere(options domain.BookListOptions) (string, []any) {
 	}
 	query := strings.TrimSpace(options.Query)
 	if query != "" {
-		whereParts = append(whereParts, `LOWER(b.title) LIKE LOWER(?) ESCAPE '\'`)
-		args = append(args, "%"+escapeLike(query)+"%")
+		whereParts = append(whereParts, `(LOWER(b.title) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(s.title) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(COALESCE(b.creator, '')) LIKE LOWER(?) ESCAPE '\'
+			OR LOWER(COALESCE(b.tags, '')) LIKE LOWER(?) ESCAPE '\')`)
+		pattern := "%" + escapeLike(query) + "%"
+		args = append(args, pattern, pattern, pattern, pattern)
 	}
 	format := strings.ToLower(strings.TrimSpace(options.Format))
 	if format != "" && format != "all" {
@@ -2543,9 +2549,11 @@ func decodeTags(value string) []string {
 	}
 	parts := strings.Split(value, ",")
 	tags := make([]string, 0, len(parts))
+	seen := map[string]bool{}
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		if part != "" {
+		if part != "" && !seen[part] {
+			seen[part] = true
 			tags = append(tags, part)
 		}
 	}
@@ -2564,7 +2572,13 @@ func bookSelectSQL(profileID int64) string {
 	return `SELECT b.id, b.series_id, s.title, b.title, b.creator, b.description, b.format, b.page_count, b.cover_status, b.analyzed,
 			COALESCE(f.abs_path, ''), COALESCE(f.size, 0), COALESCE(f.mtime, ''), b.created_at, b.updated_at,
 			COALESCE(rp.page_index, 0), COALESCE(rp.progress_fraction, 0), COALESCE(rp.updated_at, ''),
-			COALESCE(ps.private_status, ''), COALESCE(ps.favorite, 0), COALESCE(ps.rating, 0), COALESCE(ps.tags, ''), COALESCE(ps.summary, '')
+			COALESCE(ps.private_status, ''), COALESCE(ps.favorite, 0), COALESCE(ps.rating, 0),
+			TRIM(COALESCE(b.tags, '') ||
+				CASE
+					WHEN COALESCE(b.tags, '') <> '' AND COALESCE(ps.tags, '') <> '' THEN ',' || COALESCE(ps.tags, '')
+					ELSE COALESCE(ps.tags, '')
+				END, ','),
+			COALESCE(ps.summary, '')
 		FROM books b
 		JOIN series s ON s.id = b.series_id
 		LEFT JOIN files f ON f.book_id = b.id

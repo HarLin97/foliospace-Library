@@ -2,6 +2,7 @@ package archive
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -15,6 +16,8 @@ import (
 	"foliospace-reader/internal/domain"
 	_ "golang.org/x/image/webp"
 )
+
+const embeddedMetadataMaxBytes int64 = 1024 * 1024
 
 var imageExts = map[string]string{
 	".jpg":  "image/jpeg",
@@ -41,6 +44,95 @@ func ListPages(path string) ([]domain.Page, error) {
 		pages = append(pages, domain.Page{Index: i, Name: file.Name})
 	}
 	return pages, nil
+}
+
+type EmbeddedComicMetadata struct {
+	Title       string
+	Creator     string
+	Description string
+	Tags        []string
+}
+
+func ReadEmbeddedComicMetadata(path string) (EmbeddedComicMetadata, bool, error) {
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		return EmbeddedComicMetadata{}, false, fmt.Errorf("open zip: %w", err)
+	}
+	defer reader.Close()
+
+	file := selectEmbeddedMetadataFile(reader.File)
+	if file == nil {
+		return EmbeddedComicMetadata{}, false, nil
+	}
+	if file.UncompressedSize64 > uint64(embeddedMetadataMaxBytes) {
+		return EmbeddedComicMetadata{}, false, fmt.Errorf("embedded metadata too large: %s", file.Name)
+	}
+	body, err := file.Open()
+	if err != nil {
+		return EmbeddedComicMetadata{}, false, fmt.Errorf("open embedded metadata: %w", err)
+	}
+	defer body.Close()
+	limited := io.LimitReader(body, embeddedMetadataMaxBytes+1)
+	var payload comicMetadataPayload
+	if err := json.NewDecoder(limited).Decode(&payload); err != nil {
+		return EmbeddedComicMetadata{}, false, fmt.Errorf("decode embedded metadata: %w", err)
+	}
+	metadata := EmbeddedComicMetadata{
+		Title:       strings.TrimSpace(payload.Name),
+		Creator:     strings.Join(cleanStringList(payload.Author), ", "),
+		Description: strings.TrimSpace(payload.Description),
+		Tags:        cleanStringList(payload.Tags),
+	}
+	if metadata.Title == "" && metadata.Creator == "" && metadata.Description == "" && len(metadata.Tags) == 0 {
+		return EmbeddedComicMetadata{}, false, nil
+	}
+	return metadata, true, nil
+}
+
+type comicMetadataPayload struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Author      []string `json:"author"`
+	Tags        []string `json:"tags"`
+}
+
+func selectEmbeddedMetadataFile(files []*zip.File) *zip.File {
+	var fallback *zip.File
+	for _, file := range files {
+		if file.FileInfo().IsDir() || isMacOSResourceForkEntry(file.Name) || strings.ToLower(filepath.Ext(file.Name)) != ".json" {
+			continue
+		}
+		if fallback == nil || pathDepth(file.Name) < pathDepth(fallback.Name) {
+			fallback = file
+		}
+		base := strings.ToLower(filepath.Base(normalizeEntryName(file.Name)))
+		if base == "metadata.json" || base == "info.json" || base == "comicinfo.json" || base == "元数据.json" {
+			return file
+		}
+	}
+	return fallback
+}
+
+func pathDepth(name string) int {
+	clean := strings.Trim(strings.ReplaceAll(name, "\\", "/"), "/")
+	if clean == "" {
+		return 0
+	}
+	return strings.Count(clean, "/")
+}
+
+func cleanStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func OpenPage(path string, pageIndex int) (io.ReadCloser, string, error) {

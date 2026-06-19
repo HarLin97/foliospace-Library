@@ -1253,10 +1253,10 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 		}
 		result := indexedBookResult{Book: book}
 		if previousErr == nil {
-			result.MetadataUpdated = previous.Title != metadata.Title || previous.Creator != metadata.Creator || previous.Description != metadata.Description
+			result.MetadataUpdated = previous.Title != metadata.Title || previous.Creator != metadata.Creator || previous.Description != metadata.Description || !sameStringList(previous.Tags, metadata.Tags)
 			result.Reclassified = previous.SeriesID != series.ID
 		}
-		book, err = s.store.UpdateBookMetadata(book.ID, metadata.Creator, metadata.Description)
+		book, err = s.store.UpdateBookMetadata(book.ID, metadata.Creator, metadata.Description, metadata.Tags)
 		if err != nil {
 			return indexedBookResult{}, err
 		}
@@ -1276,7 +1276,7 @@ func (s *Scanner) indexFileMetadata(library domain.Library, path string, info fs
 			return indexedBookResult{}, err
 		}
 	}
-	book, err = s.store.UpdateBookMetadata(book.ID, metadata.Creator, metadata.Description)
+	book, err = s.store.UpdateBookMetadata(book.ID, metadata.Creator, metadata.Description, metadata.Tags)
 	if err != nil {
 		return indexedBookResult{}, err
 	}
@@ -1343,12 +1343,28 @@ type bookMetadata struct {
 	Title       string
 	Creator     string
 	Description string
+	Tags        []string
 }
 
 func bookMetadataForPath(path string, ext string) (bookMetadata, error) {
 	fallback := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	if ext != ".epub" {
-		return bookMetadata{Title: fallback}, nil
+		metadata := bookMetadata{Title: fallback}
+		if ext == ".zip" || ext == ".cbz" {
+			embedded, ok, err := archive.ReadEmbeddedComicMetadata(path)
+			if err != nil {
+				return bookMetadata{}, err
+			}
+			if ok {
+				if embedded.Title != "" {
+					metadata.Title = embedded.Title
+				}
+				metadata.Creator = embedded.Creator
+				metadata.Description = embedded.Description
+				metadata.Tags = embedded.Tags
+			}
+		}
+		return metadata, nil
 	}
 	manifest, err := archive.ReadEPUBManifest(path)
 	if err != nil {
@@ -1363,6 +1379,18 @@ func bookMetadataForPath(path string, ext string) (bookMetadata, error) {
 		metadata.Title = title
 	}
 	return metadata, nil
+}
+
+func sameStringList(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Scanner) recordPathError(libraryID int64, jobID int64, path string, code domain.ErrorCode, message string) error {
