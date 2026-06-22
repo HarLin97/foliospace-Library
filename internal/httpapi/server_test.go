@@ -1877,6 +1877,43 @@ func itoa(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
 
+func TestStaticHTMLDisablesBrowserCache(t *testing.T) {
+	static := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<div id=\"root\"></div>"))
+	})
+	server := New(nil, static)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+
+	server.handleStatic(rr, req)
+
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestAccessTokenRequestSetsAuthCookie(t *testing.T) {
+	server := NewWithOptions(nil, nil, Options{APIToken: "secret"})
+	req := httptest.NewRequest(http.MethodGet, "/api/books/1/epub/resources/chapter.xhtml?access_token=secret", nil)
+	rr := httptest.NewRecorder()
+
+	if !server.authorizeAPI(rr, req) {
+		t.Fatal("authorizeAPI returned false")
+	}
+
+	resp := rr.Result()
+	defer resp.Body.Close()
+	cookies := resp.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if cookies[0].Name != authCookieName || cookies[0].Value != "secret" {
+		t.Fatalf("cookie = %s:%s, want %s:secret", cookies[0].Name, cookies[0].Value, authCookieName)
+	}
+}
+
 func makeZip(t *testing.T, path string, entries map[string]string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

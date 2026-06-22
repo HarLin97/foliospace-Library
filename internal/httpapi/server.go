@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -688,7 +691,13 @@ func (s *Server) authorizeClient(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) authorizeAPI(w http.ResponseWriter, r *http.Request) bool {
-	if !s.authEnabled() || s.requestAuthorized(r) {
+	if !s.authEnabled() {
+		return true
+	}
+	if token := s.requestToken(r); token != "" {
+		if r.URL.Query().Get("access_token") != "" {
+			s.setAuthCookie(w, token)
+		}
 		return true
 	}
 	w.Header().Set("WWW-Authenticate", `Bearer realm="FolioSpace Library"`)
@@ -1156,8 +1165,17 @@ func (s *Server) handleBookAction(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, manifest, err)
 		return
 	}
-	if strings.HasPrefix(tail, "epub/resources/") && r.Method == http.MethodGet {
-		s.streamEPUBResource(w, id, strings.TrimPrefix(tail, "epub/resources/"))
+	if strings.HasPrefix(tail, "epub/spine/") && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		index, err := strconv.Atoi(strings.TrimPrefix(tail, "epub/spine/"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		s.streamEPUBSpine(w, r, id, index)
+		return
+	}
+	if strings.HasPrefix(tail, "epub/resources/") && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		s.streamEPUBResource(w, r, id, strings.TrimPrefix(tail, "epub/resources/"))
 		return
 	}
 	if tail == "pages" && r.Method == http.MethodGet {
@@ -1449,7 +1467,7 @@ func (s *Server) handleThumbnailWorkerAction(w http.ResponseWriter, r *http.Requ
 	writeJSONOrError(w, status, err)
 }
 
-func (s *Server) streamEPUBResource(w http.ResponseWriter, bookID int64, resourcePath string) {
+func (s *Server) streamEPUBResource(w http.ResponseWriter, r *http.Request, bookID int64, resourcePath string) {
 	page, err := s.service.OpenEPUBResource(bookID, resourcePath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -1458,7 +1476,112 @@ func (s *Server) streamEPUBResource(w http.ResponseWriter, bookID int64, resourc
 	defer page.Body.Close()
 
 	w.Header().Set("Content-Type", page.ContentType)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", epubResourceCSP())
+	if r.Method == http.MethodHead {
+		return
+	}
 	_, _ = io.Copy(w, page.Body)
+}
+
+func (s *Server) streamEPUBSpine(w http.ResponseWriter, r *http.Request, bookID int64, index int) {
+	manifest, err := s.service.EPUBManifest(bookID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if index < 0 || index >= len(manifest.Spine) {
+		writeError(w, http.StatusNotFound, fmt.Errorf("epub spine index %d out of range", index))
+		return
+	}
+	href := manifest.Spine[index].Href
+	page, err := s.service.OpenEPUBResource(bookID, href)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer page.Body.Close()
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", epubResourceCSP())
+	if r.Method == http.MethodHead {
+		if strings.Contains(page.ContentType, "html") || strings.Contains(page.ContentType, "xhtml") {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		} else {
+			w.Header().Set("Content-Type", page.ContentType)
+		}
+		return
+	}
+
+	if !strings.Contains(page.ContentType, "html") && !strings.Contains(page.ContentType, "xhtml") {
+		w.Header().Set("Content-Type", page.ContentType)
+		_, _ = io.Copy(w, page.Body)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	body, err := io.ReadAll(page.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	_, _ = w.Write(injectEPUBBase(stripXMLDeclaration(body), epubResourceBaseURL(bookID, href)))
+}
+
+func epubResourceCSP() string {
+	return "default-src 'none'; base-uri 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; media-src 'self' data: blob:"
+}
+
+func epubResourceBaseURL(bookID int64, href string) string {
+	dir := ""
+	if index := strings.LastIndex(href, "/"); index >= 0 {
+		dir = href[:index+1]
+	}
+	return fmt.Sprintf("/api/books/%d/epub/resources/%s", bookID, encodeEPUBResourcePath(dir))
+}
+
+func encodeEPUBResourcePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		if part != "" {
+			parts[i] = url.PathEscape(part)
+		}
+	}
+	return strings.Join(parts, "/")
+}
+
+func injectEPUBBase(body []byte, baseURL string) []byte {
+	base := []byte(`<base href="` + html.EscapeString(baseURL) + `">`)
+	lower := strings.ToLower(string(body))
+	if index := strings.Index(lower, "<head"); index >= 0 {
+		if end := strings.Index(lower[index:], ">"); end >= 0 {
+			insertAt := index + end + 1
+			out := make([]byte, 0, len(body)+len(base))
+			out = append(out, body[:insertAt]...)
+			out = append(out, base...)
+			out = append(out, body[insertAt:]...)
+			return out
+		}
+	}
+	out := make([]byte, 0, len(body)+len(base)+13)
+	out = append(out, []byte("<head>")...)
+	out = append(out, base...)
+	out = append(out, []byte("</head>")...)
+	out = append(out, body...)
+	return out
+}
+
+func stripXMLDeclaration(body []byte) []byte {
+	trimmed := bytes.TrimLeft(body, "\ufeff \t\r\n")
+	if !bytes.HasPrefix(trimmed, []byte("<?xml")) {
+		return body
+	}
+	if end := bytes.Index(trimmed, []byte("?>")); end >= 0 {
+		return bytes.TrimLeft(trimmed[end+2:], " \t\r\n")
+	}
+	return body
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
@@ -1536,6 +1659,9 @@ func (s *Server) handleErrors(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	if s.static != nil {
+		if r.URL.Path == "/" || strings.HasSuffix(r.URL.Path, ".html") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		s.static.ServeHTTP(w, r)
 		return
 	}
