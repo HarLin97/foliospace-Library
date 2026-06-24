@@ -1730,6 +1730,12 @@ type FileIndex struct {
 	PageCount int
 }
 
+type ScanDirectoryIndex struct {
+	AbsPath    string
+	MTime      time.Time
+	HasSubdirs bool
+}
+
 func (s *Store) FileIndexByPath(absPath string) (FileIndex, error) {
 	row := s.db.QueryRow(`SELECT f.id, f.book_id, f.library_id, f.abs_path, f.rel_path, f.size, f.mtime, f.ext,
 				b.id, b.series_id, s.title, b.title, b.creator, b.description, b.format, b.analyzed, b.page_count
@@ -1963,6 +1969,28 @@ func (s *Store) UpsertScanDirectory(libraryID int64, absPath string, mtime time.
 		ON CONFLICT(library_id, abs_path) DO UPDATE SET mtime = excluded.mtime, has_subdirs = excluded.has_subdirs, updated_at = CURRENT_TIMESTAMP`,
 		libraryID, absPath, mtime.Format(time.RFC3339Nano), hasSubdirValue)
 	return err
+}
+
+func (s *Store) ListScanDirectoriesByLibrary(libraryID int64) (map[string]ScanDirectoryIndex, error) {
+	rows, err := s.db.Query(`SELECT abs_path, mtime, has_subdirs FROM scan_directories WHERE library_id = ?`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]ScanDirectoryIndex{}
+	for rows.Next() {
+		var item ScanDirectoryIndex
+		var mtime string
+		var hasSubdirs int
+		if err := rows.Scan(&item.AbsPath, &mtime, &hasSubdirs); err != nil {
+			return nil, err
+		}
+		item.MTime = parseTime(mtime)
+		item.HasSubdirs = hasSubdirs != 0
+		out[item.AbsPath] = item
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) EnqueueThumbnailJob(input domain.ThumbnailJobInput) (domain.ThumbnailJob, error) {

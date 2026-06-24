@@ -372,7 +372,24 @@ func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, s
 
 	dirStates := map[string]*scanDirState{}
 	fileIndexes, _ := s.store.ListFileIndexesByLibrary(library.ID)
+	directoryIndexes, _ := s.store.ListScanDirectoriesByLibrary(library.ID)
 	candidates := make([]recentScanCandidate, 0, limit)
+	visitedDirs := 0
+	visitedFiles := 0
+	prunedDirs := 0
+	lastProgressAt := time.Now()
+	lastProgressCount := 0
+	reportProgress := func(force bool, path string) {
+		totalVisited := visitedDirs + visitedFiles
+		if !force && totalVisited-lastProgressCount < 500 && time.Since(lastProgressAt) < 2*time.Second {
+			return
+		}
+		lastProgressAt = time.Now()
+		lastProgressCount = totalVisited
+		job.CurrentPath = path
+		_ = s.store.UpdateScanJob(job)
+		_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("recent scan progress: visited %d dirs, %d files, candidates %d", visitedDirs, visitedFiles, len(candidates)))
+	}
 	walkErr := s.walkScanScope(library, scope, dirStates, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := s.applyScanControl(&job); err != nil {
 			return err
@@ -389,12 +406,25 @@ func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, s
 			return nil
 		}
 		if entry.IsDir() {
+			visitedDirs++
+			if path != scope.rootPath {
+				if state := dirStates[path]; state != nil && !state.mtime.IsZero() {
+					if cached, ok := directoryIndexes[path]; ok && !cached.MTime.IsZero() && cached.MTime.Equal(state.mtime) {
+						prunedDirs++
+						reportProgress(false, path)
+						return filepath.SkipDir
+					}
+				}
+			}
+			reportProgress(false, path)
 			return nil
 		}
+		visitedFiles++
 
 		ext := strings.ToLower(filepath.Ext(path))
 		kind := classifyFileKind(library, path, ext)
 		if kind == "" {
+			reportProgress(false, path)
 			return nil
 		}
 		info, err := entry.Info()
@@ -408,11 +438,13 @@ func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, s
 		}
 		task := scanFileTask{path: path, info: info, ext: ext, kind: kind}
 		if !s.scanTaskNeedsIndex(library, task, fileIndexes) {
+			reportProgress(false, path)
 			return nil
 		}
 		candidates = append(candidates, recentScanCandidate{task: task, modTime: info.ModTime()})
 		job.CurrentPath = path
 		_ = s.store.UpdateScanJob(job)
+		reportProgress(false, path)
 		return nil
 	})
 	if errors.Is(walkErr, errScanPaused) || errors.Is(walkErr, errScanCancelled) {
@@ -425,6 +457,10 @@ func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, s
 		_ = s.store.UpdateScanJob(job)
 		_ = s.store.AddJobEvent(job.ID, "error", "recent scan failed: "+walkErr.Error())
 		return job, walkErr
+	}
+	reportProgress(true, "")
+	if prunedDirs > 0 {
+		_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("pruned unchanged directories: %d", prunedDirs))
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {

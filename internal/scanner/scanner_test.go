@@ -589,6 +589,109 @@ func TestScanLibraryRecentIndexesNewestChangedFiles(t *testing.T) {
 	}
 }
 
+func TestScanLibraryRecentReportsDiscoveryProgress(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 12; i++ {
+		makeZip(t, filepath.Join(root, "Series", "book-"+strconv.Itoa(i)+".cbz"), map[string]string{"001.jpg": "image"})
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).RunRecentScanJobPath(lib, mustStartScanJob(t, st, lib.ID), root, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.DiscoveredFiles != 3 || job.IndexedFiles != 3 {
+		t.Fatalf("job = %#v, want three recent files indexed", job)
+	}
+	events, err := st.ListJobEvents(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if strings.HasPrefix(event.Message, "recent scan progress: ") {
+			return
+		}
+	}
+	t.Fatalf("events = %#v, want recent scan progress event", events)
+}
+
+func TestScanLibraryRecentPrunesUnchangedCachedDirectories(t *testing.T) {
+	root := t.TempDir()
+	quietPath := filepath.Join(root, "Quiet", "old.cbz")
+	changedPath := filepath.Join(root, "Changed", "new.cbz")
+	makeZip(t, quietPath, map[string]string{"001.jpg": "image"})
+	makeZip(t, changedPath, map[string]string{"001.jpg": "image"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Test", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstJob.Status != "completed" || firstJob.IndexedFiles != 2 {
+		t.Fatalf("first job = %#v, want both files indexed", firstJob)
+	}
+
+	quietInfo, err := os.Stat(filepath.Join(root, "Quiet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeZip(t, filepath.Join(root, "Changed", "newer.cbz"), map[string]string{"001.jpg": "image"})
+
+	secondJob, err := New(st).RunRecentScanJobPath(lib, mustStartScanJob(t, st, lib.ID), root, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.Status != "completed" || secondJob.IndexedFiles != 1 {
+		t.Fatalf("second job = %#v, want only changed directory new file indexed", secondJob)
+	}
+	if secondJob.CurrentPath != "" {
+		t.Fatalf("current path = %q, want cleared after completion", secondJob.CurrentPath)
+	}
+	events, err := st.ListJobEvents(secondJob.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pruned bool
+	for _, event := range events {
+		if strings.Contains(event.Message, "pruned unchanged directories: ") {
+			pruned = true
+			break
+		}
+	}
+	if !pruned {
+		t.Fatalf("events = %#v, want unchanged directory prune event", events)
+	}
+	afterQuietInfo, err := os.Stat(filepath.Join(root, "Quiet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !afterQuietInfo.ModTime().Equal(quietInfo.ModTime()) {
+		t.Fatalf("quiet dir mtime changed during test setup")
+	}
+}
+
 func TestRunScanJobHonorsPauseRequest(t *testing.T) {
 	root := t.TempDir()
 	makeZip(t, filepath.Join(root, "Series A", "book1.cbz"), map[string]string{"001.jpg": "image"})
