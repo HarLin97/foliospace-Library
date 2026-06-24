@@ -30,7 +30,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.966"
+const serviceVersion = "0.968"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -1789,6 +1789,7 @@ type clientCollection struct {
 	PrimaryType     string `json:"primaryType"`
 	BookCount       int64  `json:"bookCount"`
 	CoverBookID     int64  `json:"coverBookId,omitempty"`
+	AddedAt         string `json:"addedAt"`
 	ThumbnailStatus string `json:"thumbnailStatus,omitempty"`
 	ThumbnailURL    string `json:"thumbnailUrl,omitempty"`
 	Favorite        bool   `json:"favorite"`
@@ -1965,6 +1966,7 @@ func clientCollections(collections []domain.Series) []clientCollection {
 			PrimaryType:    collection.PrimaryType,
 			BookCount:      collection.BookCount,
 			CoverBookID:    collection.CoverBookID,
+			AddedAt:        collection.AddedAt.Format(time.RFC3339),
 			Favorite:       collection.Favorite,
 			Liked:          collection.Liked,
 		}

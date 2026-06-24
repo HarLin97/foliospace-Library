@@ -35,6 +35,7 @@ export type Series = {
   primaryType: "book" | "comic" | "game" | "video";
   bookCount: number;
   coverBookId?: number;
+  addedAt: string;
   thumbnailStatus?: string;
   thumbnailUrl?: string;
   favorite: boolean;
@@ -208,6 +209,14 @@ export type BookListPage = {
   hasMore: boolean;
 };
 
+export type CollectionListPage = {
+  items: Series[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
 export type GameListPage = {
   items: GameAsset[];
   total: number;
@@ -235,6 +244,11 @@ export type BookListOptions = {
   offset?: number;
   q?: string;
   sort?: string;
+  direction?: string;
+};
+
+export type CollectionListOptions = BookListOptions & {
+  primaryType?: string;
 };
 
 export type GameListOptions = BookListOptions & {
@@ -558,6 +572,16 @@ export const api = {
   cancelThumbnailJobs: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/cancel", { method: "POST" }),
   cleanupThumbnailOrphans: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/cleanup-orphans", { method: "POST" }),
   series: () => request<Series[]>("/api/collections"),
+  collectionsPage: (options: CollectionListOptions = {}) => {
+    const params = new URLSearchParams();
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.offset) params.set("offset", String(options.offset));
+    if (options.q) params.set("q", options.q);
+    if (options.primaryType) params.set("primaryType", options.primaryType);
+    if (options.sort) params.set("sort", options.sort);
+    if (options.direction) params.set("direction", options.direction);
+    return request<CollectionListPage>(`/api/collections?${params.toString()}`);
+  },
   books: (seriesId: number) => request<Book[]>(`/api/collections/${seriesId}/volumes`),
   collectionAssets: (seriesId: number) => request<CollectionAssets>(`/api/collections/${seriesId}/assets`),
   collectionPrivateState: (seriesId: number, state: CollectionPrivateState) =>
@@ -571,6 +595,7 @@ export const api = {
     if (options.offset) params.set("offset", String(options.offset));
     if (options.q) params.set("q", options.q);
     if (options.sort) params.set("sort", options.sort);
+    if (options.direction) params.set("direction", options.direction);
     return request<BookListPage>(`/api/collections/${seriesId}/volumes?${params.toString()}`);
   },
   continueReading: () => request<Book[]>("/api/books/continue-reading?limit=12"),
@@ -585,6 +610,7 @@ export const api = {
     if (options.platform) params.set("platform", options.platform);
     if (options.format) params.set("format", options.format);
     if (options.sort) params.set("sort", options.sort);
+    if (options.direction) params.set("direction", options.direction);
     return request<GameListPage>(`/api/client/games?${params.toString()}`);
   },
   clientVideos: (options: VideoListOptions = {}) => {
@@ -594,6 +620,7 @@ export const api = {
     if (options.q) params.set("q", options.q);
     if (options.format) params.set("format", options.format);
     if (options.sort) params.set("sort", options.sort);
+    if (options.direction) params.set("direction", options.direction);
     return request<VideoListPage>(`/api/client/videos?${params.toString()}`);
   },
   videoTranscodeStatus: (videoId: number) => request<VideoTranscodeStatus>(`/api/client/videos/${videoId}/transcode/status`),

@@ -29,6 +29,10 @@ const PDF_WEBTOON_PLACEHOLDER_HEIGHT = 1600;
 const PDF_WEBTOON_MAX_CANVAS_PIXELS = 6_000_000;
 const BOOTSTRAP_TIMEOUT_MS = 12_000;
 type BookSort = "title" | "recently_added" | "last_read" | "progress" | "unread";
+type CollectionSort = "title" | "recently_added" | "count" | "type";
+type SortDirection = "asc" | "desc";
+type GameCatalogSort = "platform" | "title" | "recently_added";
+type VideoCatalogSort = "title" | "recently_added";
 type Locale = "zh" | "zht" | "en" | "ja" | "ko";
 type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
 type ReaderImageSize = { width: number; height: number };
@@ -80,6 +84,10 @@ export function App() {
   const [displayedPageIndex, setDisplayedPageIndex] = useState(0);
   const [query, setQuery] = useState("");
   const [bookSort, setBookSort] = useState<BookSort>("title");
+  const [collectionSort, setCollectionSort] = useState<CollectionSort>("title");
+  const [collectionSortDirection, setCollectionSortDirection] = useState<SortDirection>("asc");
+  const [gameCatalogSort, setGameCatalogSort] = useState<GameCatalogSort>("platform");
+  const [videoCatalogSort, setVideoCatalogSort] = useState<VideoCatalogSort>("title");
   const [status, setStatus] = useState("Ready");
   const [nowTick, setNowTick] = useState(Date.now());
   const [authChecked, setAuthChecked] = useState(false);
@@ -235,7 +243,7 @@ export function App() {
     if (gameCatalogLoading) return;
     setGameCatalogLoading(true);
     try {
-      const page = await api.clientGames({ limit: catalogPageSize, offset, sort: "platform" });
+      const page = await api.clientGames({ limit: catalogPageSize, offset, sort: gameCatalogSort });
       const items = arrayOrEmpty(page.items);
       setGameCatalog((current) => reset ? items : mergeByID(current, items));
       setGameCatalogTotal(page.total);
@@ -257,7 +265,7 @@ export function App() {
     if (videoCatalogLoading) return;
     setVideoCatalogLoading(true);
     try {
-      const page = await api.clientVideos({ limit: catalogPageSize, offset, sort: "title" });
+      const page = await api.clientVideos({ limit: catalogPageSize, offset, sort: videoCatalogSort });
       const items = arrayOrEmpty(page.items);
       setVideoCatalog((current) => reset ? items : mergeByID(current, items));
       setVideoCatalogTotal(page.total);
@@ -267,6 +275,61 @@ export function App() {
     } finally {
       setVideoCatalogLoading(false);
     }
+  }
+
+  function changeGameCatalogSort(nextSort: GameCatalogSort) {
+    setGameCatalogSort(nextSort);
+    setGameCatalog([]);
+    setGameCatalogTotal(0);
+    setGameCatalogHasMore(false);
+    setTimeout(() => {
+      void loadGameCatalogPageForSort(nextSort);
+    }, 0);
+  }
+
+  async function loadGameCatalogPageForSort(sort: GameCatalogSort) {
+    setGameCatalogLoading(true);
+    try {
+      const page = await api.clientGames({ limit: catalogPageSize, offset: 0, sort });
+      const items = arrayOrEmpty(page.items);
+      setGameCatalog(items);
+      setGameCatalogTotal(page.total);
+      setGameCatalogHasMore(page.hasMore);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load games");
+    } finally {
+      setGameCatalogLoading(false);
+    }
+  }
+
+  function changeVideoCatalogSort(nextSort: VideoCatalogSort) {
+    setVideoCatalogSort(nextSort);
+    setVideoCatalog([]);
+    setVideoCatalogTotal(0);
+    setVideoCatalogHasMore(false);
+    setTimeout(() => {
+      void loadVideoCatalogPageForSort(nextSort);
+    }, 0);
+  }
+
+  async function loadVideoCatalogPageForSort(sort: VideoCatalogSort) {
+    setVideoCatalogLoading(true);
+    try {
+      const page = await api.clientVideos({ limit: catalogPageSize, offset: 0, sort });
+      const items = arrayOrEmpty(page.items);
+      setVideoCatalog(items);
+      setVideoCatalogTotal(page.total);
+      setVideoCatalogHasMore(page.hasMore);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load videos");
+    } finally {
+      setVideoCatalogLoading(false);
+    }
+  }
+
+  function changeCollectionSort(nextSort: CollectionSort) {
+    setCollectionSort(nextSort);
+    setCollectionSortDirection(nextSort === "recently_added" || nextSort === "count" ? "desc" : "asc");
   }
 
   useEffect(() => {
@@ -1670,18 +1733,23 @@ export function App() {
     if (!value) return series;
     return series.filter((item) => item.title.toLowerCase().includes(value));
   }, [query, series]);
+  const sortedSeries = useMemo(() => {
+    return [...filteredSeries].sort((left, right) => compareCollections(left, right, collectionSort, collectionSortDirection));
+  }, [collectionSort, collectionSortDirection, filteredSeries]);
   const collectionSections = useMemo(() => {
     const sections = [
       { key: "comic", title: t.comicCollections, items: [] as Series[] },
       { key: "book", title: t.bookCollections, items: [] as Series[] },
+      { key: "game", title: t.gameCollections, items: [] as Series[] },
+      { key: "video", title: t.videoCollections, items: [] as Series[] },
     ];
-    for (const item of filteredSeries) {
+    for (const item of sortedSeries) {
       const kind = collectionKind(item, libraries);
       const section = sections.find((candidate) => candidate.key === kind);
       section?.items.push(item);
     }
     return sections.filter((section) => section.items.length > 0);
-  }, [filteredSeries, libraries, t]);
+  }, [sortedSeries, libraries, t]);
   const favoriteCollections = useMemo(() => series.filter((item) => item.favorite), [series]);
   const likedCollections = useMemo(() => series.filter((item) => item.liked), [series]);
   const favoritePageItemCount = favoriteCollections.length + likedCollections.length + favoriteBooks.length;
@@ -2040,7 +2108,27 @@ export function App() {
             )}
 
             <section className="collectionPanel panel">
-              <h1>{t.collections}</h1>
+              <div className="collectionPanelHeader">
+                <div>
+                  <h1>{t.collections}</h1>
+                  <small>{t.catalogLoadedCount(filteredSeries.length, series.length)}</small>
+                </div>
+                <div className="collectionSortTools">
+                  <label>
+                    <span>{t.sort}</span>
+                    <select value={collectionSort} onChange={(event) => changeCollectionSort(event.target.value as CollectionSort)}>
+                      <option value="title">{t.sortTitle}</option>
+                      <option value="recently_added">{t.sortRecentlyAdded}</option>
+                      <option value="count">{t.sortCount}</option>
+                      <option value="type">{t.sortType}</option>
+                    </select>
+                  </label>
+                  <select value={collectionSortDirection} onChange={(event) => setCollectionSortDirection(event.target.value as SortDirection)} aria-label={t.sortDirection}>
+                    <option value="asc">{t.sortAscending}</option>
+                    <option value="desc">{t.sortDescending}</option>
+                  </select>
+                </div>
+              </div>
               <div
                 className="collectionSections"
                 ref={collectionSectionsRef}
@@ -2218,9 +2306,19 @@ export function App() {
             title={t.gameShelf}
             subtitle={t.gameCatalogSubtitle}
             countLabel={gameCatalogLoading && gameCatalog.length === 0 ? t.loadingGames : t.catalogLoadedCount(gameCatalog.length, gameCatalogTotal)}
+            tools={(
+              <label className="catalogSortControl">
+                <span>{t.sort}</span>
+                <select value={gameCatalogSort} onChange={(event) => changeGameCatalogSort(event.target.value as GameCatalogSort)}>
+                  <option value="platform">{t.sortPlatform}</option>
+                  <option value="title">{t.sortTitle}</option>
+                  <option value="recently_added">{t.sortRecentlyAdded}</option>
+                </select>
+              </label>
+            )}
           >
             <div className="catalogGrid games">
-              {[...gameCatalog].sort(compareGamesByPlatform).map((game) => (
+              {gameCatalog.map((game) => (
                 <GameTile key={`catalog-game-${game.id}`} game={game} meta={gameMeta(game, t)} />
               ))}
               {gameCatalogHasMore && (
@@ -2240,6 +2338,13 @@ export function App() {
                 <small>{videoCatalogLoading && videoCatalog.length === 0 ? t.loadingVideos : t.catalogLoadedCount(videoCatalog.length, videoCatalogTotal)}</small>
                 <span>{t.videoCoverHint}</span>
               </div>
+              <label className="catalogSortControl">
+                <span>{t.sort}</span>
+                <select value={videoCatalogSort} onChange={(event) => changeVideoCatalogSort(event.target.value as VideoCatalogSort)}>
+                  <option value="title">{t.sortTitle}</option>
+                  <option value="recently_added">{t.sortRecentlyAdded}</option>
+                </select>
+              </label>
             </div>
             {selectedVideo && (
               <div className="inlineVideoPlayer">
@@ -2276,7 +2381,7 @@ export function App() {
               </div>
             )}
             <div className="catalogGrid videos">
-              {[...videoCatalog].sort(compareVideosByTitle).map((video) => (
+              {videoCatalog.map((video) => (
                 <VideoTile
                   className={selectedVideo?.id === video.id ? "book selected" : "book"}
                   key={`catalog-video-${video.id}`}
@@ -3507,11 +3612,13 @@ function CatalogPage({
   title,
   subtitle,
   countLabel,
+  tools,
   children,
 }: {
   title: string;
   subtitle: string;
   countLabel: string;
+  tools?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -3521,7 +3628,10 @@ function CatalogPage({
           <h1>{title}</h1>
           <small>{subtitle}</small>
         </div>
-        <span>{countLabel}</span>
+        <div className="catalogHeaderActions">
+          <span>{countLabel}</span>
+          {tools}
+        </div>
       </div>
       {children}
     </section>
@@ -4130,6 +4240,20 @@ function compareBooks(left: Book, right: Book, sort: BookSort) {
   return left.title.localeCompare(right.title);
 }
 
+function compareCollections(left: Series, right: Series, sort: CollectionSort, direction: SortDirection) {
+  const directionMultiplier = direction === "desc" ? -1 : 1;
+  if (sort === "recently_added") {
+    return (compareDatesAsc(left.addedAt, right.addedAt) || left.title.localeCompare(right.title)) * directionMultiplier;
+  }
+  if (sort === "count") {
+    return ((left.bookCount - right.bookCount) || left.title.localeCompare(right.title)) * directionMultiplier;
+  }
+  if (sort === "type") {
+    return (left.primaryType.localeCompare(right.primaryType) || left.title.localeCompare(right.title)) * directionMultiplier;
+  }
+  return left.title.localeCompare(right.title) * directionMultiplier;
+}
+
 function readRank(book: Book) {
   if (book.progressFraction <= 0 && book.currentPage <= 0) return 0;
   if (book.progressFraction >= 0.98) return 2;
@@ -4138,6 +4262,10 @@ function readRank(book: Book) {
 
 function compareDatesDesc(left: string, right: string) {
   return dateValue(right) - dateValue(left);
+}
+
+function compareDatesAsc(left: string, right: string) {
+  return dateValue(left) - dateValue(right);
 }
 
 function dateValue(value: string) {
@@ -4297,6 +4425,12 @@ const translations = {
     sortLastRead: "最近阅读",
     sortProgress: "进度",
     sortUnread: "未读优先",
+    sortCount: "数量",
+    sortType: "类型",
+    sortPlatform: "机种",
+    sortDirection: "排序方向",
+    sortAscending: "升序",
+    sortDescending: "降序",
     singleVolume: "单行本",
     pageCount: (count: number) => `${count} 页`,
     notAnalyzed: "未分析",
@@ -4508,6 +4642,12 @@ const translations = {
     sortLastRead: "最近閱讀",
     sortProgress: "進度",
     sortUnread: "未讀優先",
+    sortCount: "數量",
+    sortType: "類型",
+    sortPlatform: "機種",
+    sortDirection: "排序方向",
+    sortAscending: "升序",
+    sortDescending: "降序",
     singleVolume: "單行本",
     pageCount: (count: number) => `${count} 頁`,
     notAnalyzed: "未分析",
@@ -4719,6 +4859,12 @@ const translations = {
     sortLastRead: "Last read",
     sortProgress: "Progress",
     sortUnread: "Unread first",
+    sortCount: "Count",
+    sortType: "Type",
+    sortPlatform: "Platform",
+    sortDirection: "Sort direction",
+    sortAscending: "Ascending",
+    sortDescending: "Descending",
     singleVolume: "Single volume",
     pageCount: (count: number) => `${count} pages`,
     notAnalyzed: "Not analyzed",
@@ -4930,6 +5076,12 @@ const translations = {
     sortLastRead: "最近読んだ",
     sortProgress: "進捗",
     sortUnread: "未読優先",
+    sortCount: "件数",
+    sortType: "種類",
+    sortPlatform: "機種",
+    sortDirection: "並び順",
+    sortAscending: "昇順",
+    sortDescending: "降順",
     singleVolume: "単巻",
     pageCount: (count: number) => `${count} ページ`,
     notAnalyzed: "未解析",
@@ -5141,6 +5293,12 @@ const translations = {
     sortLastRead: "최근 읽음",
     sortProgress: "진행률",
     sortUnread: "미독 우선",
+    sortCount: "수량",
+    sortType: "유형",
+    sortPlatform: "플랫폼",
+    sortDirection: "정렬 방향",
+    sortAscending: "오름차순",
+    sortDescending: "내림차순",
     singleVolume: "단행본",
     pageCount: (count: number) => `${count}페이지`,
     notAnalyzed: "분석 안 됨",

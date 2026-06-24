@@ -49,16 +49,17 @@ type Profile struct {
 }
 
 type Series struct {
-	ID             int64  `json:"id"`
-	LibraryID      int64  `json:"libraryId"`
-	Title          string `json:"title"`
-	DirectoryPath  string `json:"directoryPath"`
-	CollectionType string `json:"collectionType"`
-	PrimaryType    string `json:"primaryType"`
-	BookCount      int64  `json:"bookCount"`
-	CoverBookID    int64  `json:"coverBookId,omitempty"`
-	Favorite       bool   `json:"favorite"`
-	Liked          bool   `json:"liked"`
+	ID             int64     `json:"id"`
+	LibraryID      int64     `json:"libraryId"`
+	Title          string    `json:"title"`
+	DirectoryPath  string    `json:"directoryPath"`
+	CollectionType string    `json:"collectionType"`
+	PrimaryType    string    `json:"primaryType"`
+	BookCount      int64     `json:"bookCount"`
+	CoverBookID    int64     `json:"coverBookId,omitempty"`
+	AddedAt        time.Time `json:"addedAt"`
+	Favorite       bool      `json:"favorite"`
+	Liked          bool      `json:"liked"`
 }
 
 type CollectionListOptions struct {

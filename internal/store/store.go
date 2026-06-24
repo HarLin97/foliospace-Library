@@ -252,7 +252,8 @@ func (s *Store) UpsertSeries(libraryID int64, title string, directoryPath string
 	row := s.db.QueryRow(`SELECT s.id, s.library_id, s.title, s.directory_path, s.collection_type,
 			CASE WHEN l.asset_type IN ('book', 'comic', 'game', 'video') THEN l.asset_type ELSE 'comic' END,
 			0,
-			0
+			0,
+			s.created_at
 		FROM series s
 		JOIN libraries l ON l.id = s.library_id
 		WHERE s.library_id = ? AND s.title = ?`, libraryID, title)
@@ -279,12 +280,13 @@ func (s *Store) SeriesByIDForProfile(id int64, profileID int64) (domain.Series, 
 				WHERE b2.series_id = s.id
 				ORDER BY b2.title, b2.id
 				LIMIT 1
-			), 0)
+			), 0),
+			COALESCE(MAX(b.created_at), s.created_at)
 		FROM series s
 		JOIN libraries l ON l.id = s.library_id
 		LEFT JOIN books b ON b.series_id = s.id
 		WHERE s.id = ?
-		GROUP BY s.id, s.library_id, s.title, l.asset_type`, id)
+		GROUP BY s.id, s.library_id, s.title, s.created_at, l.asset_type`, id)
 	series, err := scanSeries(row)
 	if err != nil {
 		return domain.Series{}, err
@@ -325,7 +327,7 @@ func (s *Store) ListSeriesPageForProfile(profileID int64, options domain.Collect
 	}
 	queryArgs := append([]any(nil), args...)
 	queryArgs = append(queryArgs, options.Limit, options.Offset)
-	rows, err := s.db.Query(`SELECT c.id, c.library_id, c.title, c.directory_path, c.collection_type, c.primary_type, c.book_count, c.cover_book_id
+	rows, err := s.db.Query(`SELECT c.id, c.library_id, c.title, c.directory_path, c.collection_type, c.primary_type, c.book_count, c.cover_book_id, c.created_at
 		FROM (`+collectionListBaseSQL()+`) c`+where+collectionListOrderBy(options.Sort, options.Direction)+`
 		LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
@@ -357,7 +359,7 @@ func (s *Store) ListSeriesPageForProfile(profileID int64, options domain.Collect
 }
 
 func (s *Store) listSeriesForProfile(profileID int64, limit int) ([]domain.Series, error) {
-	query := `SELECT c.id, c.library_id, c.title, c.directory_path, c.collection_type, c.primary_type, c.book_count, c.cover_book_id
+	query := `SELECT c.id, c.library_id, c.title, c.directory_path, c.collection_type, c.primary_type, c.book_count, c.cover_book_id, c.created_at
 		FROM (` + collectionListBaseSQL() + `) c
 		ORDER BY c.title`
 	args := []any{}
@@ -406,12 +408,12 @@ func collectionListBaseSQL() string {
 				ORDER BY b2.title, b2.id
 				LIMIT 1
 			), 0) AS cover_book_id,
-			MAX(b.created_at) AS created_at
+			COALESCE(MAX(b.created_at), s.created_at) AS created_at
 		FROM series s
 		JOIN libraries l ON l.id = s.library_id
 		LEFT JOIN books b ON b.series_id = s.id
 		LEFT JOIN files f ON f.book_id = b.id
-		GROUP BY s.id, s.library_id, s.title, l.asset_type`
+		GROUP BY s.id, s.library_id, s.title, s.created_at, l.asset_type`
 }
 
 func normalizeCollectionListLimit(limit int) int {
@@ -451,6 +453,8 @@ func collectionListOrderBy(sort string, direction string) string {
 		return " ORDER BY c.created_at " + recentDir + ", c.title ASC, c.id ASC"
 	case "book_count", "count":
 		return " ORDER BY c.book_count " + normalizedSortDirection(direction, "DESC") + ", c.title ASC, c.id ASC"
+	case "type", "primary_type":
+		return " ORDER BY c.primary_type " + titleDir + ", c.title ASC, c.id ASC"
 	default:
 		return " ORDER BY c.title " + titleDir + ", c.id " + titleDir
 	}
@@ -2413,6 +2417,7 @@ func normalizeLibraryAssetType(value string) string {
 
 func scanSeries(row scanner) (domain.Series, error) {
 	var series domain.Series
+	var addedAt string
 	if err := row.Scan(
 		&series.ID,
 		&series.LibraryID,
@@ -2422,10 +2427,12 @@ func scanSeries(row scanner) (domain.Series, error) {
 		&series.PrimaryType,
 		&series.BookCount,
 		&series.CoverBookID,
+		&addedAt,
 	); err != nil {
 		return series, err
 	}
 	series.PrimaryType = normalizeCollectionPrimaryType(series.PrimaryType)
+	series.AddedAt = parseTime(addedAt)
 	return series, nil
 }
 

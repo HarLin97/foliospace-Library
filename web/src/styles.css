@@ -623,6 +623,49 @@ button:hover {
   max-height: min(760px, calc(100vh - 120px));
 }
 
+.collectionPanelHeader,
+.catalogHeaderActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.collectionPanelHeader > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.collectionPanelHeader small {
+  color: #647177;
+  font-size: 13px;
+}
+
+.collectionSortTools,
+.catalogSortControl {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.collectionSortTools label,
+.catalogSortControl {
+  color: #526269;
+  font-size: 13px;
+}
+
+.collectionSortTools select,
+.catalogSortControl select {
+  min-height: 34px;
+  border: 1px solid #ccd4d8;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1e2528;
+  padding: 0 8px;
+}
+
 .collectionSections {
   display: grid;
   gap: 18px;

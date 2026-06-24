@@ -4,6 +4,16 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.968 Release: Sortable Library Views
+
+Release `0.968` improves large-library browsing in the web UI and keeps the Client API version aligned.
+
+- Collection pages can now sort by title, recently added time, item count, or primary type, with ascending/descending direction controls.
+- Game and video catalog pages now expose simple sort controls for title, recently added time, and platform where applicable.
+- Collection API responses include `addedAt`, and paginated `/api/collections` supports type-based sorting for client integrations.
+- Game cover lookup continues to support local `media/<rom-name>/boxFront.*` artwork beside ROM files, so curated arcade/console covers can be displayed without remote scraping.
+- Service and MCP metadata now report version `0.968`.
+
 ## 0.966 Release: Embedded Comic Metadata
 
 Release `0.966` adds embedded JSON metadata support for comic ZIP/CBZ archives.
@@ -57,7 +67,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.966
+docker pull funland/foliospace-library:0.968
 ```
 
 ```bash
@@ -67,7 +77,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.966
+  funland/foliospace-library:0.968
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.
