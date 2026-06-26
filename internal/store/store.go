@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -132,9 +133,15 @@ func (s *Store) CreateLibrary(name string, rootPath string) (domain.Library, err
 }
 
 func (s *Store) CreateLibraryWithType(name string, rootPath string, assetType string) (domain.Library, error) {
+	return s.CreateLibraryWithOptions(name, rootPath, assetType, nil)
+}
+
+func (s *Store) CreateLibraryWithOptions(name string, rootPath string, assetType string, excludePatterns []string) (domain.Library, error) {
 	assetType = normalizeLibraryAssetType(assetType)
-	_, err := s.db.Exec(`INSERT INTO libraries(name, root_path, asset_type) VALUES(?, ?, ?)
-		ON CONFLICT(root_path) DO UPDATE SET name = excluded.name, asset_type = excluded.asset_type, updated_at = CURRENT_TIMESTAMP`, name, rootPath, assetType)
+	excludeJSON := encodeStringList(normalizeLibraryExcludePatterns(excludePatterns))
+	_, err := s.db.Exec(`INSERT INTO libraries(name, root_path, asset_type, exclude_patterns) VALUES(?, ?, ?, ?)
+		ON CONFLICT(root_path) DO UPDATE SET name = excluded.name, asset_type = excluded.asset_type, exclude_patterns = excluded.exclude_patterns, updated_at = CURRENT_TIMESTAMP`,
+		name, rootPath, assetType, excludeJSON)
 	if err != nil {
 		return domain.Library{}, err
 	}
@@ -142,17 +149,17 @@ func (s *Store) CreateLibraryWithType(name string, rootPath string, assetType st
 }
 
 func (s *Store) LibraryByID(id int64) (domain.Library, error) {
-	row := s.db.QueryRow(`SELECT id, name, root_path, asset_type, created_at, updated_at FROM libraries WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, name, root_path, asset_type, exclude_patterns, created_at, updated_at FROM libraries WHERE id = ?`, id)
 	return scanLibrary(row)
 }
 
 func (s *Store) LibraryByRoot(rootPath string) (domain.Library, error) {
-	row := s.db.QueryRow(`SELECT id, name, root_path, asset_type, created_at, updated_at FROM libraries WHERE root_path = ?`, rootPath)
+	row := s.db.QueryRow(`SELECT id, name, root_path, asset_type, exclude_patterns, created_at, updated_at FROM libraries WHERE root_path = ?`, rootPath)
 	return scanLibrary(row)
 }
 
 func (s *Store) ListLibraries() ([]domain.Library, error) {
-	rows, err := s.db.Query(`SELECT id, name, root_path, asset_type, created_at, updated_at FROM libraries ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id, name, root_path, asset_type, exclude_patterns, created_at, updated_at FROM libraries ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +174,22 @@ func (s *Store) ListLibraries() ([]domain.Library, error) {
 		out = append(out, lib)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) UpdateLibraryExcludePatterns(id int64, excludePatterns []string) (domain.Library, error) {
+	result, err := s.db.Exec(`UPDATE libraries SET exclude_patterns = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		encodeStringList(normalizeLibraryExcludePatterns(excludePatterns)), id)
+	if err != nil {
+		return domain.Library{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return domain.Library{}, err
+	}
+	if affected == 0 {
+		return domain.Library{}, sql.ErrNoRows
+	}
+	return s.LibraryByID(id)
 }
 
 func (s *Store) DeleteLibrary(id int64) error {
@@ -2389,12 +2412,14 @@ type scanner interface {
 
 func scanLibrary(row scanner) (domain.Library, error) {
 	var lib domain.Library
+	var excludePatterns string
 	var created string
 	var updated string
-	if err := row.Scan(&lib.ID, &lib.Name, &lib.RootPath, &lib.AssetType, &created, &updated); err != nil {
+	if err := row.Scan(&lib.ID, &lib.Name, &lib.RootPath, &lib.AssetType, &excludePatterns, &created, &updated); err != nil {
 		return lib, err
 	}
 	lib.AssetType = normalizeLibraryAssetType(lib.AssetType)
+	lib.ExcludePatterns = normalizeLibraryExcludePatterns(decodeStringList(excludePatterns))
 	lib.CreatedAt = parseTime(created)
 	lib.UpdatedAt = parseTime(updated)
 	return lib, nil
@@ -2441,6 +2466,55 @@ func normalizeLibraryAssetType(value string) string {
 	default:
 		return "mixed"
 	}
+}
+
+func normalizeLibraryExcludePatterns(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(filepathSlash(value))
+		if value == "" || value == "." || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func filepathSlash(value string) string {
+	return strings.Trim(strings.ReplaceAll(value, "\\", "/"), "/")
+}
+
+func encodeStringList(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func decodeStringList(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(value), &out); err == nil {
+		return out
+	}
+	parts := strings.Split(value, ",")
+	out = make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func scanSeries(row scanner) (domain.Series, error) {

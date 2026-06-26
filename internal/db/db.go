@@ -37,6 +37,7 @@ func Migrate(conn *sql.DB) error {
 			name TEXT NOT NULL,
 			root_path TEXT NOT NULL UNIQUE,
 			asset_type TEXT NOT NULL DEFAULT 'mixed',
+			exclude_patterns TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -282,6 +283,9 @@ func Migrate(conn *sql.DB) error {
 		if _, err := conn.Exec(stmt); err != nil {
 			return fmt.Errorf("migrate sqlite: %w", err)
 		}
+	}
+	if err := addColumnIfMissing(conn, "libraries", "exclude_patterns", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
 	}
 	if err := addColumnIfMissing(conn, "scan_jobs", "current_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err

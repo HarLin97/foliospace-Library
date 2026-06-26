@@ -19,12 +19,13 @@ const (
 )
 
 type Library struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	RootPath  string    `json:"rootPath"`
-	AssetType string    `json:"assetType"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID              int64     `json:"id"`
+	Name            string    `json:"name"`
+	RootPath        string    `json:"rootPath"`
+	AssetType       string    `json:"assetType"`
+	ExcludePatterns []string  `json:"excludePatterns"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 type DirectoryEntry struct {

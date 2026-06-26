@@ -161,6 +161,93 @@ func TestScanLibraryUsesEPUBMetadataForTitleCollectionAndBookDetails(t *testing.
 	}
 }
 
+func TestScanLibraryUsesPDFMetadataForTitleCollectionAndBookDetails(t *testing.T) {
+	root := t.TempDir()
+	pdfPath := filepath.Join(root, "Manuals", "ugly-file-name.pdf")
+	if err := os.MkdirAll(filepath.Dir(pdfPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pdfPath, samplePDFWithInfo("PDF Metadata Title", "PDF Author", "PDF description."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Books", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.IndexedFiles != 1 {
+		t.Fatalf("job = %#v, want one indexed pdf", job)
+	}
+
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].Title != "PDF Author" {
+		t.Fatalf("series = %#v, want PDF author collection", series)
+	}
+	books, err := st.ListBooks(series[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 || books[0].Title != "PDF Metadata Title" || books[0].Creator != "PDF Author" || books[0].Description != "PDF description." {
+		t.Fatalf("books = %#v, want PDF metadata details", books)
+	}
+}
+
+func TestScanLibrarySkipsThumbnailAndMediaDirectories(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "Series", "book.cbz"), map[string]string{"001.jpg": "image"})
+	makeZip(t, filepath.Join(root, "Series", "thumbnails", "thumb.cbz"), map[string]string{"001.jpg": "image"})
+	makeZip(t, filepath.Join(root, "Series", "media", "cover.cbz"), map[string]string{"001.jpg": "image"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.IndexedFiles != 1 {
+		t.Fatalf("job = %#v, want only real book indexed", job)
+	}
+	series, err := st.ListSeries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].Title != "Series" {
+		t.Fatalf("series = %#v, want only Series collection", series)
+	}
+	books, err := st.ListBooks(series[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(books) != 1 || books[0].Title != "book" {
+		t.Fatalf("books = %#v, want only main archive", books)
+	}
+}
+
 func TestScanLibraryUsesEmbeddedComicJSONMetadata(t *testing.T) {
 	root := t.TempDir()
 	makeZip(t, filepath.Join(root, "Comics", "ugly-file-name.cbz"), map[string]string{
@@ -1273,6 +1360,23 @@ func mustStartScanJob(t *testing.T, st *store.Store, libraryID int64) domain.Sca
 
 func sampleEPUBEntriesWithTitle(title string) map[string]string {
 	return sampleEPUBEntriesWithMetadata(title, "", "")
+}
+
+func samplePDFWithInfo(title string, author string, subject string) []byte {
+	return []byte(`%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 0 >>
+endobj
+3 0 obj
+<< /Title (` + title + `) /Author (` + author + `) /Subject (` + subject + `) >>
+endobj
+trailer
+<< /Root 1 0 R /Info 3 0 R >>
+%%EOF
+`)
 }
 
 func sampleEPUBEntriesWithMetadata(title string, creator string, description string) map[string]string {

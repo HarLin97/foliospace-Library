@@ -136,6 +136,8 @@ export function App() {
   const [newLibraryName, setNewLibraryName] = useState("");
   const [newLibraryPath, setNewLibraryPath] = useState("");
   const [newLibraryAssetType, setNewLibraryAssetType] = useState<LibraryAssetType>("mixed");
+  const [newLibraryExcludes, setNewLibraryExcludes] = useState(defaultExcludePatternsText());
+  const [libraryExcludeDrafts, setLibraryExcludeDrafts] = useState<Record<number, string>>({});
   const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
   const [directoryListing, setDirectoryListing] = useState<DirectoryListing | null>(null);
   const [directoryPickerLoading, setDirectoryPickerLoading] = useState(false);
@@ -452,6 +454,16 @@ export function App() {
     setBookDetailsOpen(false);
   }, [selectedBook]);
 
+  useEffect(() => {
+    setLibraryExcludeDrafts((current) => {
+      const next: Record<number, string> = {};
+      for (const library of libraries) {
+        next[library.id] = current[library.id] ?? (library.excludePatterns ?? []).join("\n");
+      }
+      return next;
+    });
+  }, [libraries]);
+
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const token = authInput.trim();
@@ -493,6 +505,7 @@ export function App() {
         name: setupName,
         rootPath: setupPath,
         assetType: setupAssetType,
+        excludePatterns: parseExcludePatterns(defaultExcludePatternsText()),
         scanWorkers: setupScanWorkers,
       });
       if (!setupStatus?.authEnabled) {
@@ -786,14 +799,28 @@ export function App() {
     event.preventDefault();
     setActiveTask("Adding library");
     try {
-      const library = await api.createLibrary(newLibraryName, newLibraryPath, newLibraryAssetType);
+      const library = await api.createLibrary(newLibraryName, newLibraryPath, newLibraryAssetType, parseExcludePatterns(newLibraryExcludes));
       setStatus(`Library added: ${library.rootPath}`);
       setNewLibraryName("");
       setNewLibraryPath("");
       setNewLibraryAssetType("mixed");
+      setNewLibraryExcludes(defaultExcludePatternsText());
       await refreshAll();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to add library");
+    } finally {
+      setActiveTask(null);
+    }
+  }
+
+  async function saveLibraryExcludes(library: Library) {
+    setActiveTask(`Updating excludes for ${library.name}`);
+    try {
+      const updated = await api.updateLibraryExcludes(library.id, parseExcludePatterns(libraryExcludeDrafts[library.id] ?? ""));
+      setLibraries((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      setStatus(`${t.excludePatternsSaved}: ${library.name}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to update exclude patterns");
     } finally {
       setActiveTask(null);
     }
@@ -2018,6 +2045,16 @@ export function App() {
                   <option value="video">{t.assetTypeVideo}</option>
                 </select>
                 <button disabled={!newLibraryPath.trim()}>{t.add}</button>
+                <label className="libraryExcludeField">
+                  <span>{t.excludePatterns}</span>
+                  <textarea
+                    value={newLibraryExcludes}
+                    onChange={(event) => setNewLibraryExcludes(event.target.value)}
+                    placeholder={t.excludePatternsPlaceholder}
+                    rows={3}
+                  />
+                  <small>{t.excludePatternsHint}</small>
+                </label>
               </form>
               <div className="libraryRows">
                 {libraries.map((library) => (
@@ -2025,9 +2062,18 @@ export function App() {
                     <div>
                       <strong>{library.name}</strong>
                       <small>{library.rootPath} · {libraryAssetTypeLabel(library.assetType, t)}</small>
+                      <label className="libraryExcludeEditor">
+                        <span>{t.excludePatterns}</span>
+                        <input
+                          value={libraryExcludeDrafts[library.id] ?? ""}
+                          onChange={(event) => setLibraryExcludeDrafts((drafts) => ({ ...drafts, [library.id]: event.target.value }))}
+                          placeholder={t.excludePatternsInlinePlaceholder}
+                        />
+                      </label>
                     </div>
                     <div className="rowActions">
                       <button onClick={() => scan(library)}>{t.scan}</button>
+                      <button onClick={() => saveLibraryExcludes(library)}>{t.saveExcludes}</button>
                       <button className="danger" onClick={() => deleteLibrary(library)}>{t.delete}</button>
                     </div>
                   </div>
@@ -4364,6 +4410,12 @@ const translations = {
     name: "名称",
     add: "添加",
     scan: "扫描",
+    excludePatterns: "排除目录",
+    excludePatternsPlaceholder: "media\nthumbnails\ncovers",
+    excludePatternsInlinePlaceholder: "media, thumbnails, covers",
+    excludePatternsHint: "每行或逗号分隔一个目录名或相对路径；扫描会跳过这些目录。",
+    excludePatternsSaved: "排除目录已保存",
+    saveExcludes: "保存排除",
     scanWorkers: "扫描 Worker",
     scanWorkersHint: "新扫描任务使用的并发数量，NAS 建议 2-4，高性能机器可调到 8。",
     scanWorkersSaved: (count: number) => `扫描 Worker 已保存为 ${count}`,
@@ -4581,6 +4633,12 @@ const translations = {
     name: "名稱",
     add: "新增",
     scan: "掃描",
+    excludePatterns: "排除目錄",
+    excludePatternsPlaceholder: "media\nthumbnails\ncovers",
+    excludePatternsInlinePlaceholder: "media, thumbnails, covers",
+    excludePatternsHint: "每行或逗號分隔一個目錄名或相對路徑；掃描會跳過這些目錄。",
+    excludePatternsSaved: "排除目錄已儲存",
+    saveExcludes: "儲存排除",
     scanWorkers: "掃描 Worker",
     scanWorkersHint: "新掃描任務使用的並發數量，NAS 建議 2-4，高效能機器可調到 8。",
     scanWorkersSaved: (count: number) => `掃描 Worker 已儲存為 ${count}`,
@@ -4798,6 +4856,12 @@ const translations = {
     name: "Name",
     add: "Add",
     scan: "Scan",
+    excludePatterns: "Excluded directories",
+    excludePatternsPlaceholder: "media\nthumbnails\ncovers",
+    excludePatternsInlinePlaceholder: "media, thumbnails, covers",
+    excludePatternsHint: "One directory name or relative path per line, or comma-separated. Scans skip matching directories.",
+    excludePatternsSaved: "Excluded directories saved",
+    saveExcludes: "Save excludes",
     scanWorkers: "Scan workers",
     scanWorkersHint: "Concurrent workers for new scan jobs. NAS defaults work well at 2-4; faster machines can use 8.",
     scanWorkersSaved: (count: number) => `Scan workers saved as ${count}`,
@@ -5015,6 +5079,12 @@ const translations = {
     name: "名前",
     add: "追加",
     scan: "スキャン",
+    excludePatterns: "除外フォルダ",
+    excludePatternsPlaceholder: "media\nthumbnails\ncovers",
+    excludePatternsInlinePlaceholder: "media, thumbnails, covers",
+    excludePatternsHint: "1 行またはカンマ区切りでフォルダ名か相対パスを指定します。",
+    excludePatternsSaved: "除外フォルダを保存しました",
+    saveExcludes: "除外を保存",
     scanWorkers: "スキャン Worker",
     scanWorkersHint: "新しいスキャンで使う並列数です。NAS は 2-4、高性能な環境では 8 まで使えます。",
     scanWorkersSaved: (count: number) => `スキャン Worker を ${count} に保存しました`,
@@ -5232,6 +5302,12 @@ const translations = {
     name: "이름",
     add: "추가",
     scan: "스캔",
+    excludePatterns: "제외 폴더",
+    excludePatternsPlaceholder: "media\nthumbnails\ncovers",
+    excludePatternsInlinePlaceholder: "media, thumbnails, covers",
+    excludePatternsHint: "줄마다 또는 쉼표로 폴더 이름/상대 경로를 입력하면 스캔에서 제외됩니다.",
+    excludePatternsSaved: "제외 폴더 저장됨",
+    saveExcludes: "제외 저장",
     scanWorkers: "스캔 Worker",
     scanWorkersHint: "새 스캔 작업의 동시 실행 수입니다. NAS는 2-4, 고성능 장비는 8까지 사용할 수 있습니다.",
     scanWorkersSaved: (count: number) => `스캔 Worker가 ${count}(으)로 저장됨`,
@@ -5754,6 +5830,22 @@ function libraryAssetTypeLabel(value: string | undefined, t: Translation) {
     default:
       return t.assetTypeMixed;
   }
+}
+
+function defaultExcludePatternsText() {
+  return ["media", "thumbnails", "covers"].join("\n");
+}
+
+function parseExcludePatterns(value: string) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value.split(/[\n,]/)) {
+    const normalized = item.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    if (!normalized || normalized === "." || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
 }
 
 function recentMeta(book: Book, t: Translation) {

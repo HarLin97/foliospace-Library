@@ -247,7 +247,7 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.966",
+  "serviceVersion": "0.969",
   "apiVersion": "v1",
   "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"],
   "capabilities": {
@@ -1240,6 +1240,33 @@ These routes are operational surfaces for web UI, trusted native tools, and MCP 
 
 Returns configured library roots. This endpoint can expose configured mount paths and should be treated as an admin/diagnostic route, not a public client catalog.
 
+Each library includes `excludePatterns`, a list of directory names or library-relative paths skipped during scans. The scanner also always skips common generated directories such as `#recycle`, `@eaDir`, `.calnotes`, `__MACOSX`, `media`, `covers`, `cover`, `thumbnails`, `.thumbnails`, `thumbs`, and `.thumbs`.
+
+### `POST /api/libraries`
+
+Creates or updates a configured library root.
+
+```json
+{
+  "name": "Comics",
+  "rootPath": "/library",
+  "assetType": "comic",
+  "excludePatterns": ["media", "thumbnails", "covers"]
+}
+```
+
+### `PUT /api/libraries/{libraryId}`
+
+Updates scan exclude patterns for an existing library.
+
+```json
+{
+  "excludePatterns": ["media", "thumbnails", "covers", "Some Series/cover-assets"]
+}
+```
+
+PDF scans read lightweight embedded Info metadata when available. `/Title` maps to book title, `/Author` maps to creator/collection grouping, and `/Subject` maps to description. Missing or unreadable PDF metadata falls back to the filename and current path-based collection behavior.
+
 ### `POST /api/libraries/{libraryId}/scan`
 
 Starts a scan job for a library and returns the job.
@@ -1370,6 +1397,7 @@ Good MCP tools:
 - `foliospace.get_preferences` and `foliospace.save_preferences`: inspect or update UI language and reader defaults.
 - `foliospace.get_progress` and `foliospace.save_progress`: inspect or update legacy reading progress. Webtoon-aware native clients should use the HTTP `reading-position` API directly for exact page-key plus Y-offset anchors.
 - `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection.
+- `foliospace.update_library_excludes`: update scan exclude directory names or relative paths for a configured library.
 - `foliospace.list_collections`, `foliospace.save_collection_state`, `foliospace.list_collection_volumes`, and `foliospace.list_collection_assets`: browse the indexed library and save profile-scoped collection favorite/liked flags.
 - `foliospace.scan_library`: start a scan for a configured library. Optional `path` scans one subdirectory or file inside the library root.
 - `foliospace.scan_recent`: scan only the latest new or changed files under a library or optional target path. Use this after adding several files to a large directory.

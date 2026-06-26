@@ -30,7 +30,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.968"
+const serviceVersion = "0.969"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -882,15 +882,16 @@ func (s *Server) handleLibraries(w http.ResponseWriter, r *http.Request) {
 		writeJSONOrError(w, items, err)
 	case http.MethodPost:
 		var req struct {
-			Name      string `json:"name"`
-			RootPath  string `json:"rootPath"`
-			AssetType string `json:"assetType"`
+			Name            string   `json:"name"`
+			RootPath        string   `json:"rootPath"`
+			AssetType       string   `json:"assetType"`
+			ExcludePatterns []string `json:"excludePatterns"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		lib, err := s.service.CreateLibraryWithType(req.Name, req.RootPath, req.AssetType)
+		lib, err := s.service.CreateLibraryWithOptions(req.Name, req.RootPath, req.AssetType, req.ExcludePatterns)
 		writeJSONOrError(w, lib, err)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -910,6 +911,18 @@ func (s *Server) handleLibraryAction(w http.ResponseWriter, r *http.Request) {
 	id, tail, ok := parseIDTail(r.URL.Path, "/api/libraries/")
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if tail == "" && r.Method == http.MethodPut {
+		var req struct {
+			ExcludePatterns []string `json:"excludePatterns"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		lib, err := s.service.UpdateLibraryExcludePatterns(id, req.ExcludePatterns)
+		writeJSONOrError(w, lib, err)
 		return
 	}
 	if tail == "" && r.Method == http.MethodDelete {

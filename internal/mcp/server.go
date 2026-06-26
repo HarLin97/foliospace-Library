@@ -51,7 +51,7 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-const serviceVersion = "0.968"
+const serviceVersion = "0.969"
 
 func New(baseURL string, token string) *Server {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -135,6 +135,7 @@ func tools() []Tool {
 		{Name: "foliospace.get_progress", Description: "Read saved reading progress for a book.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id.")}, []string{"bookId"})},
 		{Name: "foliospace.save_progress", Description: "Save reading progress for a book. bookId selects the book; remaining fields are forwarded to the API.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id.")}, []string{"bookId"})},
 		{Name: "foliospace.list_libraries", Description: "List configured library roots for diagnostics and scan selection. This admin tool can expose configured mount paths.", InputSchema: objectSchema(nil, nil)},
+		{Name: "foliospace.update_library_excludes", Description: "Update excluded directory names or relative paths for a configured library. Scans skip matching directories.", InputSchema: objectSchema(map[string]any{"libraryId": integerSchema("Library id."), "excludePatterns": arraySchema("Directory names or relative paths to skip while scanning.", stringSchema("Directory name or relative path."))}, []string{"libraryId", "excludePatterns"})},
 		{Name: "foliospace.list_collections", Description: "List library collections with profile-scoped favorite and liked flags.", InputSchema: objectSchema(map[string]any{"profileId": integerSchema("Optional profile id for collection private state.")}, nil)},
 		{Name: "foliospace.save_collection_state", Description: "Save profile-scoped collection favorite and liked flags.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "profileId": integerSchema("Optional profile id."), "favorite": booleanSchema("Whether the collection is a favorite."), "liked": booleanSchema("Whether the collection is liked.")}, []string{"collectionId"})},
 		{Name: "foliospace.list_collection_volumes", Description: "List books/comics in a collection with optional pagination and filtering.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "sort": stringSchema("Server-supported sort key."), "profileId": integerSchema("Optional profile id for scoped progress and private state.")}, []string{"collectionId"})},
@@ -288,6 +289,8 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		data, err = s.put(ctx, withProfileQuery(fmt.Sprintf("/api/books/%d/progress", bookID), params.Arguments), body)
 	case "foliospace.list_libraries":
 		data, err = s.get(ctx, "/api/libraries")
+	case "foliospace.update_library_excludes":
+		data, err = s.put(ctx, fmt.Sprintf("/api/libraries/%d", intArg(params.Arguments, "libraryId")), map[string]any{"excludePatterns": stringListArg(params.Arguments, "excludePatterns")})
 	case "foliospace.list_collections":
 		data, err = s.get(ctx, withProfileQuery("/api/collections", params.Arguments))
 	case "foliospace.save_collection_state":
@@ -557,6 +560,40 @@ func stringArg(args map[string]any, key string) string {
 	return strings.TrimSpace(fmt.Sprint(value))
 }
 
+func stringListArg(args map[string]any, key string) []string {
+	value, ok := args[key]
+	if !ok || value == nil {
+		return nil
+	}
+	switch typed := value.(type) {
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if value := strings.TrimSpace(fmt.Sprint(item)); value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	case []string:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if value := strings.TrimSpace(item); value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	default:
+		parts := strings.Split(fmt.Sprint(value), ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if value := strings.TrimSpace(part); value != "" {
+				out = append(out, value)
+			}
+		}
+		return out
+	}
+}
+
 func withoutKeys(args map[string]any, keys ...string) map[string]any {
 	out := make(map[string]any, len(args))
 	skip := map[string]bool{}
@@ -587,6 +624,10 @@ func objectSchema(properties map[string]any, required []string) map[string]any {
 
 func stringSchema(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
+}
+
+func arraySchema(description string, items map[string]any) map[string]any {
+	return map[string]any{"type": "array", "description": description, "items": items}
 }
 
 func integerSchema(description string) map[string]any {

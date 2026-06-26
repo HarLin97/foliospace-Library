@@ -89,11 +89,12 @@ type SetupStatus struct {
 }
 
 type SetupInput struct {
-	Token       string `json:"token"`
-	Name        string `json:"name"`
-	RootPath    string `json:"rootPath"`
-	AssetType   string `json:"assetType"`
-	ScanWorkers int    `json:"scanWorkers"`
+	Token           string   `json:"token"`
+	Name            string   `json:"name"`
+	RootPath        string   `json:"rootPath"`
+	AssetType       string   `json:"assetType"`
+	ExcludePatterns []string `json:"excludePatterns"`
+	ScanWorkers     int      `json:"scanWorkers"`
 }
 
 type ScanSettings struct {
@@ -177,7 +178,7 @@ func (s *Service) InitializeSetup(input SetupInput, tokenAlreadyConfigured bool)
 			return libraries[0], nil
 		}
 	}
-	return s.CreateLibraryWithType(input.Name, input.RootPath, input.AssetType)
+	return s.CreateLibraryWithOptions(input.Name, input.RootPath, input.AssetType, input.ExcludePatterns)
 }
 
 func (s *Service) ScanSettings() ScanSettings {
@@ -224,6 +225,10 @@ func (s *Service) VerifyAdminToken(token string) bool {
 }
 
 func (s *Service) CreateLibraryWithType(name string, rootPath string, assetType string) (domain.Library, error) {
+	return s.CreateLibraryWithOptions(name, rootPath, assetType, nil)
+}
+
+func (s *Service) CreateLibraryWithOptions(name string, rootPath string, assetType string, excludePatterns []string) (domain.Library, error) {
 	name = strings.TrimSpace(name)
 	rootPath = strings.TrimSpace(rootPath)
 	if rootPath == "" {
@@ -232,7 +237,11 @@ func (s *Service) CreateLibraryWithType(name string, rootPath string, assetType 
 	if name == "" {
 		name = rootPath
 	}
-	return s.store.CreateLibraryWithType(name, rootPath, normalizeLibraryAssetType(assetType))
+	return s.store.CreateLibraryWithOptions(name, rootPath, normalizeLibraryAssetType(assetType), excludePatterns)
+}
+
+func (s *Service) UpdateLibraryExcludePatterns(id int64, excludePatterns []string) (domain.Library, error) {
+	return s.store.UpdateLibraryExcludePatterns(id, excludePatterns)
 }
 
 func (s *Service) ListDirectories(path string) (domain.DirectoryListing, error) {

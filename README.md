@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.966`.
+Current release branch: `0.969`.
 
 ## Screenshots
 
@@ -189,6 +189,15 @@ Release `0.966` adds embedded JSON metadata support for comic archives:
 - Search now matches public archive tags and creators, so tags like `C106`, `中文`, or custom pack tags can find the indexed book.
 - Public archive tags are merged with profile-private tags in book API responses while keeping user private state separate.
 
+## Release 0.969
+
+Release `0.969` improves metadata and scan hygiene for mixed book/comic libraries:
+
+- PDF scans now read lightweight embedded Info metadata when available: title, author, and subject are mapped to existing title, creator, and description fields.
+- Libraries can define scan exclude directories from the web UI, API, or MCP.
+- The scanner skips common generated folders such as `media`, `thumbnails`, `covers`, `__MACOSX`, and `@eaDir`, preventing artwork and sidecar folders from being indexed as books.
+- Service, Client API, and MCP metadata report version `0.969`.
+
 ## MCP
 
 Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, progress, scan jobs, recent-file scans, scan worker settings, job control, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
@@ -202,7 +211,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.966 ./scripts/build-mcp-release.sh
+VERSION=0.969 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -222,10 +231,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.966` image tag:
+Release `0.969` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.966
+docker pull funland/foliospace-library:0.969
 ```
 
 For local verification:
@@ -244,7 +253,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.966
+  funland/foliospace-library:0.969
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -259,11 +268,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.966
-git push github v0.966
+git tag v0.969
+git push github v0.969
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.966` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.969` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

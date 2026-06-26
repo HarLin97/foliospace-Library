@@ -3,6 +3,7 @@ export type Library = {
   name: string;
   rootPath: string;
   assetType: "mixed" | "book" | "comic" | "game" | "video";
+  excludePatterns: string[];
 };
 
 export type DirectoryEntry = {
@@ -374,6 +375,7 @@ export type SetupInput = {
   name: string;
   rootPath: string;
   assetType: Library["assetType"];
+  excludePatterns?: string[];
   scanWorkers?: number;
 };
 
@@ -543,10 +545,15 @@ export const api = {
     }),
   clientInfo: () => request<ClientInfo>("/api/client/info"),
   libraries: () => request<Library[]>("/api/libraries"),
-  createLibrary: (name: string, rootPath: string, assetType = "mixed") =>
+  createLibrary: (name: string, rootPath: string, assetType = "mixed", excludePatterns: string[] = []) =>
     request<Library>("/api/libraries", {
       method: "POST",
-      body: JSON.stringify({ name, rootPath, assetType }),
+      body: JSON.stringify({ name, rootPath, assetType, excludePatterns }),
+    }),
+  updateLibraryExcludes: (libraryId: number, excludePatterns: string[]) =>
+    request<Library>(`/api/libraries/${libraryId}`, {
+      method: "PUT",
+      body: JSON.stringify({ excludePatterns }),
     }),
   deleteLibrary: (libraryId: number) => request<{ ok: boolean }>(`/api/libraries/${libraryId}`, { method: "DELETE" }),
   directories: (path = "/") => request<DirectoryListing>(`/api/fs/directories?path=${encodeURIComponent(path)}`),

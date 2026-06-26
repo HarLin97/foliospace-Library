@@ -167,7 +167,7 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 			return err
 		}
 		if walkErr != nil {
-			if shouldSkipScanDir(library.RootPath, path) {
+			if shouldSkipScanDir(library, path) {
 				return filepath.SkipDir
 			}
 			job.CurrentPath = path
@@ -251,6 +251,13 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 		}
 		if ext != ".epub" {
 			if index, ok := s.unchangedMetadataOnlyFile(fileIndexes, path, info, ext); ok && canSkipUnchangedBook(library, path, index, ext) {
+				if err := s.cleanupStaleNonBookAssets(path); err != nil {
+					job.ErrorCount++
+					_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+					_ = s.store.AddJobEvent(job.ID, "error", "stale asset cleanup failed: "+path)
+					_ = s.store.UpdateScanJob(job)
+					return nil
+				}
 				job.SkippedFiles++
 				_ = s.store.UpdateScanJob(job)
 				return nil
@@ -259,6 +266,13 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 
 		if index, ok := s.unchangedFileIndex(fileIndexes, path, info, ext); ok {
 			if canSkipUnchangedBook(library, path, index, ext) {
+				if err := s.cleanupStaleNonBookAssets(path); err != nil {
+					job.ErrorCount++
+					_ = s.recordPathError(library.ID, job.ID, path, domain.ErrorUnknownIO, err.Error())
+					_ = s.store.AddJobEvent(job.ID, "error", "stale asset cleanup failed: "+path)
+					_ = s.store.UpdateScanJob(job)
+					return nil
+				}
 				job.SkippedFiles++
 				_ = s.store.UpdateScanJob(job)
 				return nil
@@ -395,7 +409,7 @@ func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, s
 			return err
 		}
 		if walkErr != nil {
-			if shouldSkipScanDir(library.RootPath, path) {
+			if shouldSkipScanDir(library, path) {
 				return filepath.SkipDir
 			}
 			job.CurrentPath = path
@@ -553,7 +567,7 @@ func scanScopeForPath(library domain.Library, targetPath string) (scanScope, err
 func (s *Scanner) walkScanScope(library domain.Library, scope scanScope, dirStates map[string]*scanDirState, walkFn fs.WalkDirFunc) error {
 	return filepath.WalkDir(scope.rootPath, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr == nil && entry.IsDir() {
-			if shouldSkipScanDir(library.RootPath, path) {
+			if shouldSkipScanDir(library, path) {
 				return filepath.SkipDir
 			}
 			info, err := entry.Info()
@@ -666,7 +680,7 @@ func (s *Scanner) runScanJobConcurrent(library domain.Library, job domain.ScanJo
 			return errScanCancelled
 		}
 		if walkErr != nil {
-			if shouldSkipScanDir(library.RootPath, path) {
+			if shouldSkipScanDir(library, path) {
 				return filepath.SkipDir
 			}
 			_ = s.recordPathError(library.ID, job.ID, path, classifyWalkError(walkErr), walkErr.Error())
@@ -830,6 +844,10 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 	}
 	if task.ext != ".epub" {
 		if index, ok := s.unchangedMetadataOnlyFile(fileIndexes, task.path, task.info, task.ext); ok && canSkipUnchangedBook(library, task.path, index, task.ext) {
+			if err := s.cleanupStaleNonBookAssets(task.path); err != nil {
+				s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "stale asset cleanup failed: ", err, updateJob)
+				return
+			}
 			updateJob(func(job *domain.ScanJob) {
 				setCurrent(job)
 				job.SkippedFiles++
@@ -840,6 +858,10 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 
 	if index, ok := s.unchangedFileIndex(fileIndexes, task.path, task.info, task.ext); ok {
 		if canSkipUnchangedBook(library, task.path, index, task.ext) {
+			if err := s.cleanupStaleNonBookAssets(task.path); err != nil {
+				s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "stale asset cleanup failed: ", err, updateJob)
+				return
+			}
 			updateJob(func(job *domain.ScanJob) {
 				setCurrent(job)
 				job.SkippedFiles++
@@ -928,6 +950,13 @@ func (s *Scanner) cleanupSkippedEntries(library domain.Library, job *domain.Scan
 		_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("removed %d skipped-directory entries", deleted))
 	}
 	return s.store.DeleteEmptySeries(library.ID)
+}
+
+func (s *Scanner) cleanupStaleNonBookAssets(path string) error {
+	if err := s.store.DeleteGameByPath(path); err != nil {
+		return err
+	}
+	return s.store.DeleteVideoByPath(path)
 }
 
 func (s *Scanner) recordTaskError(libraryID int64, jobID int64, path string, code domain.ErrorCode, eventPrefix string, err error, updateJob func(func(*domain.ScanJob))) {
@@ -1063,6 +1092,9 @@ func (s *Scanner) unchangedFileIndex(fileIndexes map[string]store.FileIndex, pat
 }
 
 func canSkipUnchangedBook(library domain.Library, path string, index store.FileIndex, ext string) bool {
+	if ext == ".7z" {
+		return false
+	}
 	if ext != ".epub" {
 		relPath, err := filepath.Rel(library.RootPath, path)
 		if err != nil {
@@ -1386,6 +1418,9 @@ func bookMetadataForPath(path string, ext string) (bookMetadata, error) {
 	fallback := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	if ext != ".epub" {
 		metadata := bookMetadata{Title: fallback}
+		if ext == ".pdf" {
+			return readPDFMetadata(path, metadata)
+		}
 		if ext == ".zip" || ext == ".cbz" {
 			embedded, ok, err := archive.ReadEmbeddedComicMetadata(path)
 			if err != nil {
@@ -1417,6 +1452,95 @@ func bookMetadataForPath(path string, ext string) (bookMetadata, error) {
 	return metadata, nil
 }
 
+func readPDFMetadata(path string, fallback bookMetadata) (bookMetadata, error) {
+	data, err := readPDFMetadataWindow(path)
+	if err != nil {
+		return bookMetadata{}, err
+	}
+	metadata := fallback
+	if title := pdfInfoLiteral(data, "Title"); title != "" {
+		metadata.Title = title
+	}
+	if author := pdfInfoLiteral(data, "Author"); author != "" {
+		metadata.Creator = author
+	}
+	if subject := pdfInfoLiteral(data, "Subject"); subject != "" {
+		metadata.Description = subject
+	}
+	return metadata, nil
+}
+
+func readPDFMetadataWindow(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	const windowSize int64 = 2 << 20
+	if info.Size() <= windowSize*2 {
+		return io.ReadAll(file)
+	}
+	head := make([]byte, windowSize)
+	if _, err := io.ReadFull(file, head); err != nil {
+		return nil, err
+	}
+	tail := make([]byte, windowSize)
+	if _, err := file.ReadAt(tail, info.Size()-windowSize); err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, len(head)+len(tail)+1)
+	out = append(out, head...)
+	out = append(out, '\n')
+	out = append(out, tail...)
+	return out, nil
+}
+
+func pdfInfoLiteral(data []byte, key string) string {
+	pattern := regexp.MustCompile(`/` + regexp.QuoteMeta(key) + `\s*\((?:\\.|[^\\)])*\)`)
+	match := pattern.Find(data)
+	if len(match) == 0 {
+		return ""
+	}
+	open := strings.IndexByte(string(match), '(')
+	if open < 0 || len(match) < open+2 {
+		return ""
+	}
+	raw := string(match[open+1 : len(match)-1])
+	return strings.TrimSpace(unescapePDFLiteral(raw))
+}
+
+func unescapePDFLiteral(value string) string {
+	var b strings.Builder
+	for i := 0; i < len(value); i++ {
+		if value[i] != '\\' || i+1 >= len(value) {
+			b.WriteByte(value[i])
+			continue
+		}
+		i++
+		switch value[i] {
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		case 't':
+			b.WriteByte('\t')
+		case 'b':
+			b.WriteByte('\b')
+		case 'f':
+			b.WriteByte('\f')
+		case '(', ')', '\\':
+			b.WriteByte(value[i])
+		default:
+			b.WriteByte(value[i])
+		}
+	}
+	return b.String()
+}
+
 func sameStringList(left []string, right []string) bool {
 	if len(left) != len(right) {
 		return false
@@ -1439,20 +1563,38 @@ func (s *Scanner) recordPathError(libraryID int64, jobID int64, path string, cod
 	})
 }
 
-func shouldSkipScanDir(rootPath string, path string) bool {
-	if filepath.Clean(path) == filepath.Clean(rootPath) {
+func shouldSkipScanDir(library domain.Library, path string) bool {
+	if filepath.Clean(path) == filepath.Clean(library.RootPath) {
 		return false
 	}
-	switch filepath.Base(path) {
-	case skippedScanDirNames()[0], skippedScanDirNames()[1], skippedScanDirNames()[2]:
-		return true
-	default:
+	name := strings.ToLower(filepath.Base(path))
+	for _, skipped := range skippedScanDirNames() {
+		if name == strings.ToLower(skipped) {
+			return true
+		}
+	}
+	rel, err := filepath.Rel(library.RootPath, path)
+	if err != nil {
 		return false
 	}
+	rel = strings.Trim(strings.ToLower(filepath.ToSlash(rel)), "/")
+	for _, pattern := range library.ExcludePatterns {
+		pattern = strings.Trim(strings.ToLower(strings.ReplaceAll(pattern, "\\", "/")), "/")
+		if pattern == "" {
+			continue
+		}
+		if !strings.Contains(pattern, "/") && name == pattern {
+			return true
+		}
+		if rel == pattern || strings.HasPrefix(rel, pattern+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func skippedScanDirNames() []string {
-	return []string{"#recycle", "@eaDir", ".calnotes"}
+	return []string{"#recycle", "@eaDir", ".calnotes", "__MACOSX", "media", "covers", "cover", "thumbnails", ".thumbnails", "thumbs", ".thumbs"}
 }
 
 func seriesIdentityForRelPath(rootPath string, relPath string) (string, string) {

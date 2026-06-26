@@ -145,6 +145,7 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.get_progress`: read legacy reading progress. Structured webtoon-aware clients should use the HTTP `reading-position` API directly for exact page-key plus Y-offset anchors.
 - `foliospace.save_progress`: save legacy reading progress. For webtoon fallback compatibility, a `locator` shaped like `webtoon:<fraction>` is accepted by the HTTP API.
 - `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection. This admin tool can expose configured mount paths.
+- `foliospace.update_library_excludes`: update scan exclude directory names or relative paths for a configured library.
 - `foliospace.list_collections`: list collections with profile-scoped favorite and liked flags.
 - `foliospace.save_collection_state`: save collection `favorite` and `liked` flags.
 - `foliospace.list_collection_volumes`: list books/comics in a collection with optional `limit`, `offset`, `q`, and `sort`.
@@ -260,6 +261,12 @@ Scan the latest 20 new or changed files under a large directory:
 
 ```json
 {"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"foliospace.scan_recent","arguments":{"libraryId":21,"path":"/library/韩漫","recentLimit":20}}}
+```
+
+Exclude generated thumbnail/media directories from future scans:
+
+```json
+{"jsonrpc":"2.0","id":15,"method":"tools/call","params":{"name":"foliospace.update_library_excludes","arguments":{"libraryId":21,"excludePatterns":["media","thumbnails","covers"]}}}
 ```
 
 Pause a running scan job:

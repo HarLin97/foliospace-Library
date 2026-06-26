@@ -1210,11 +1210,38 @@ h1 {
 }
 
 .libraryForm input,
-.libraryForm select {
+.libraryForm select,
+.libraryForm textarea,
+.libraryExcludeEditor input {
   min-width: 0;
   border: 1px solid #ccd4d8;
   border-radius: 6px;
   padding: 8px 9px;
+}
+
+.libraryForm textarea {
+  resize: vertical;
+}
+
+.libraryExcludeField {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 5px;
+  color: #647177;
+  font-size: 12px;
+}
+
+.libraryExcludeField span,
+.libraryExcludeEditor span {
+  font-weight: 700;
+  color: #304247;
+}
+
+.libraryExcludeEditor {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  font-size: 12px;
 }
 
 .libraryPathInput {
