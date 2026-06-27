@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"image"
@@ -21,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -580,6 +582,144 @@ func (s *Service) CollectionAssetsForProfile(seriesID int64, profileID int64) (d
 	return domain.CollectionAssets{Books: books, Games: games}, nil
 }
 
+func (s *Service) ListManualCollections() ([]domain.ManualCollection, error) {
+	return s.store.ListManualCollections()
+}
+
+func (s *Service) CreateManualCollection(collection domain.ManualCollection) (domain.ManualCollection, error) {
+	return s.store.CreateManualCollection(collection)
+}
+
+func (s *Service) UpdateManualCollection(collectionID int64, collection domain.ManualCollection) (domain.ManualCollection, error) {
+	return s.store.UpdateManualCollection(collectionID, collection)
+}
+
+func (s *Service) DeleteManualCollection(collectionID int64) error {
+	return s.store.DeleteManualCollection(collectionID)
+}
+
+func (s *Service) ManualCollectionDetails(collectionID int64) (domain.ManualCollectionDetails, error) {
+	collection, err := s.store.ManualCollectionByID(collectionID)
+	if err != nil {
+		return domain.ManualCollectionDetails{}, err
+	}
+	items, err := s.store.ListManualCollectionItems(collectionID)
+	if err != nil {
+		return domain.ManualCollectionDetails{}, err
+	}
+	resolved := make([]domain.ManualCollectionItem, 0, len(items))
+	for _, item := range items {
+		resolvedItem, err := s.resolveManualCollectionItem(item)
+		if err != nil {
+			continue
+		}
+		resolved = append(resolved, resolvedItem)
+	}
+	collection.ItemCount = int64(len(resolved))
+	return domain.ManualCollectionDetails{Collection: collection, Items: resolved}, nil
+}
+
+func (s *Service) AddManualCollectionItem(collectionID int64, item domain.ManualCollectionItem) (domain.ManualCollection, error) {
+	item.AssetType = normalizeManualCollectionAssetType(item.AssetType)
+	if item.AssetType == "" {
+		return domain.ManualCollection{}, fmt.Errorf("unsupported manual collection asset type")
+	}
+	if err := s.ensureManualCollectionAssetExists(item); err != nil {
+		return domain.ManualCollection{}, err
+	}
+	if err := s.store.AddManualCollectionItem(collectionID, item); err != nil {
+		return domain.ManualCollection{}, err
+	}
+	return s.store.ManualCollectionByID(collectionID)
+}
+
+func (s *Service) RemoveManualCollectionItem(collectionID int64, assetType string, assetID int64) (domain.ManualCollection, error) {
+	assetType = normalizeManualCollectionAssetType(assetType)
+	if assetType == "" {
+		return domain.ManualCollection{}, fmt.Errorf("unsupported manual collection asset type")
+	}
+	if err := s.store.RemoveManualCollectionItem(collectionID, assetType, assetID); err != nil {
+		return domain.ManualCollection{}, err
+	}
+	return s.store.ManualCollectionByID(collectionID)
+}
+
+func (s *Service) ensureManualCollectionAssetExists(item domain.ManualCollectionItem) error {
+	switch item.AssetType {
+	case "book":
+		_, err := s.store.BookByID(item.AssetID)
+		return err
+	case "game":
+		_, err := s.store.GameByID(item.AssetID)
+		return err
+	case "video":
+		_, err := s.store.VideoByID(item.AssetID)
+		return err
+	default:
+		return fmt.Errorf("unsupported manual collection asset type")
+	}
+}
+
+func (s *Service) resolveManualCollectionItem(item domain.ManualCollectionItem) (domain.ManualCollectionItem, error) {
+	item.AssetType = normalizeManualCollectionAssetType(item.AssetType)
+	switch item.AssetType {
+	case "book":
+		book, err := s.store.BookByID(item.AssetID)
+		if err != nil {
+			return domain.ManualCollectionItem{}, err
+		}
+		item.Title = book.Title
+		item.Subtitle = strings.TrimSpace(strings.Join([]string{book.CollectionTitle, strings.ToUpper(book.Format)}, " · "))
+		item.CoverURL = fmt.Sprintf("/api/books/%d/thumbnail?size=small&v=%s", book.ID, ThumbnailClientCacheVersion())
+		item.ManifestURL = fmt.Sprintf("/api/client/books/%d/manifest", book.ID)
+	case "game":
+		game, err := s.store.GameByID(item.AssetID)
+		if err != nil {
+			return domain.ManualCollectionItem{}, err
+		}
+		item.Title = game.Title
+		item.Subtitle = strings.TrimSpace(strings.Join(nonEmptyStrings(game.Platform, game.ROMSetName, strings.ToUpper(game.Format)), " · "))
+		item.CoverURL = fmt.Sprintf("/api/games/%d/cover", game.ID)
+		item.ManifestURL = fmt.Sprintf("/api/client/games/%d/manifest", game.ID)
+	case "video":
+		video, err := s.store.VideoByID(item.AssetID)
+		if err != nil {
+			return domain.ManualCollectionItem{}, err
+		}
+		item.Title = video.Title
+		item.Subtitle = strings.ToUpper(video.Format)
+		item.CoverURL = fmt.Sprintf("/api/videos/%d/thumbnail?v=%d", video.ID, video.MTime.UnixNano())
+		item.ManifestURL = fmt.Sprintf("/api/client/videos/%d/manifest", video.ID)
+	default:
+		return domain.ManualCollectionItem{}, fmt.Errorf("unsupported manual collection asset type")
+	}
+	return item, nil
+}
+
+func normalizeManualCollectionAssetType(assetType string) string {
+	switch strings.ToLower(strings.TrimSpace(assetType)) {
+	case "book", "comic":
+		return "book"
+	case "game":
+		return "game"
+	case "video":
+		return "video"
+	default:
+		return ""
+	}
+}
+
+func nonEmptyStrings(values ...string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
 func (s *Service) ListBooksPage(options domain.BookListOptions) (domain.BookListPage, error) {
 	return s.store.ListBooksPage(options)
 }
@@ -721,12 +861,208 @@ func (s *Service) ListGamesPage(options domain.GameListOptions) (domain.GameList
 	return s.store.ListGamesPage(options)
 }
 
+func (s *Service) ListGamesPageForProfile(options domain.GameListOptions, profileID int64) (domain.GameListPage, error) {
+	return s.store.ListGamesPageForProfile(options, profileID)
+}
+
+func (s *Service) ExportGameGamelistXML(options domain.GameListOptions) ([]byte, error) {
+	options.Limit = 200
+	options.Offset = 0
+	options.Sort = "title"
+
+	var out bytes.Buffer
+	out.WriteString(xml.Header)
+	out.WriteString("<gameList>\n")
+	for {
+		page, err := s.store.ListGamesPage(options)
+		if err != nil {
+			return nil, err
+		}
+		for _, game := range page.Items {
+			writeGamelistGame(&out, game, options.BasePath)
+		}
+		if !page.HasMore || len(page.Items) == 0 {
+			break
+		}
+		options.Offset += len(page.Items)
+	}
+	out.WriteString("</gameList>\n")
+	return out.Bytes(), nil
+}
+
+func writeGamelistGame(out *bytes.Buffer, game domain.GameAsset, basePath string) {
+	out.WriteString("  <game>\n")
+	writeGamelistElement(out, "path", gamelistDraftPath(game, basePath))
+	writeGamelistElement(out, "name", game.Title)
+	out.WriteString("  </game>\n")
+}
+
+func writeGamelistElement(out *bytes.Buffer, tag string, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	out.WriteString("    <")
+	out.WriteString(tag)
+	out.WriteString(">")
+	_ = xml.EscapeText(out, []byte(value))
+	out.WriteString("</")
+	out.WriteString(tag)
+	out.WriteString(">\n")
+}
+
+func gamelistDraftPath(game domain.GameAsset, basePath string) string {
+	relPath := strings.TrimSpace(game.RelPath)
+	if relPath == "" {
+		relPath = filepath.Base(game.FilePath)
+	}
+	relPath = strings.TrimPrefix(filepath.ToSlash(relPath), "./")
+	basePath = strings.Trim(strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(basePath)), "./"), "/")
+	if basePath != "" {
+		prefix := basePath + "/"
+		if strings.HasPrefix(strings.ToLower(relPath), strings.ToLower(prefix)) {
+			relPath = relPath[len(prefix):]
+		}
+	}
+	return "./" + relPath
+}
+
 func (s *Service) ListVideosPage(options domain.VideoListOptions) (domain.VideoListPage, error) {
 	return s.store.ListVideosPage(options)
 }
 
 func (s *Service) Game(id int64) (domain.GameAsset, error) {
 	return s.store.GameByID(id)
+}
+
+func (s *Service) GameForProfile(id int64, profileID int64) (domain.GameAsset, error) {
+	return s.store.GameByIDForProfile(id, profileID)
+}
+
+func (s *Service) UpdateGamePrivateStateForProfile(gameID int64, profileID int64, state domain.GamePrivateState) (domain.GameAsset, error) {
+	if err := s.store.UpdateGamePrivateStateForProfile(gameID, profileID, state); err != nil {
+		return domain.GameAsset{}, err
+	}
+	return s.store.GameByIDForProfile(gameID, profileID)
+}
+
+func (s *Service) GameDetails(id int64) (domain.GameDetails, error) {
+	return s.store.GameDetails(id)
+}
+
+func (s *Service) GameMetadataProviders() []domain.GameMetadataProviderStatus {
+	return []domain.GameMetadataProviderStatus{
+		{
+			ID:           "gamelist",
+			Name:         "ES-DE/Batocera gamelist.xml",
+			Enabled:      true,
+			Configured:   true,
+			Free:         true,
+			Network:      false,
+			Capabilities: []string{"metadata", "artwork", "manuals"},
+			Message:      "Imported from local gamelist.xml files during scans.",
+		},
+		{
+			ID:           "libretro",
+			Name:         "Libretro Thumbnails",
+			Enabled:      true,
+			Configured:   true,
+			Free:         true,
+			Network:      true,
+			Capabilities: []string{"artwork"},
+			Message:      "Used for artwork fallback when local covers are unavailable.",
+		},
+		credentialedGameMetadataProvider("hasheous", "Hasheous", false, "", []string{"hash-match", "metadata", "artwork"}, "Free hash metadata lookup; no API key is required for basic use."),
+		credentialedGameMetadataProvider("igdb", "IGDB", true, "FOLIOSPACE_IGDB_CLIENT_ID", []string{"metadata", "artwork"}, "Requires Twitch/IGDB client credentials before it can be enabled."),
+		credentialedGameMetadataProvider("rawg", "RAWG", true, "FOLIOSPACE_RAWG_API_KEY", []string{"metadata", "artwork"}, "Requires a RAWG API key and upstream usage compliance."),
+		credentialedGameMetadataProvider("screenscraper", "ScreenScraper", true, "FOLIOSPACE_SCREENSCRAPER_USER", []string{"metadata", "artwork", "manuals"}, "Requires ScreenScraper account credentials before it can be enabled."),
+		credentialedGameMetadataProvider("steamgriddb", "SteamGridDB", true, "FOLIOSPACE_STEAMGRIDDB_API_KEY", []string{"artwork"}, "Requires a SteamGridDB API key before it can be enabled."),
+		{
+			ID:                  "mobygames",
+			Name:                "MobyGames",
+			Enabled:             false,
+			Configured:          false,
+			RequiresCredentials: true,
+			Free:                false,
+			Network:             true,
+			Capabilities:        []string{"metadata", "artwork"},
+			Message:             "Not enabled by default because the upstream API is paid.",
+		},
+	}
+}
+
+func credentialedGameMetadataProvider(id string, name string, requiresCredentials bool, envKey string, capabilities []string, message string) domain.GameMetadataProviderStatus {
+	configured := true
+	if envKey != "" {
+		configured = strings.TrimSpace(os.Getenv(envKey)) != ""
+	}
+	return domain.GameMetadataProviderStatus{
+		ID:                  id,
+		Name:                name,
+		Enabled:             !requiresCredentials || configured,
+		Configured:          configured,
+		RequiresCredentials: requiresCredentials,
+		Free:                true,
+		Network:             true,
+		Capabilities:        capabilities,
+		Message:             message,
+	}
+}
+
+func (s *Service) RefreshGameMetadata(id int64) (domain.GameMetadataActionResult, error) {
+	details, err := s.store.GameDetails(id)
+	if err != nil {
+		return domain.GameMetadataActionResult{}, err
+	}
+	return domain.GameMetadataActionResult{
+		GameID:         id,
+		Action:         "refresh",
+		Status:         "completed",
+		Message:        "Built-in local providers are available; credentialed network providers are reported but not called unless configured.",
+		MetadataStatus: details.MetadataStatus,
+		Sources:        details.Sources,
+		Providers:      s.GameMetadataProviders(),
+	}, nil
+}
+
+func (s *Service) SelectGameMetadataMatch(id int64, source string, sourceID string) (domain.GameMetadataActionResult, error) {
+	source = strings.TrimSpace(source)
+	sourceID = strings.TrimSpace(sourceID)
+	if source == "" || sourceID == "" {
+		return domain.GameMetadataActionResult{}, fmt.Errorf("source and sourceId are required")
+	}
+	details, err := s.store.GameDetails(id)
+	if err != nil {
+		return domain.GameMetadataActionResult{}, err
+	}
+	var selected domain.GameMetadataSource
+	for _, item := range details.Sources {
+		if item.Source == source && item.SourceID == sourceID {
+			selected = item
+			break
+		}
+	}
+	if selected.GameID == 0 {
+		return domain.GameMetadataActionResult{}, fmt.Errorf("metadata source %s/%s not found for game %d", source, sourceID, id)
+	}
+	selected.MatchedBy = "manual"
+	selected.Confidence = 1
+	if _, err := s.store.UpsertGameMetadataSource(selected); err != nil {
+		return domain.GameMetadataActionResult{}, err
+	}
+	details, err = s.store.GameDetails(id)
+	if err != nil {
+		return domain.GameMetadataActionResult{}, err
+	}
+	return domain.GameMetadataActionResult{
+		GameID:         id,
+		Action:         "select-match",
+		Status:         "completed",
+		Message:        "Selected existing metadata source as the manual match.",
+		MetadataStatus: details.MetadataStatus,
+		Sources:        details.Sources,
+		Providers:      s.GameMetadataProviders(),
+	}, nil
 }
 
 func (s *Service) Video(id int64) (domain.VideoAsset, error) {
@@ -778,6 +1114,9 @@ func (s *Service) OpenGameCover(id int64) (PageStream, error) {
 	if err != nil {
 		return PageStream{}, err
 	}
+	if stream, ok := s.openSelectedGameCover(id); ok {
+		return stream, nil
+	}
 	for _, candidate := range localGameCoverCandidates(game.FilePath) {
 		file, err := os.Open(candidate)
 		if err == nil {
@@ -799,7 +1138,16 @@ func (s *Service) OpenGameCover(id int64) (PageStream, error) {
 		return PageStream{}, err
 	}
 	for _, sourceURL := range urls {
-		if err := downloadGameCover(sourceURL, cachePath); err == nil {
+		if err := gameCoverDownloader(sourceURL, cachePath); err == nil {
+			_, _ = s.store.UpsertGameArtwork(domain.GameArtwork{
+				GameID:     game.ID,
+				Source:     "libretro",
+				Kind:       "cover",
+				URL:        sourceURL,
+				CachePath:  cachePath,
+				Selected:   true,
+				Confidence: 1,
+			})
 			file, err := os.Open(cachePath)
 			if err != nil {
 				return PageStream{}, err
@@ -808,6 +1156,23 @@ func (s *Service) OpenGameCover(id int64) (PageStream, error) {
 		}
 	}
 	return PageStream{}, fmt.Errorf("game cover not found")
+}
+
+func (s *Service) openSelectedGameCover(id int64) (PageStream, bool) {
+	details, err := s.store.GameDetails(id)
+	if err != nil {
+		return PageStream{}, false
+	}
+	for _, artwork := range details.Artwork {
+		if !artwork.Selected || artwork.Kind != "cover" || strings.TrimSpace(artwork.CachePath) == "" {
+			continue
+		}
+		file, contentType, err := openImageFile(artwork.CachePath)
+		if err == nil {
+			return PageStream{Body: file, ContentType: contentType}, true
+		}
+	}
+	return PageStream{}, false
 }
 
 func localGameCoverCandidates(gamePath string) []string {
@@ -1243,6 +1608,36 @@ func libretroBoxartCandidates(game domain.GameAsset) []string {
 	if title == "" {
 		return nil
 	}
+	listing, err := cachedLibretroListing(playlist, "Named_Boxarts")
+	if err == nil && len(listing) > 0 {
+		if out := libretroBoxartCandidatesFromListing(game, listing); len(out) > 0 {
+			return out
+		}
+	}
+	return libretroFallbackBoxartCandidates(game, playlist)
+}
+
+func libretroBoxartCandidatesFromListing(game domain.GameAsset, listing []string) []string {
+	return libretroArtworkCandidatesFromListing(game, "Named_Boxarts", listing)
+}
+
+func libretroArtworkCandidatesFromListing(game domain.GameAsset, artFolder string, listing []string) []string {
+	playlist, ok := libretroPlaylist(game.Platform)
+	if !ok || strings.TrimSpace(game.Title) == "" {
+		return nil
+	}
+	match := findLibretroArtworkMatch(libretroArtworkSearchNames(game), listing)
+	if match == "" {
+		return nil
+	}
+	return []string{libretroArtworkURL(playlist, artFolder, match)}
+}
+
+func libretroFallbackBoxartCandidates(game domain.GameAsset, playlist string) []string {
+	title := strings.TrimSpace(game.Title)
+	if title == "" {
+		return nil
+	}
 	names := []string{title}
 	if game.Region != "" {
 		names = append(names, fmt.Sprintf("%s (%s)", title, strings.TrimSpace(game.Region)))
@@ -1258,7 +1653,7 @@ func libretroBoxartCandidates(game domain.GameAsset) []string {
 			continue
 		}
 		seen[name] = true
-		out = append(out, fmt.Sprintf("https://thumbnails.libretro.com/%s/Named_Boxarts/%s.png", urlPathEscape(playlist), urlPathEscape(name)))
+		out = append(out, libretroArtworkURL(playlist, "Named_Boxarts", name+".png"))
 	}
 	return out
 }
@@ -1275,11 +1670,133 @@ func libretroPlaylist(platform string) (string, bool) {
 		return "Nintendo - Game Boy Color", true
 	case "gba":
 		return "Nintendo - Game Boy Advance", true
+	case "nds", "ds":
+		return "Nintendo - Nintendo DS", true
 	case "genesis", "mega-drive", "megadrive":
 		return "Sega - Mega Drive - Genesis", true
+	case "ps1", "psx", "playstation":
+		return "Sony - PlayStation", true
+	case "psp":
+		return "Sony - PlayStation Portable", true
 	default:
 		return "", false
 	}
+}
+
+func libretroArtworkSearchNames(game domain.GameAsset) []string {
+	title := strings.TrimSpace(game.Title)
+	if title == "" {
+		return nil
+	}
+	names := []string{}
+	if game.Region != "" {
+		names = append(names, fmt.Sprintf("%s (%s)", title, strings.TrimSpace(game.Region)))
+	}
+	names = append(names, title)
+	if game.Region == "" {
+		names = append(names, title+" (USA)", title+" (World)", title+" (Japan)")
+	}
+	out := make([]string, 0, len(names))
+	seen := map[string]bool{}
+	for _, name := range names {
+		name = sanitizeLibretroName(name)
+		key := strings.ToLower(name)
+		if name != "" && !seen[key] {
+			seen[key] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func findLibretroArtworkMatch(targets []string, listing []string) string {
+	for _, target := range targets {
+		target = strings.TrimSuffix(target, filepath.Ext(target))
+		for _, filename := range listing {
+			if strings.EqualFold(strings.TrimSuffix(filename, filepath.Ext(filename)), target) {
+				return filename
+			}
+		}
+	}
+	for _, target := range targets {
+		targetTokens := libretroMatchTokens(target)
+		if len(targetTokens) == 0 {
+			continue
+		}
+		best := ""
+		bestScore := 0.0
+		for _, filename := range listing {
+			score := libretroTokenScore(targetTokens, libretroMatchTokens(filename))
+			if score > bestScore {
+				bestScore = score
+				best = filename
+			}
+		}
+		if bestScore >= 0.85 {
+			return best
+		}
+	}
+	return ""
+}
+
+func libretroTokenScore(target map[string]bool, candidate map[string]bool) float64 {
+	if len(target) == 0 || len(candidate) == 0 {
+		return 0
+	}
+	matches := 0
+	for token := range target {
+		if candidate[token] {
+			matches++
+		}
+	}
+	coverage := float64(matches) / float64(len(target))
+	if coverage < 1 {
+		return coverage * 0.8
+	}
+	extra := len(candidate) - matches
+	if extra <= 0 {
+		return 1
+	}
+	return 1 - (float64(extra) * 0.03)
+}
+
+func libretroMatchTokens(name string) map[string]bool {
+	name = strings.TrimSuffix(name, filepath.Ext(name))
+	name = stripBracketedTags(name)
+	name = strings.ToLower(name)
+	replacer := strings.NewReplacer("&", " ", "_", " ", "-", " ", ",", " ", ".", " ", ":", " ", "'", " ", `"`, " ", "/", " ")
+	name = replacer.Replace(name)
+	out := map[string]bool{}
+	for _, token := range strings.Fields(name) {
+		if token != "" {
+			out[token] = true
+		}
+	}
+	return out
+}
+
+func stripBracketedTags(value string) string {
+	var out strings.Builder
+	depth := 0
+	for _, r := range value {
+		switch r {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 {
+				out.WriteRune(r)
+			}
+		}
+	}
+	return strings.TrimSpace(out.String())
+}
+
+func libretroArtworkURL(playlist string, artFolder string, filename string) string {
+	return fmt.Sprintf("https://thumbnails.libretro.com/%s/%s/%s", urlPathEscape(playlist), urlPathEscape(artFolder), urlPathEscape(filename))
 }
 
 func sanitizeLibretroName(name string) string {
@@ -1290,6 +1807,94 @@ func sanitizeLibretroName(name string) string {
 func urlPathEscape(value string) string {
 	return strings.ReplaceAll(url.QueryEscape(value), "+", "%20")
 }
+
+var libretroListingHrefPattern = regexp.MustCompile(`(?i)href="([^"]+)"`)
+
+type libretroListingCacheEntry struct {
+	filenames []string
+	expires   time.Time
+}
+
+var libretroListingCache = struct {
+	sync.Mutex
+	items map[string]libretroListingCacheEntry
+}{items: map[string]libretroListingCacheEntry{}}
+
+var libretroListingFetcher = fetchLibretroListing
+
+func cachedLibretroListing(playlist string, artFolder string) ([]string, error) {
+	key := playlist + "\x00" + artFolder
+	now := time.Now()
+	libretroListingCache.Lock()
+	if entry, ok := libretroListingCache.items[key]; ok && now.Before(entry.expires) {
+		out := append([]string(nil), entry.filenames...)
+		libretroListingCache.Unlock()
+		return out, nil
+	}
+	libretroListingCache.Unlock()
+
+	filenames, err := libretroListingFetcher(playlist, artFolder)
+	if err != nil {
+		return nil, err
+	}
+	libretroListingCache.Lock()
+	libretroListingCache.items[key] = libretroListingCacheEntry{
+		filenames: append([]string(nil), filenames...),
+		expires:   now.Add(6 * time.Hour),
+	}
+	libretroListingCache.Unlock()
+	return filenames, nil
+}
+
+func fetchLibretroListing(playlist string, artFolder string) ([]string, error) {
+	sourceURL := fmt.Sprintf("https://thumbnails.libretro.com/%s/%s/", urlPathEscape(playlist), urlPathEscape(artFolder))
+	client := http.Client{Timeout: 8 * time.Second}
+	response, err := client.Get(sourceURL)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("listing source returned %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, err
+	}
+	return parseLibretroListingFilenames(string(data)), nil
+}
+
+func parseLibretroListingFilenames(html string) []string {
+	matches := libretroListingHrefPattern.FindAllStringSubmatch(html, -1)
+	out := make([]string, 0, len(matches))
+	seen := map[string]bool{}
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		href := strings.TrimSpace(match[1])
+		if href == "" || strings.HasSuffix(href, "/") || strings.HasPrefix(href, "../") {
+			continue
+		}
+		filename, err := url.PathUnescape(href)
+		if err != nil {
+			filename = href
+		}
+		ext := strings.ToLower(filepath.Ext(filename))
+		switch ext {
+		case ".png", ".jpg", ".jpeg", ".webp":
+		default:
+			continue
+		}
+		if !seen[filename] {
+			seen[filename] = true
+			out = append(out, filename)
+		}
+	}
+	return out
+}
+
+var gameCoverDownloader = downloadGameCover
 
 func downloadGameCover(sourceURL string, cachePath string) error {
 	client := http.Client{Timeout: 8 * time.Second}

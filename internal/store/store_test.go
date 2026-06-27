@@ -715,6 +715,132 @@ func TestStorePersistsAndListsGameAssets(t *testing.T) {
 	}
 }
 
+func TestStorePersistsGameMetadataDetails(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := s.UpsertGame(domain.GameAsset{
+		LibraryID:     lib.ID,
+		Title:         "Super Mario World",
+		Platform:      "snes",
+		Format:        "sfc",
+		FilePath:      "/library/SNES/Super Mario World.sfc",
+		RelPath:       "SNES/Super Mario World.sfc",
+		Size:          1024,
+		MTime:         time.Unix(20, 0),
+		CRC32:         "b19ed489",
+		SHA1:          "0123456789abcdef0123456789abcdef01234567",
+		Region:        "USA",
+		ROMSetName:    "No-Intro",
+		EmulatorHint:  "snes",
+		Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.UpsertGameMetadata(domain.GameMetadata{
+		GameID:       game.ID,
+		DisplayTitle: "Super Mario World",
+		Summary:      "Dinosaur Land platform adventure.",
+		ReleaseDate:  "1990-11-21",
+		Genres:       []string{"Platform"},
+		Developers:   []string{"Nintendo EAD"},
+		Publishers:   []string{"Nintendo"},
+		Players:      "1-2",
+		Rating:       9.3,
+		ExternalLinks: []string{
+			"https://example.invalid/smw",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertGameMetadataSource(domain.GameMetadataSource{
+		GameID:     game.ID,
+		Source:     "gamelist",
+		SourceID:   "snes/smw",
+		MatchedBy:  "manual",
+		Confidence: 1,
+		RawJSON:    `{"name":"Super Mario World"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertGameArtwork(domain.GameArtwork{
+		GameID:     game.ID,
+		Source:     "gamelist",
+		Kind:       "cover",
+		URL:        "/api/games/1/cover",
+		CachePath:  "cache/game-covers/1.png",
+		Width:      600,
+		Height:     800,
+		Selected:   true,
+		Confidence: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	details, err := s.GameDetails(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.MetadataStatus != "matched" || details.Metadata.DisplayTitle != "Super Mario World" || details.Metadata.Genres[0] != "Platform" {
+		t.Fatalf("details metadata = %#v, want matched metadata", details)
+	}
+	if len(details.Sources) != 1 || details.Sources[0].Source != "gamelist" || details.Sources[0].RawJSON == "" {
+		t.Fatalf("details sources = %#v, want persisted gamelist source", details.Sources)
+	}
+	if len(details.Artwork) != 1 || !details.Artwork[0].Selected || details.Artwork[0].Kind != "cover" {
+		t.Fatalf("details artwork = %#v, want selected cover artwork", details.Artwork)
+	}
+}
+
+func TestStoreGameDetailsReportsUnmatchedWhenMetadataIsEmpty(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := s.UpsertGame(domain.GameAsset{
+		LibraryID:     lib.ID,
+		Title:         "Unknown Game",
+		Platform:      "gba",
+		Format:        "gba",
+		FilePath:      "/library/GBA/Unknown Game.gba",
+		RelPath:       "GBA/Unknown Game.gba",
+		Size:          1024,
+		MTime:         time.Unix(21, 0),
+		CRC32:         "11111111",
+		SHA1:          "1111111111111111111111111111111111111111",
+		EmulatorHint:  "gba",
+		Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	details, err := s.GameDetails(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.MetadataStatus != "unmatched" || details.Metadata.GameID != game.ID || len(details.Sources) != 0 || len(details.Artwork) != 0 {
+		t.Fatalf("details = %#v, want unmatched empty metadata state", details)
+	}
+}
+
 func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
@@ -752,6 +878,160 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	}
 	if len(filtered.Items) != 1 || filtered.Items[0].Title != "Super Contra" || filtered.HasMore {
 		t.Fatalf("filtered page = %#v, want Super Contra only", filtered)
+	}
+
+	romSet, err := s.ListGamesPage(domain.GameListOptions{Limit: 50, ROMSetName: "GBA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(romSet.Items) != 1 || romSet.Items[0].Title != "Advance Wars" {
+		t.Fatalf("rom set page = %#v, want Advance Wars only", romSet)
+	}
+}
+
+func TestStoreScopesGamePrivateStateByProfile(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	defaultProfile, err := s.DefaultProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestProfile, err := s.CreateProfile("Guest", "game", "amber")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := s.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := s.UpsertGame(domain.GameAsset{
+		LibraryID:     lib.ID,
+		Title:         "Advance Wars",
+		Platform:      "gba",
+		ROMSetName:    "GBA",
+		Region:        "USA",
+		Format:        "gba",
+		FilePath:      "/library/gba/advance-wars.gba",
+		RelPath:       "gba/advance-wars.gba",
+		Size:          1024,
+		MTime:         time.Unix(31, 0),
+		CRC32:         "11111111",
+		SHA1:          "1111111111111111111111111111111111111111",
+		EmulatorHint:  "gba",
+		Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.UpdateGamePrivateStateForProfile(game.ID, defaultProfile.ID, domain.GamePrivateState{Favorite: true, Liked: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateGamePrivateStateForProfile(game.ID, guestProfile.ID, domain.GamePrivateState{Favorite: false, Liked: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	defaultGame, err := s.GameByIDForProfile(game.ID, defaultProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !defaultGame.Favorite || !defaultGame.Liked {
+		t.Fatalf("default game = %#v, want favorite and liked", defaultGame)
+	}
+	guestPage, err := s.ListGamesPageForProfile(domain.GameListOptions{Limit: 20, Sort: "platform"}, guestProfile.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(guestPage.Items) != 1 || guestPage.Items[0].Favorite || !guestPage.Items[0].Liked {
+		t.Fatalf("guest page = %#v, want liked only", guestPage)
+	}
+}
+
+func TestStoreManualCollectionsSpanAssetTypes(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	bookLib, err := s.CreateLibraryWithType("Books", "/books", "book")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := s.UpsertSeries(bookLib.ID, "Guides", "Guides")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := s.UpsertBook(series.ID, "Arcade Guide", "pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertFile(book.ID, bookLib.ID, "/books/Guides/Arcade Guide.pdf", "Guides/Arcade Guide.pdf", 2048, time.Unix(10, 0), ".pdf"); err != nil {
+		t.Fatal(err)
+	}
+	gameLib, err := s.CreateLibraryWithType("Games", "/games", "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := s.UpsertGame(domain.GameAsset{LibraryID: gameLib.ID, Title: "Metal Slug", Platform: "arcade", ROMSetName: "MAME", Format: "zip", FilePath: "/games/arcade/mslug.zip", RelPath: "arcade/mslug.zip", Size: 1024, MTime: time.Unix(11, 0), CRC32: "22222222", SHA1: "2222222222222222222222222222222222222222", EmulatorHint: "arcade", Compatibility: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	videoLib, err := s.CreateLibraryWithType("Videos", "/videos", "video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	video, err := s.UpsertVideo(domain.VideoAsset{LibraryID: videoLib.ID, Title: "Cabinet Tour", Format: "mp4", FilePath: "/videos/Cabinet Tour.mp4", RelPath: "Cabinet Tour.mp4", Size: 4096, MTime: time.Unix(12, 0), ThumbnailStatus: "placeholder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	collection, err := s.CreateManualCollection(domain.ManualCollection{Name: "Arcade Night", Description: "Cross-media picks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []domain.ManualCollectionItem{
+		{AssetType: "book", AssetID: book.ID},
+		{AssetType: "game", AssetID: game.ID},
+		{AssetType: "video", AssetID: video.ID},
+	} {
+		if err := s.AddManualCollectionItem(collection.ID, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.AddManualCollectionItem(collection.ID, domain.ManualCollectionItem{AssetType: "game", AssetID: game.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := s.ListManualCollectionItems(collection.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 || items[0].AssetType != "book" || items[1].AssetType != "game" || items[2].AssetType != "video" {
+		t.Fatalf("manual collection items = %#v, want book/game/video in insertion order without duplicates", items)
+	}
+	collections, err := s.ListManualCollections()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(collections) != 1 || collections[0].ItemCount != 3 {
+		t.Fatalf("manual collections = %#v, want item count", collections)
+	}
+	if err := s.RemoveManualCollectionItem(collection.ID, "game", game.ID); err != nil {
+		t.Fatal(err)
+	}
+	items, err = s.ListManualCollectionItems(collection.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("manual collection items after remove = %#v, want two", items)
 	}
 }
 

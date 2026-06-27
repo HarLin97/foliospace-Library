@@ -3,7 +3,7 @@ import type { CSSProperties, FormEvent, MouseEvent, ReactNode, SyntheticEvent, T
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, getActiveProfileId, getAuthToken, JobEvent, Library, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, ThumbnailWorkerStatus, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, GamePrivateState, getActiveProfileId, getAuthToken, JobEvent, Library, ManualCollection, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, ThumbnailWorkerStatus, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
 import {
   DEFAULT_WEBTOON_ANCHOR_RATIO,
   WEBTOON_POSITION_SCHEMA,
@@ -15,6 +15,7 @@ import {
 } from "./webtoon-position";
 import { fullscreenImageFit, type ReaderImageFitMode } from "./reader-fit";
 import { resolveEpubOpenPosition, type EpubChapterOpenPosition } from "./epub-navigation";
+import { gamePlatformFilterOptions } from "./game-platform-options";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -51,6 +52,7 @@ export function App() {
   const [wantBooks, setWantBooks] = useState<Book[]>([]);
   const [gameShelf, setGameShelf] = useState<GameAsset[]>([]);
   const [videoShelf, setVideoShelf] = useState<VideoAsset[]>([]);
+  const [manualCollections, setManualCollections] = useState<ManualCollection[]>([]);
   const [gameCatalog, setGameCatalog] = useState<GameAsset[]>([]);
   const [videoCatalog, setVideoCatalog] = useState<VideoAsset[]>([]);
   const [gameCatalogTotal, setGameCatalogTotal] = useState(0);
@@ -87,6 +89,7 @@ export function App() {
   const [collectionSort, setCollectionSort] = useState<CollectionSort>("title");
   const [collectionSortDirection, setCollectionSortDirection] = useState<SortDirection>("asc");
   const [gameCatalogSort, setGameCatalogSort] = useState<GameCatalogSort>("platform");
+  const [gameCatalogPlatform, setGameCatalogPlatform] = useState("");
   const [videoCatalogSort, setVideoCatalogSort] = useState<VideoCatalogSort>("title");
   const [status, setStatus] = useState("Ready");
   const [nowTick, setNowTick] = useState(Date.now());
@@ -196,7 +199,7 @@ export function App() {
       } else {
         persistActiveProfileId("");
       }
-      const [preferences, info, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextThumbnailWorkerStatus, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf] = await Promise.all([
+      const [preferences, info, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextThumbnailWorkerStatus, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf, nextManualCollections] = await Promise.all([
         api.clientPreferences(),
         api.clientInfo(),
         api.scanSettings(),
@@ -211,6 +214,7 @@ export function App() {
         api.privateStatusBooks("want"),
         api.recentGames(),
         api.recentVideos(),
+        api.manualCollections(),
       ]);
       applyClientPreferences(preferences);
       preferencesLoaded.current = true;
@@ -228,6 +232,7 @@ export function App() {
       setWantBooks(arrayOrEmpty(nextWantBooks));
       setGameShelf(arrayOrEmpty(nextGameShelf));
       setVideoShelf(arrayOrEmpty(nextVideoShelf));
+      setManualCollections(arrayOrEmpty(nextManualCollections));
     } finally {
       if (showProgress) {
         setActiveTask(null);
@@ -245,7 +250,7 @@ export function App() {
     if (gameCatalogLoading) return;
     setGameCatalogLoading(true);
     try {
-      const page = await api.clientGames({ limit: catalogPageSize, offset, sort: gameCatalogSort });
+      const page = await api.clientGames({ limit: catalogPageSize, offset, sort: gameCatalogSort, platform: gameCatalogPlatform });
       const items = arrayOrEmpty(page.items);
       setGameCatalog((current) => reset ? items : mergeByID(current, items));
       setGameCatalogTotal(page.total);
@@ -281,18 +286,27 @@ export function App() {
 
   function changeGameCatalogSort(nextSort: GameCatalogSort) {
     setGameCatalogSort(nextSort);
+    reloadGameCatalog(nextSort, gameCatalogPlatform);
+  }
+
+  function changeGameCatalogPlatform(nextPlatform: string) {
+    setGameCatalogPlatform(nextPlatform);
+    reloadGameCatalog(gameCatalogSort, nextPlatform);
+  }
+
+  function reloadGameCatalog(sort: GameCatalogSort, platform: string) {
     setGameCatalog([]);
     setGameCatalogTotal(0);
     setGameCatalogHasMore(false);
     setTimeout(() => {
-      void loadGameCatalogPageForSort(nextSort);
+      void loadGameCatalogPageForOptions(sort, platform);
     }, 0);
   }
 
-  async function loadGameCatalogPageForSort(sort: GameCatalogSort) {
+  async function loadGameCatalogPageForOptions(sort: GameCatalogSort, platform: string) {
     setGameCatalogLoading(true);
     try {
-      const page = await api.clientGames({ limit: catalogPageSize, offset: 0, sort });
+      const page = await api.clientGames({ limit: catalogPageSize, offset: 0, sort, platform });
       const items = arrayOrEmpty(page.items);
       setGameCatalog(items);
       setGameCatalogTotal(page.total);
@@ -1287,6 +1301,11 @@ export function App() {
     setSelectedSeries((current) => (current?.id === updatedCollection.id ? updatedCollection : current));
   }
 
+  function mergeGameState(updatedGame: GameAsset) {
+    setGameShelf((items) => replaceGame(items, updatedGame));
+    setGameCatalog((items) => replaceGame(items, updatedGame));
+  }
+
   async function updateCollectionState(collection: Series, patch: Partial<CollectionPrivateState>) {
     const nextState = {
       favorite: patch.favorite ?? collection.favorite,
@@ -1298,6 +1317,39 @@ export function App() {
       setStatus(t.collectionStateSaved);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : t.collectionStateFailed);
+    }
+  }
+
+  async function updateGameState(game: GameAsset, patch: Partial<GamePrivateState>) {
+    const nextState = {
+      favorite: patch.favorite ?? game.favorite,
+      liked: patch.liked ?? game.liked,
+    };
+    try {
+      const updatedGame = await api.gamePrivateState(game.id, nextState);
+      mergeGameState(updatedGame);
+      setStatus(t.gameStateSaved);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : t.gameStateFailed);
+    }
+  }
+
+  async function addAssetToManualCollection(assetType: "book" | "game" | "video", assetId: number, title: string) {
+    const collectionNames = manualCollections.map((collection) => collection.name).join(", ");
+    const name = window.prompt(t.manualCollectionPrompt(title, collectionNames), manualCollections[0]?.name ?? "");
+    const normalizedName = name?.trim();
+    if (!normalizedName) return;
+    try {
+      let collection = manualCollections.find((item) => item.name.toLowerCase() === normalizedName.toLowerCase());
+      if (!collection) {
+        collection = await api.createManualCollection({ name: normalizedName });
+      }
+      await api.addManualCollectionItem(collection.id, { assetType, assetId });
+      const nextCollections = await api.manualCollections();
+      setManualCollections(arrayOrEmpty(nextCollections));
+      setStatus(t.manualCollectionSaved(normalizedName));
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : t.manualCollectionFailed);
     }
   }
 
@@ -1780,6 +1832,8 @@ export function App() {
   const favoriteCollections = useMemo(() => series.filter((item) => item.favorite), [series]);
   const likedCollections = useMemo(() => series.filter((item) => item.liked), [series]);
   const favoritePageItemCount = favoriteCollections.length + likedCollections.length + favoriteBooks.length;
+  const gameCatalogSections = useMemo(() => groupGamesByPlatform(gameCatalog), [gameCatalog]);
+  const gamePlatformOptions = useMemo(() => gamePlatformFilterOptions(series), [series]);
 
   useEffect(() => {
     const node = collectionSectionsRef.current;
@@ -2092,6 +2146,8 @@ export function App() {
                       onOpen={openBook}
                       meta={(book) => continueMeta(book, t)}
                       largeCovers={visibleContinueBooks.length < 4}
+                      labels={t}
+                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
                       progress
                     />
                   )}
@@ -2102,6 +2158,8 @@ export function App() {
                       books={favoriteBooks.slice(0, 4)}
                       onOpen={openBook}
                       meta={(book) => privateShelfMeta(book, t)}
+                      labels={t}
+                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
                     />
                   )}
                   {wantBooks.length > 0 && (
@@ -2111,6 +2169,8 @@ export function App() {
                       books={wantBooks.slice(0, 4)}
                       onOpen={openBook}
                       meta={(book) => privateShelfMeta(book, t)}
+                      labels={t}
+                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
                     />
                   )}
                 </div>
@@ -2124,6 +2184,9 @@ export function App() {
                       meta={(game) => gameMeta(game, t)}
                       moreLabel={t.more}
                       onMore={openGameCatalog}
+                      labels={t}
+                      onStateChange={updateGameState}
+                      onAddToCollection={(game) => addAssetToManualCollection("game", game.id, game.title)}
                     />
                   )}
                   {videoShelf.length > 0 && (
@@ -2138,6 +2201,8 @@ export function App() {
                       }}
                       moreLabel={t.more}
                       onMore={openVideoCatalog}
+                      labels={t}
+                      onAddToCollection={(video) => addAssetToManualCollection("video", video.id, video.title)}
                     />
                   )}
                   {recentBooks.length > 0 && (
@@ -2147,6 +2212,8 @@ export function App() {
                       books={recentBooks.slice(0, 4)}
                       onOpen={openBook}
                       meta={(book) => recentMeta(book, t)}
+                      labels={t}
+                      onAddToCollection={(book) => addAssetToManualCollection("book", book.id, book.title)}
                     />
                   )}
                 </div>
@@ -2353,22 +2420,52 @@ export function App() {
             subtitle={t.gameCatalogSubtitle}
             countLabel={gameCatalogLoading && gameCatalog.length === 0 ? t.loadingGames : t.catalogLoadedCount(gameCatalog.length, gameCatalogTotal)}
             tools={(
-              <label className="catalogSortControl">
-                <span>{t.sort}</span>
-                <select value={gameCatalogSort} onChange={(event) => changeGameCatalogSort(event.target.value as GameCatalogSort)}>
-                  <option value="platform">{t.sortPlatform}</option>
-                  <option value="title">{t.sortTitle}</option>
-                  <option value="recently_added">{t.sortRecentlyAdded}</option>
-                </select>
-              </label>
+              <>
+                <label className="catalogSortControl">
+                  <span>{t.platformFilter}</span>
+                  <select value={gameCatalogPlatform} onChange={(event) => changeGameCatalogPlatform(event.target.value)}>
+                    <option value="">{t.allPlatforms}</option>
+                    {gamePlatformOptions.map((option) => (
+                      <option value={option.value} key={`game-platform-filter-${option.value}`}>
+                        {option.label} ({option.count})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="catalogSortControl">
+                  <span>{t.sort}</span>
+                  <select value={gameCatalogSort} onChange={(event) => changeGameCatalogSort(event.target.value as GameCatalogSort)}>
+                    <option value="platform">{t.sortPlatform}</option>
+                    <option value="title">{t.sortTitle}</option>
+                    <option value="recently_added">{t.sortRecentlyAdded}</option>
+                  </select>
+                </label>
+              </>
             )}
           >
-            <div className="catalogGrid games">
-              {gameCatalog.map((game) => (
-                <GameTile key={`catalog-game-${game.id}`} game={game} meta={gameMeta(game, t)} />
+            <div className="gamePlatformList">
+              {gameCatalogSections.map((section) => (
+                <section className="gamePlatformGroup" key={`game-platform-${section.platform}`}>
+                  <div className="gamePlatformHeader">
+                    <h2>{section.title}</h2>
+                    <small>{t.gameCount(section.items.length)}</small>
+                  </div>
+                  <div className="catalogGrid games">
+                    {section.items.map((game) => (
+                      <GameTile
+                        key={`catalog-game-${game.id}`}
+                        game={game}
+                        meta={gameMeta(game, t)}
+                        labels={t}
+                        onStateChange={updateGameState}
+                        onAddToCollection={(item) => addAssetToManualCollection("game", item.id, item.title)}
+                      />
+                    ))}
+                  </div>
+                </section>
               ))}
               {gameCatalogHasMore && (
-                <button className="catalogLoadMore" type="button" disabled={gameCatalogLoading} onClick={() => loadGameCatalogPage(gameCatalog.length)}>
+                <button className="catalogLoadMore gamePlatformLoadMore" type="button" disabled={gameCatalogLoading} onClick={() => loadGameCatalogPage(gameCatalog.length)}>
                   {gameCatalogLoading ? t.loadingGames : t.loadMore}
                 </button>
               )}
@@ -2434,6 +2531,8 @@ export function App() {
                   video={video}
                   meta={videoMeta(video, t)}
                   onOpen={setSelectedVideo}
+                  labels={t}
+                  onAddToCollection={(item) => addAssetToManualCollection("video", item.id, item.title)}
                 />
               ))}
               {videoCatalogHasMore && (
@@ -3183,6 +3282,8 @@ function BookShelf({
   books,
   onOpen,
   meta,
+  labels,
+  onAddToCollection,
   largeCovers = false,
   progress = false,
 }: {
@@ -3191,6 +3292,8 @@ function BookShelf({
   books: Book[];
   onOpen: (book: Book) => void;
   meta: (book: Book) => string;
+  labels: Translation;
+  onAddToCollection: (book: Book) => void;
   largeCovers?: boolean;
   progress?: boolean;
 }) {
@@ -3204,21 +3307,32 @@ function BookShelf({
       </div>
       <div className="shelfScroller">
         {books.map((book) => (
-          <button className="shelfBook" key={`${title}-${book.id}`} onClick={() => onOpen(book)} title={book.title}>
-            <span className="shelfCover">
-              <BookCover book={book} largeCover={largeCovers} />
-              <span className="coverBadge">{book.format.toUpperCase()}</span>
-            </span>
-            <span>
-              <strong>{book.title}</strong>
-              <small>{meta(book)}</small>
-              {progress && (
-                <span className="shelfProgress" aria-label={`${readingProgress(book)} percent read`}>
-                  <span style={{ width: `${readingProgress(book)}%` }} />
-                </span>
-              )}
-            </span>
-          </button>
+          <div className="shelfBookShell" key={`${title}-${book.id}`}>
+            <button className="shelfBook" onClick={() => onOpen(book)} title={book.title}>
+              <span className="shelfCover">
+                <BookCover book={book} largeCover={largeCovers} />
+                <span className="coverBadge">{book.format.toUpperCase()}</span>
+              </span>
+              <span>
+                <strong>{book.title}</strong>
+                <small>{meta(book)}</small>
+                {progress && (
+                  <span className="shelfProgress" aria-label={`${readingProgress(book)} percent read`}>
+                    <span style={{ width: `${readingProgress(book)}%` }} />
+                  </span>
+                )}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="manualCollectionAction"
+              onClick={() => onAddToCollection(book)}
+              title={labels.addToManualCollection}
+              aria-label={labels.addToManualCollection}
+            >
+              +
+            </button>
+          </div>
         ))}
       </div>
     </div>
@@ -3691,6 +3805,9 @@ function GameShelf({
   meta,
   moreLabel,
   onMore,
+  labels,
+  onStateChange,
+  onAddToCollection,
 }: {
   title: string;
   subtitle: string;
@@ -3698,6 +3815,9 @@ function GameShelf({
   meta: (game: GameAsset) => string;
   moreLabel: string;
   onMore: () => void;
+  labels: Translation;
+  onStateChange: (game: GameAsset, patch: Partial<GamePrivateState>) => void;
+  onAddToCollection: (game: GameAsset) => void;
 }) {
   const sortedGames = [...games].sort(compareGamesByPlatform);
 
@@ -3712,28 +3832,73 @@ function GameShelf({
       </div>
       <div className="shelfScroller">
         {sortedGames.map((game) => (
-          <GameTile className="shelfBook" key={`game-${game.id}`} game={game} meta={meta(game)} />
+          <GameTile className="shelfBook" key={`game-${game.id}`} game={game} meta={meta(game)} labels={labels} onStateChange={onStateChange} onAddToCollection={onAddToCollection} />
         ))}
       </div>
     </div>
   );
 }
 
-function GameTile({ game, meta, className = "book" }: { game: GameAsset; meta: string; className?: string }) {
+function GameTile({
+  game,
+  meta,
+  labels,
+  onStateChange,
+  onAddToCollection,
+  className = "book",
+}: {
+  game: GameAsset;
+  meta: string;
+  labels: Translation;
+  onStateChange: (game: GameAsset, patch: Partial<GamePrivateState>) => void;
+  onAddToCollection: (game: GameAsset) => void;
+  className?: string;
+}) {
   const [coverFailed, setCoverFailed] = useState(false);
   const hasCover = Boolean(game.coverUrl && !coverFailed);
 
   return (
-    <button className={`${className} gameCard`} title={game.title}>
-      <span className={`shelfCover gameCover${hasCover ? " hasCover" : ""}`}>
-        {hasCover ? <img src={authenticatedResourcePath(game.coverUrl)} alt="" loading="lazy" onError={() => setCoverFailed(true)} /> : null}
-        <span className="gameCoverPlatform">{gamePlatformLabel(game)}</span>
-        <span className="gameCoverTitle">Now Printing</span>
-        <span className="gameCoverFormat">{game.format.toUpperCase()}</span>
-      </span>
-      <strong>{game.title}</strong>
-      <small>{meta}</small>
-    </button>
+    <div className={`${className} gameCard`} title={game.title}>
+      <button className="gameCardButton" type="button">
+        <span className={`shelfCover gameCover${hasCover ? " hasCover" : ""}`}>
+          {hasCover ? <img src={authenticatedResourcePath(game.coverUrl)} alt="" loading="lazy" onError={() => setCoverFailed(true)} /> : null}
+          <span className="gameCoverPlatform">{gamePlatformLabel(game)}</span>
+          <span className="gameCoverTitle">Now Printing</span>
+          <span className="gameCoverFormat">{game.format.toUpperCase()}</span>
+        </span>
+        <strong>{game.title}</strong>
+        <small>{meta}</small>
+      </button>
+      <div className="gameCardActions">
+        <button
+          type="button"
+          className={game.favorite ? "gameCardAction active" : "gameCardAction"}
+          onClick={() => onStateChange(game, { favorite: !game.favorite })}
+          title={labels.gameFavorite}
+          aria-label={labels.gameFavorite}
+        >
+          ★
+        </button>
+        <button
+          type="button"
+          className={game.liked ? "gameCardAction active" : "gameCardAction"}
+          onClick={() => onStateChange(game, { liked: !game.liked })}
+          title={labels.gameLike}
+          aria-label={labels.gameLike}
+        >
+          ♥
+        </button>
+        <button
+          type="button"
+          className="gameCardAction"
+          onClick={() => onAddToCollection(game)}
+          title={labels.addToManualCollection}
+          aria-label={labels.addToManualCollection}
+        >
+          +
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -3745,6 +3910,8 @@ function VideoShelf({
   onOpen,
   moreLabel,
   onMore,
+  labels,
+  onAddToCollection,
 }: {
   title: string;
   subtitle: string;
@@ -3753,6 +3920,8 @@ function VideoShelf({
   onOpen: (video: VideoAsset) => void;
   moreLabel: string;
   onMore: () => void;
+  labels: Translation;
+  onAddToCollection: (video: VideoAsset) => void;
 }) {
   return (
     <div className="bookShelf videoShelf">
@@ -3765,29 +3934,54 @@ function VideoShelf({
       </div>
       <div className="shelfScroller">
         {videos.map((video) => (
-          <VideoTile className="shelfBook" key={`video-${video.id}`} video={video} meta={meta(video)} onOpen={onOpen} />
+          <VideoTile className="shelfBook" key={`video-${video.id}`} video={video} meta={meta(video)} onOpen={onOpen} labels={labels} onAddToCollection={onAddToCollection} />
         ))}
       </div>
     </div>
   );
 }
 
-function VideoTile({ video, meta, onOpen, className = "book" }: { video: VideoAsset; meta: string; onOpen: (video: VideoAsset) => void; className?: string }) {
+function VideoTile({
+  video,
+  meta,
+  onOpen,
+  labels,
+  onAddToCollection,
+  className = "book",
+}: {
+  video: VideoAsset;
+  meta: string;
+  onOpen: (video: VideoAsset) => void;
+  labels: Translation;
+  onAddToCollection: (video: VideoAsset) => void;
+  className?: string;
+}) {
   const [thumbnailFailed, setThumbnailFailed] = useState(false);
 
   return (
-    <button className={`${className} videoCard`} title={video.title} onClick={() => onOpen(video)}>
-      <span className="shelfCover videoCover">
-        {!thumbnailFailed && <img src={authenticatedResourcePath(video.thumbnailUrl)} alt="" loading="lazy" onError={() => setThumbnailFailed(true)} />}
-        <span className="videoCoverFallback">
-          <em>Now Showing</em>
-          <strong>{video.title}</strong>
+    <div className={`${className} videoCard`} title={video.title}>
+      <button className="videoCardButton" type="button" onClick={() => onOpen(video)}>
+        <span className="shelfCover videoCover">
+          {!thumbnailFailed && <img src={authenticatedResourcePath(video.thumbnailUrl)} alt="" loading="lazy" onError={() => setThumbnailFailed(true)} />}
+          <span className="videoCoverFallback">
+            <em>Now Showing</em>
+            <strong>{video.title}</strong>
+          </span>
+          <span className="videoCoverFormat">{video.format.toUpperCase()}</span>
         </span>
-        <span className="videoCoverFormat">{video.format.toUpperCase()}</span>
-      </span>
-      <strong>{video.title}</strong>
-      <small>{meta}</small>
-    </button>
+        <strong>{video.title}</strong>
+        <small>{meta}</small>
+      </button>
+      <button
+        type="button"
+        className="manualCollectionAction"
+        onClick={() => onAddToCollection(video)}
+        title={labels.addToManualCollection}
+        aria-label={labels.addToManualCollection}
+      >
+        +
+      </button>
+    </div>
   );
 }
 
@@ -3801,6 +3995,24 @@ function compareGamesByPlatform(a: GameAsset, b: GameAsset) {
   const platformNameDelta = (a.platform || "").localeCompare(b.platform || "");
   if (platformNameDelta !== 0) return platformNameDelta;
   return a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true });
+}
+
+function groupGamesByPlatform(games: GameAsset[]) {
+  const sections = new Map<string, { platform: string; title: string; items: GameAsset[] }>();
+  for (const game of [...games].sort(compareGamesByPlatform)) {
+    const platform = (game.platform || "unknown").toLowerCase();
+    const existing = sections.get(platform);
+    if (existing) {
+      existing.items.push(game);
+      continue;
+    }
+    sections.set(platform, {
+      platform,
+      title: gamePlatformLabel(game),
+      items: [game],
+    });
+  }
+  return Array.from(sections.values());
 }
 
 function platformSortRank(platform: string) {
@@ -4371,7 +4583,11 @@ const translations = {
     wantSubtitle: "稍后再读",
     gameShelf: "游戏库",
     gameShelfSubtitle: "本地 ROM 与 ROM set",
-    gameCatalogSubtitle: "按机种排序的完整游戏列表",
+    gameCatalogSubtitle: "按机种分组的完整游戏列表",
+    gameFavorite: "收藏游戏",
+    gameLike: "喜欢游戏",
+    gameStateSaved: "游戏状态已保存",
+    gameStateFailed: "游戏状态保存失败",
     videoShelf: "视频库",
     videoShelfSubtitle: "本地视频文件与空间媒体入口",
     videoCoverHint: "自定义封面可放在视频同目录：同名 .jpg/.png，或 poster.jpg / cover.jpg。",
@@ -4469,6 +4685,10 @@ const translations = {
     collectionLike: "点赞作品集",
     collectionStateSaved: "作品集状态已保存",
     collectionStateFailed: "作品集状态保存失败",
+    addToManualCollection: "加入手动集合",
+    manualCollectionPrompt: (title: string, names: string) => names ? `把「${title}」加入哪个集合？\n已有：${names}\n输入新名称会自动创建。` : `把「${title}」加入哪个集合？\n输入集合名称会自动创建。`,
+    manualCollectionSaved: (name: string) => `已加入集合：${name}`,
+    manualCollectionFailed: "加入集合失败",
     volumeWall: "封面墙",
     selectCollection: "选择一个作品集浏览单行本",
     sort: "排序",
@@ -4480,6 +4700,8 @@ const translations = {
     sortCount: "数量",
     sortType: "类型",
     sortPlatform: "机种",
+    platformFilter: "机种",
+    allPlatforms: "全部机种",
     sortDirection: "排序方向",
     sortAscending: "升序",
     sortDescending: "降序",
@@ -4594,7 +4816,11 @@ const translations = {
     wantSubtitle: "稍後再讀",
     gameShelf: "遊戲庫",
     gameShelfSubtitle: "本地 ROM 與 ROM set",
-    gameCatalogSubtitle: "依機種排序的完整遊戲列表",
+    gameCatalogSubtitle: "依機種分組的完整遊戲列表",
+    gameFavorite: "收藏遊戲",
+    gameLike: "喜歡遊戲",
+    gameStateSaved: "遊戲狀態已儲存",
+    gameStateFailed: "遊戲狀態儲存失敗",
     videoShelf: "影片庫",
     videoShelfSubtitle: "本地影片檔與空間媒體入口",
     videoCoverHint: "自訂封面可放在影片同目錄：同名 .jpg/.png，或 poster.jpg / cover.jpg。",
@@ -4692,6 +4918,10 @@ const translations = {
     collectionLike: "讚好作品集",
     collectionStateSaved: "作品集狀態已儲存",
     collectionStateFailed: "作品集狀態儲存失敗",
+    addToManualCollection: "加入手動集合",
+    manualCollectionPrompt: (title: string, names: string) => names ? `把「${title}」加入哪個集合？\n已有：${names}\n輸入新名稱會自動建立。` : `把「${title}」加入哪個集合？\n輸入集合名稱會自動建立。`,
+    manualCollectionSaved: (name: string) => `已加入集合：${name}`,
+    manualCollectionFailed: "加入集合失敗",
     volumeWall: "封面牆",
     selectCollection: "選擇一個作品集瀏覽單行本",
     sort: "排序",
@@ -4703,6 +4933,8 @@ const translations = {
     sortCount: "數量",
     sortType: "類型",
     sortPlatform: "機種",
+    platformFilter: "機種",
+    allPlatforms: "全部機種",
     sortDirection: "排序方向",
     sortAscending: "升序",
     sortDescending: "降序",
@@ -4818,6 +5050,10 @@ const translations = {
     gameShelf: "Game Shelf",
     gameShelfSubtitle: "Local ROMs and ROM sets",
     gameCatalogSubtitle: "Full game catalog grouped by platform",
+    gameFavorite: "Favorite game",
+    gameLike: "Like game",
+    gameStateSaved: "Game state saved",
+    gameStateFailed: "Failed to save game state",
     videoShelf: "Video Shelf",
     videoShelfSubtitle: "Local video files and spatial media entry points",
     videoCoverHint: "Custom covers can sit next to the video as matching .jpg/.png, poster.jpg, or cover.jpg.",
@@ -4915,6 +5151,10 @@ const translations = {
     collectionLike: "Like collection",
     collectionStateSaved: "Collection state saved",
     collectionStateFailed: "Failed to save collection state",
+    addToManualCollection: "Add to manual collection",
+    manualCollectionPrompt: (title: string, names: string) => names ? `Add "${title}" to which collection?\nExisting: ${names}\nEnter a new name to create one.` : `Add "${title}" to which collection?\nEnter a collection name to create one.`,
+    manualCollectionSaved: (name: string) => `Added to collection: ${name}`,
+    manualCollectionFailed: "Failed to add to collection",
     volumeWall: "Volume Wall",
     selectCollection: "Select a collection to browse its single volumes",
     sort: "Sort",
@@ -4926,6 +5166,8 @@ const translations = {
     sortCount: "Count",
     sortType: "Type",
     sortPlatform: "Platform",
+    platformFilter: "Platform",
+    allPlatforms: "All platforms",
     sortDirection: "Sort direction",
     sortAscending: "Ascending",
     sortDescending: "Descending",
@@ -5040,7 +5282,11 @@ const translations = {
     wantSubtitle: "あとで読む",
     gameShelf: "ゲーム棚",
     gameShelfSubtitle: "ローカル ROM と ROM set",
-    gameCatalogSubtitle: "プラットフォーム順のゲーム一覧",
+    gameCatalogSubtitle: "プラットフォーム別のゲーム一覧",
+    gameFavorite: "ゲームをお気に入りに追加",
+    gameLike: "ゲームにいいね",
+    gameStateSaved: "ゲーム状態を保存しました",
+    gameStateFailed: "ゲーム状態を保存できませんでした",
     videoShelf: "ビデオ棚",
     videoShelfSubtitle: "ローカル動画と空間メディアの入口",
     videoCoverHint: "カスタムカバーは動画と同じフォルダに同名 .jpg/.png、poster.jpg、cover.jpg として置けます。",
@@ -5138,6 +5384,10 @@ const translations = {
     collectionLike: "コレクションにいいね",
     collectionStateSaved: "コレクションの状態を保存しました",
     collectionStateFailed: "コレクションの状態を保存できませんでした",
+    addToManualCollection: "手動コレクションに追加",
+    manualCollectionPrompt: (title: string, names: string) => names ? `「${title}」をどのコレクションに追加しますか？\n既存：${names}\n新しい名前を入力すると作成します。` : `「${title}」をどのコレクションに追加しますか？\nコレクション名を入力すると作成します。`,
+    manualCollectionSaved: (name: string) => `コレクションに追加しました：${name}`,
+    manualCollectionFailed: "コレクションに追加できませんでした",
     volumeWall: "カバー一覧",
     selectCollection: "コレクションを選んで単巻を表示",
     sort: "並び替え",
@@ -5149,6 +5399,8 @@ const translations = {
     sortCount: "件数",
     sortType: "種類",
     sortPlatform: "機種",
+    platformFilter: "機種",
+    allPlatforms: "すべての機種",
     sortDirection: "並び順",
     sortAscending: "昇順",
     sortDescending: "降順",
@@ -5264,6 +5516,10 @@ const translations = {
     gameShelf: "게임 선반",
     gameShelfSubtitle: "로컬 ROM 및 ROM set",
     gameCatalogSubtitle: "플랫폼별 전체 게임 목록",
+    gameFavorite: "게임 즐겨찾기",
+    gameLike: "게임 좋아요",
+    gameStateSaved: "게임 상태가 저장됨",
+    gameStateFailed: "게임 상태 저장 실패",
     videoShelf: "비디오 선반",
     videoShelfSubtitle: "로컬 비디오 파일과 공간 미디어 진입점",
     videoCoverHint: "사용자 지정 표지는 비디오와 같은 폴더에 같은 이름의 .jpg/.png, poster.jpg, cover.jpg로 둘 수 있습니다.",
@@ -5361,6 +5617,10 @@ const translations = {
     collectionLike: "컬렉션 좋아요",
     collectionStateSaved: "컬렉션 상태가 저장됨",
     collectionStateFailed: "컬렉션 상태 저장 실패",
+    addToManualCollection: "수동 컬렉션에 추가",
+    manualCollectionPrompt: (title: string, names: string) => names ? `"${title}"을(를) 어느 컬렉션에 추가할까요?\n기존: ${names}\n새 이름을 입력하면 생성됩니다.` : `"${title}"을(를) 어느 컬렉션에 추가할까요?\n컬렉션 이름을 입력하면 생성됩니다.`,
+    manualCollectionSaved: (name: string) => `컬렉션에 추가됨: ${name}`,
+    manualCollectionFailed: "컬렉션에 추가 실패",
     volumeWall: "커버 월",
     selectCollection: "컬렉션을 선택해 단행본을 봅니다",
     sort: "정렬",
@@ -5372,6 +5632,8 @@ const translations = {
     sortCount: "수량",
     sortType: "유형",
     sortPlatform: "플랫폼",
+    platformFilter: "플랫폼",
+    allPlatforms: "전체 플랫폼",
     sortDirection: "정렬 방향",
     sortAscending: "오름차순",
     sortDescending: "내림차순",
@@ -5685,6 +5947,10 @@ function replaceBook(items: Book[], updatedBook: Book) {
 
 function replaceSeries(items: Series[], updatedSeries: Series) {
   return items.map((series) => (series.id === updatedSeries.id ? updatedSeries : series));
+}
+
+function replaceGame(items: GameAsset[], updatedGame: GameAsset) {
+  return items.map((game) => (game.id === updatedGame.id ? updatedGame : game));
 }
 
 function mergeShelfBook(items: Book[], updatedBook: Book, include: (book: Book) => boolean) {

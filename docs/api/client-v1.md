@@ -247,7 +247,7 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.969",
+  "serviceVersion": "0.970",
   "apiVersion": "v1",
   "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"],
   "capabilities": {
@@ -278,7 +278,8 @@ Response:
     "scannerJobEvents": true,
     "scannerJobControl": true,
     "scanSettings": true,
-    "recentScan": true
+    "recentScan": true,
+    "gameMetadataProviders": true
   }
 }
 ```
@@ -494,6 +495,7 @@ Query:
 - `offset`: optional, default `0`.
 - `q`: optional search against `title`, `romSetName`, `region`, `platform`, and `format`.
 - `platform`: optional exact platform filter, for example `nes`, `snes`, `gba`, `md`, `neogeo`, `arcade`, or `3ds`.
+- `romSetName`: optional exact ROM set filter.
 - `format`: optional exact format filter, for example `nes`, `sfc`, `gba`, `zip`, or `3ds`.
 - `sort`: optional. Supported values are `recent`, `title`, and `platform`. Unknown values fall back to `recent`.
 
@@ -517,6 +519,8 @@ Response:
       "sha1": "5de393e3ad83e6e185e6d338684d7a4475b7d2ce",
       "emulatorHint": "nes",
       "compatibility": "unknown",
+      "favorite": false,
+      "liked": false,
       "coverUrl": "/api/games/18/cover",
       "manifestUrl": "/api/client/games/18/manifest"
     }
@@ -797,6 +801,8 @@ Returns client-safe game launch metadata. It does not expose the real NAS path.
     "sha1": "0123456789abcdef0123456789abcdef01234567",
     "emulatorHint": "snes",
     "compatibility": "unknown",
+    "favorite": false,
+    "liked": false,
     "coverUrl": "/api/games/12/cover",
     "manifestUrl": "/api/client/games/12/manifest"
   },
@@ -806,6 +812,47 @@ Returns client-safe game launch metadata. It does not expose the real NAS path.
 
 `fileUrl` streams the local file through FolioSpace Library and still requires bearer auth when auth is enabled. Native clients should treat it as an opaque service URL, not as a file path.
 `coverUrl` is optional. For supported retro platforms it streams a cached Libretro boxart image through FolioSpace Library; clients should fall back to their own placeholder when it is absent or returns 404.
+
+### `GET /api/client/games/{gameId}/details`
+
+Returns the same client-safe game DTO plus optional metadata fields and artwork references for detail screens. Local file paths are not exposed.
+
+### `GET /api/client/games/{gameId}/metadata`
+
+Returns game metadata suitable for native detail panels and external launcher synchronization.
+
+### `PUT /api/client/games/{gameId}/private-state`
+
+Saves profile-scoped private state for a game.
+
+```json
+{
+  "favorite": true,
+  "liked": false
+}
+```
+
+The response is the updated client-safe game DTO.
+
+### `GET /api/games/metadata/providers`
+
+Returns supported game metadata provider information for admin or launcher-style integrations.
+
+### `GET /api/games/gamelist.xml`
+
+Exports indexed games as a `gamelist.xml` document. Optional query parameters include `q`, `platform`, `romSetName`, `format`, and `basePath`.
+
+### Manual Collections
+
+Manual collections are user-defined logical shelves. They can contain books, games, and videos without moving files or changing scanner classification.
+
+- `GET /api/client/manual-collections`: list manual collections.
+- `POST /api/client/manual-collections`: create a collection with `name` and optional `description`.
+- `GET /api/client/manual-collections/{collectionId}`: return collection details and resolved item summaries.
+- `PUT /api/client/manual-collections/{collectionId}`: update name or description.
+- `DELETE /api/client/manual-collections/{collectionId}`: delete a manual collection.
+- `POST /api/client/manual-collections/{collectionId}/items`: add `{ "assetType": "book" | "game" | "video", "assetId": 123 }`.
+- `DELETE /api/client/manual-collections/{collectionId}/items/{assetType}/{assetId}`: remove one item.
 
 ## Private State
 
@@ -1391,6 +1438,8 @@ Good MCP tools:
 - `foliospace.search_books`: search/filter books by title, collection, format, progress, or unread state.
 - `foliospace.open_book_manifest`: return the client manifest for a book, including `readerModes` and `defaultReaderMode`.
 - `foliospace.list_games` and `foliospace.open_game_manifest`: browse and open local ROM assets through client-safe DTOs.
+- `foliospace.get_game_metadata_providers` and `foliospace.export_game_gamelist`: inspect game metadata sources and export launcher-style `gamelist.xml`.
+- `foliospace.save_game_private_state`: save profile-scoped game favorite and liked flags.
 - `foliospace.list_videos` and `foliospace.open_video_manifest`: browse and open local video assets through client-safe DTOs.
 - `foliospace.get_private_state` and `foliospace.save_private_state`: inspect or update status, favorite, rating, tags, and notes.
 - `foliospace.list_favorites` and `foliospace.list_private_status`: browse private shelves such as favorites and want-to-read.
@@ -1399,6 +1448,7 @@ Good MCP tools:
 - `foliospace.list_libraries`: list configured libraries for diagnostics and scan selection.
 - `foliospace.update_library_excludes`: update scan exclude directory names or relative paths for a configured library.
 - `foliospace.list_collections`, `foliospace.save_collection_state`, `foliospace.list_collection_volumes`, and `foliospace.list_collection_assets`: browse the indexed library and save profile-scoped collection favorite/liked flags.
+- `foliospace.list_manual_collections`, `foliospace.create_manual_collection`, `foliospace.get_manual_collection`, `foliospace.add_manual_collection_item`, and `foliospace.remove_manual_collection_item`: manage user-defined shelves that can mix books, games, and videos.
 - `foliospace.scan_library`: start a scan for a configured library. Optional `path` scans one subdirectory or file inside the library root.
 - `foliospace.scan_recent`: scan only the latest new or changed files under a library or optional target path. Use this after adding several files to a large directory.
 - `foliospace.list_jobs`, `foliospace.job_events`, `foliospace.pause_job`, `foliospace.cancel_job`, and `foliospace.resume_job`: inspect and control scan progress.

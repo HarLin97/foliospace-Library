@@ -119,6 +119,48 @@ func Migrate(conn *sql.DB) error {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS game_metadata (
+			game_id INTEGER PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+			display_title TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			release_date TEXT NOT NULL DEFAULT '',
+			genres TEXT NOT NULL DEFAULT '[]',
+			developers TEXT NOT NULL DEFAULT '[]',
+			publishers TEXT NOT NULL DEFAULT '[]',
+			players TEXT NOT NULL DEFAULT '',
+			rating REAL NOT NULL DEFAULT 0,
+			external_links TEXT NOT NULL DEFAULT '[]',
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS game_metadata_sources (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+			source TEXT NOT NULL,
+			source_id TEXT NOT NULL DEFAULT '',
+			matched_by TEXT NOT NULL DEFAULT '',
+			confidence REAL NOT NULL DEFAULT 0,
+			raw_json TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(game_id, source, source_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS game_artwork (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+			source TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			url TEXT NOT NULL DEFAULT '',
+			cache_path TEXT NOT NULL DEFAULT '',
+			width INTEGER NOT NULL DEFAULT 0,
+			height INTEGER NOT NULL DEFAULT 0,
+			selected INTEGER NOT NULL DEFAULT 0,
+			confidence REAL NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(game_id, source, kind, url, cache_path)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_game_metadata_sources_game ON game_metadata_sources(game_id, source)`,
+		`CREATE INDEX IF NOT EXISTS idx_game_artwork_game ON game_artwork(game_id, kind, selected DESC)`,
 		`CREATE TABLE IF NOT EXISTS videos (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
@@ -246,6 +288,29 @@ func Migrate(conn *sql.DB) error {
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY(profile_id, series_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS game_private_states (
+			profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+			game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+			favorite INTEGER NOT NULL DEFAULT 0,
+			liked INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(profile_id, game_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS manual_collections (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS manual_collection_items (
+			collection_id INTEGER NOT NULL REFERENCES manual_collections(id) ON DELETE CASCADE,
+			asset_type TEXT NOT NULL,
+			asset_id INTEGER NOT NULL,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(collection_id, asset_type, asset_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_manual_collection_items_collection ON manual_collection_items(collection_id, created_at, asset_type, asset_id)`,
 		`CREATE TABLE IF NOT EXISTS file_errors (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			library_id INTEGER NOT NULL,

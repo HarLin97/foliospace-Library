@@ -84,6 +84,36 @@ export type CollectionPrivateState = {
   liked: boolean;
 };
 
+export type ManualCollection = {
+  id: number;
+  name: string;
+  description?: string;
+  itemCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ManualCollectionItem = {
+  collectionId?: number;
+  assetType: "book" | "game" | "video";
+  assetId: number;
+  title?: string;
+  subtitle?: string;
+  coverUrl?: string;
+  manifestUrl?: string;
+  createdAt?: string;
+};
+
+export type ManualCollectionDetails = {
+  collection: ManualCollection;
+  items: ManualCollectionItem[];
+};
+
+export type GamePrivateState = {
+  favorite: boolean;
+  liked: boolean;
+};
+
 export type GameAsset = {
   id: number;
   assetType?: "game";
@@ -99,6 +129,8 @@ export type GameAsset = {
   compatibility: string;
   coverUrl?: string;
   manifestUrl?: string;
+  favorite: boolean;
+  liked: boolean;
 };
 
 export type VideoAsset = {
@@ -254,6 +286,7 @@ export type CollectionListOptions = BookListOptions & {
 
 export type GameListOptions = BookListOptions & {
   platform?: string;
+  romSetName?: string;
   format?: string;
 };
 
@@ -615,11 +648,33 @@ export const api = {
     if (options.offset) params.set("offset", String(options.offset));
     if (options.q) params.set("q", options.q);
     if (options.platform) params.set("platform", options.platform);
+    if (options.romSetName) params.set("romSetName", options.romSetName);
     if (options.format) params.set("format", options.format);
     if (options.sort) params.set("sort", options.sort);
     if (options.direction) params.set("direction", options.direction);
     return request<GameListPage>(`/api/client/games?${params.toString()}`);
   },
+  gamePrivateState: (gameId: number, state: GamePrivateState) =>
+    request<GameAsset>(`/api/client/games/${gameId}/private-state`, {
+      method: "PUT",
+      body: JSON.stringify(state),
+    }),
+  manualCollections: () => request<ManualCollection[]>("/api/client/manual-collections"),
+  createManualCollection: (payload: Pick<ManualCollection, "name"> & Partial<Pick<ManualCollection, "description">>) =>
+    request<ManualCollection>("/api/client/manual-collections", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  manualCollectionDetails: (collectionId: number) => request<ManualCollectionDetails>(`/api/client/manual-collections/${collectionId}`),
+  addManualCollectionItem: (collectionId: number, item: Pick<ManualCollectionItem, "assetType" | "assetId">) =>
+    request<ManualCollection>(`/api/client/manual-collections/${collectionId}/items`, {
+      method: "POST",
+      body: JSON.stringify(item),
+    }),
+  removeManualCollectionItem: (collectionId: number, item: Pick<ManualCollectionItem, "assetType" | "assetId">) =>
+    request<ManualCollection>(`/api/client/manual-collections/${collectionId}/items/${item.assetType}/${item.assetId}`, {
+      method: "DELETE",
+    }),
   clientVideos: (options: VideoListOptions = {}) => {
     const params = new URLSearchParams();
     if (options.limit) params.set("limit", String(options.limit));

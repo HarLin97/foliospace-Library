@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.969`.
+Current release branch: `0.970`.
 
 ## Screenshots
 
@@ -198,9 +198,19 @@ Release `0.969` improves metadata and scan hygiene for mixed book/comic librarie
 - The scanner skips common generated folders such as `media`, `thumbnails`, `covers`, `__MACOSX`, and `@eaDir`, preventing artwork and sidecar folders from being indexed as books.
 - Service, Client API, and MCP metadata report version `0.969`.
 
+## Release 0.970
+
+Release `0.970` improves game library organization and user-curated shelves:
+
+- User-defined manual collections can now group books, games, and videos without moving files on disk.
+- Game assets support profile-scoped favorite and liked state in the web UI, Client API, and MCP.
+- Game catalog browsing can filter by platform groups derived from indexed game collections.
+- Game metadata helpers expose provider information and `gamelist.xml` export for launcher-style integrations.
+- Service, Client API, and MCP metadata report version `0.970`.
+
 ## MCP
 
-Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, progress, scan jobs, recent-file scans, scan worker settings, job control, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
+Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, game private state, progress, scan jobs, recent-file scans, scan worker settings, job control, manual collections, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
 
 End users can install the MCP binary on the machine where their agent client runs:
 
@@ -211,7 +221,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.969 ./scripts/build-mcp-release.sh
+VERSION=0.970 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -231,10 +241,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.969` image tag:
+Release `0.970` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.969
+docker pull funland/foliospace-library:0.970
 ```
 
 For local verification:
@@ -253,7 +263,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.969
+  funland/foliospace-library:0.970
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -268,11 +278,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.969
-git push github v0.969
+git tag v0.970
+git push github v0.970
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.969` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.970` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

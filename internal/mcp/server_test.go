@@ -27,6 +27,9 @@ func TestServerListsTools(t *testing.T) {
 	if !strings.Contains(body, "foliospace.client_info") ||
 		!strings.Contains(body, "foliospace.list_games") ||
 		!strings.Contains(body, "foliospace.open_game_manifest") ||
+		!strings.Contains(body, "foliospace.get_game_metadata_providers") ||
+		!strings.Contains(body, "foliospace.export_game_gamelist") ||
+		!strings.Contains(body, "foliospace.save_game_private_state") ||
 		!strings.Contains(body, "foliospace.list_videos") ||
 		!strings.Contains(body, "foliospace.open_video_manifest") ||
 		!strings.Contains(body, "foliospace.get_video_transcode_status") ||
@@ -37,6 +40,8 @@ func TestServerListsTools(t *testing.T) {
 		!strings.Contains(body, "foliospace.get_scan_settings") ||
 		!strings.Contains(body, "foliospace.save_scan_settings") ||
 		!strings.Contains(body, "foliospace.list_collection_volumes") ||
+		!strings.Contains(body, "foliospace.list_manual_collections") ||
+		!strings.Contains(body, "foliospace.add_manual_collection_item") ||
 		!strings.Contains(body, "foliospace.scan_recent") ||
 		!strings.Contains(body, "foliospace.pause_job") ||
 		!strings.Contains(body, "foliospace.library_health") {
@@ -104,6 +109,7 @@ func TestServerCallsClientGamesTool(t *testing.T) {
 		"offset":   100,
 		"q":        "contra",
 		"platform": "nes",
+		"romSetName": "NES",
 		"format":   "nes",
 		"sort":     "title",
 	}))
@@ -111,8 +117,44 @@ func TestServerCallsClientGamesTool(t *testing.T) {
 	if response.Error != nil {
 		t.Fatalf("tool call error = %#v", response.Error)
 	}
-	if gotPath != "/api/client/games?format=nes&limit=50&offset=100&platform=nes&q=contra&sort=title" {
+	if gotPath != "/api/client/games?format=nes&limit=50&offset=100&platform=nes&q=contra&romSetName=NES&sort=title" {
 		t.Fatalf("path = %s, want client games query", gotPath)
+	}
+}
+
+func TestServerCallsGameMetadataTools(t *testing.T) {
+	var paths []string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		paths = append(paths, r.URL.RequestURI())
+		if r.Method == http.MethodPut {
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), `"favorite":true`) || strings.Contains(string(body), "profileId") {
+				t.Fatalf("unexpected game private state body %s", string(body))
+			}
+		}
+		return jsonResponse(`{"ok":true}`), nil
+	})}
+
+	calls := []Request{
+		toolCall(t, "foliospace.get_game_metadata_providers", nil),
+		toolCall(t, "foliospace.export_game_gamelist", map[string]any{"platform": "arcade", "romSetName": "Psikyo", "basePath": "./roms"}),
+		toolCall(t, "foliospace.save_game_private_state", map[string]any{"gameId": 42, "profileId": 2, "favorite": true, "liked": false}),
+	}
+	for _, call := range calls {
+		response := server.Handle(context.Background(), call)
+		if response.Error != nil {
+			t.Fatalf("%s error = %#v", call.Method, response.Error)
+		}
+	}
+
+	want := []string{
+		"/api/games/metadata/providers",
+		"/api/games/gamelist.xml?basePath=.%2Froms&platform=arcade&romSetName=Psikyo",
+		"/api/client/games/42/private-state?profileId=2",
+	}
+	if strings.Join(paths, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("paths = %#v, want %#v", paths, want)
 	}
 }
 
@@ -330,6 +372,42 @@ func TestServerCallsSaveCollectionStateTool(t *testing.T) {
 	}
 	if strings.Contains(gotBody, "collectionId") || strings.Contains(gotBody, "profileId") || !strings.Contains(gotBody, `"favorite":true`) || !strings.Contains(gotBody, `"liked":true`) {
 		t.Fatalf("body = %q, want only collection state flags", gotBody)
+	}
+}
+
+func TestServerCallsManualCollectionTools(t *testing.T) {
+	var calls []string
+	var bodies []string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls = append(calls, r.Method+" "+r.URL.RequestURI())
+		if r.Body != nil {
+			body, _ := io.ReadAll(r.Body)
+			bodies = append(bodies, string(body))
+		}
+		return jsonResponse(`{"id":7,"name":"Arcade Night","itemCount":1}`), nil
+	})}
+
+	for _, call := range []Request{
+		toolCall(t, "foliospace.list_manual_collections", nil),
+		toolCall(t, "foliospace.create_manual_collection", map[string]any{"name": "Arcade Night", "description": "Cross-media picks"}),
+		toolCall(t, "foliospace.get_manual_collection", map[string]any{"collectionId": 7}),
+		toolCall(t, "foliospace.add_manual_collection_item", map[string]any{"collectionId": 7, "assetType": "game", "assetId": 42}),
+		toolCall(t, "foliospace.remove_manual_collection_item", map[string]any{"collectionId": 7, "assetType": "game", "assetId": 42}),
+	} {
+		response := server.Handle(context.Background(), call)
+		if response.Error != nil {
+			t.Fatalf("manual collection tool error = %#v", response.Error)
+		}
+	}
+
+	want := "GET /api/client/manual-collections\nPOST /api/client/manual-collections\nGET /api/client/manual-collections/7\nPOST /api/client/manual-collections/7/items\nDELETE /api/client/manual-collections/7/items/game/42"
+	if got := strings.Join(calls, "\n"); got != want {
+		t.Fatalf("calls = %q, want manual collection routes %q", got, want)
+	}
+	joinedBodies := strings.Join(bodies, "\n")
+	if !strings.Contains(joinedBodies, `"name":"Arcade Night"`) || !strings.Contains(joinedBodies, `"assetType":"game"`) || strings.Contains(joinedBodies, "collectionId") {
+		t.Fatalf("bodies = %#v, want clean create/add payloads", bodies)
 	}
 }
 

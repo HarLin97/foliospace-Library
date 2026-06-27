@@ -51,7 +51,7 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-const serviceVersion = "0.969"
+const serviceVersion = "0.970"
 
 func New(baseURL string, token string) *Server {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -114,8 +114,11 @@ func tools() []Tool {
 		{Name: "foliospace.home", Description: "Return the agent-friendly home payload: continue reading, recent books, and collections.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items per section."), "profileId": integerSchema("Optional profile id for scoped shelves and preferences.")}, nil)},
 		{Name: "foliospace.search_books", Description: "Search indexed books and comics by title, author, or collection context.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Search query."), "limit": integerSchema("Maximum number of results."), "profileId": integerSchema("Optional profile id for scoped reader state in results.")}, []string{"q"})},
 		{Name: "foliospace.open_book_manifest", Description: "Open a book/comic/PDF manifest with client-safe page, EPUB, progress, state URLs, readerModes, and defaultReaderMode.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id for scoped progress and private state.")}, []string{"bookId"})},
-		{Name: "foliospace.list_games", Description: "List paginated client-safe game ROM assets.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact platform filter."), "format": stringSchema("Optional exact format filter."), "sort": stringSchema("recent, title, or platform.")}, nil)},
+		{Name: "foliospace.list_games", Description: "List paginated client-safe game ROM assets.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact platform filter."), "romSetName": stringSchema("Optional exact ROM set filter."), "format": stringSchema("Optional exact format filter."), "sort": stringSchema("recent, title, or platform.")}, nil)},
 		{Name: "foliospace.open_game_manifest", Description: "Open a game ROM manifest with metadata, cover URL, and opaque file URL.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id.")}, []string{"gameId"})},
+		{Name: "foliospace.get_game_metadata_providers", Description: "List configured game metadata providers and local artwork import capabilities.", InputSchema: objectSchema(nil, nil)},
+		{Name: "foliospace.export_game_gamelist", Description: "Export indexed games as gamelist.xml. Filters mirror the game catalog.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact platform filter."), "romSetName": stringSchema("Optional exact ROM set filter."), "format": stringSchema("Optional exact format filter."), "basePath": stringSchema("Optional path prefix used in exported game paths.")}, nil)},
+		{Name: "foliospace.save_game_private_state", Description: "Save profile-scoped favorite and liked flags for a game asset.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id."), "profileId": integerSchema("Optional profile id."), "favorite": booleanSchema("Whether the game is a favorite."), "liked": booleanSchema("Whether the game is liked.")}, []string{"gameId"})},
 		{Name: "foliospace.list_videos", Description: "List paginated client-safe video assets.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "format": stringSchema("Optional exact format filter."), "sort": stringSchema("recent or title.")}, nil)},
 		{Name: "foliospace.open_video_manifest", Description: "Open a video manifest with metadata, thumbnail URL, and opaque range-stream file URL.", InputSchema: objectSchema(map[string]any{"videoId": integerSchema("Video asset id.")}, []string{"videoId"})},
 		{Name: "foliospace.get_video_transcode_status", Description: "Read HLS transcode state for a video asset, including queued, running, ready, or failed.", InputSchema: objectSchema(map[string]any{"videoId": integerSchema("Video asset id.")}, []string{"videoId"})},
@@ -140,6 +143,11 @@ func tools() []Tool {
 		{Name: "foliospace.save_collection_state", Description: "Save profile-scoped collection favorite and liked flags.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "profileId": integerSchema("Optional profile id."), "favorite": booleanSchema("Whether the collection is a favorite."), "liked": booleanSchema("Whether the collection is liked.")}, []string{"collectionId"})},
 		{Name: "foliospace.list_collection_volumes", Description: "List books/comics in a collection with optional pagination and filtering.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "sort": stringSchema("Server-supported sort key."), "profileId": integerSchema("Optional profile id for scoped progress and private state.")}, []string{"collectionId"})},
 		{Name: "foliospace.list_collection_assets", Description: "List mixed assets in a collection, including books, comics, games, documents, and media as available.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Collection id."), "profileId": integerSchema("Optional profile id for scoped book state.")}, []string{"collectionId"})},
+		{Name: "foliospace.list_manual_collections", Description: "List user-defined logical collections that can contain books, games, and videos.", InputSchema: objectSchema(nil, nil)},
+		{Name: "foliospace.create_manual_collection", Description: "Create a user-defined logical collection. It does not move files or affect scanning.", InputSchema: objectSchema(map[string]any{"name": stringSchema("Collection name."), "description": stringSchema("Optional description.")}, []string{"name"})},
+		{Name: "foliospace.get_manual_collection", Description: "Read a manual collection with resolved client-safe item summaries.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Manual collection id.")}, []string{"collectionId"})},
+		{Name: "foliospace.add_manual_collection_item", Description: "Add a book, game, or video asset to a manual collection.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Manual collection id."), "assetType": stringSchema("Asset type: book, game, or video."), "assetId": integerSchema("Asset id.")}, []string{"collectionId", "assetType", "assetId"})},
+		{Name: "foliospace.remove_manual_collection_item", Description: "Remove a book, game, or video asset from a manual collection.", InputSchema: objectSchema(map[string]any{"collectionId": integerSchema("Manual collection id."), "assetType": stringSchema("Asset type: book, game, or video."), "assetId": integerSchema("Asset id.")}, []string{"collectionId", "assetType", "assetId"})},
 		{Name: "foliospace.scan_library", Description: "Start a scan for a configured library. Optional path scans one container-visible subdirectory or file inside the library root.", InputSchema: objectSchema(map[string]any{"libraryId": integerSchema("Library id."), "path": stringSchema("Optional target path, absolute inside the container or relative to the library root.")}, []string{"libraryId"})},
 		{Name: "foliospace.scan_recent", Description: "Scan only the latest new or changed files under a library or optional target path, avoiding a full-library walk for common imports.", InputSchema: objectSchema(map[string]any{"libraryId": integerSchema("Library id."), "path": stringSchema("Optional target path, absolute inside the container or relative to the library root. Empty means the library root."), "recentLimit": integerSchema("How many newest changed files to index. Defaults to 20 and is capped by the server.")}, []string{"libraryId"})},
 		{Name: "foliospace.list_jobs", Description: "List scan/import jobs.", InputSchema: objectSchema(nil, nil)},
@@ -245,6 +253,14 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		data, err = s.get(ctx, "/api/client/games?"+gameListQuery(params.Arguments))
 	case "foliospace.open_game_manifest":
 		data, err = s.get(ctx, fmt.Sprintf("/api/client/games/%d/manifest", intArg(params.Arguments, "gameId")))
+	case "foliospace.get_game_metadata_providers":
+		data, err = s.get(ctx, "/api/games/metadata/providers")
+	case "foliospace.export_game_gamelist":
+		data, err = s.get(ctx, "/api/games/gamelist.xml?"+gameGamelistQuery(params.Arguments))
+	case "foliospace.save_game_private_state":
+		gameID := intArg(params.Arguments, "gameId")
+		body := withoutKeys(params.Arguments, "gameId", "profileId")
+		data, err = s.put(ctx, withProfileQuery(fmt.Sprintf("/api/client/games/%d/private-state", gameID), params.Arguments), body)
 	case "foliospace.list_videos":
 		data, err = s.get(ctx, "/api/client/videos?"+videoListQuery(params.Arguments))
 	case "foliospace.open_video_manifest":
@@ -301,6 +317,21 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/collections/%d/volumes?%s", intArg(params.Arguments, "collectionId"), collectionVolumesQuery(params.Arguments)), params.Arguments))
 	case "foliospace.list_collection_assets":
 		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/collections/%d/assets", intArg(params.Arguments, "collectionId")), params.Arguments))
+	case "foliospace.list_manual_collections":
+		data, err = s.get(ctx, "/api/client/manual-collections")
+	case "foliospace.create_manual_collection":
+		data, err = s.post(ctx, "/api/client/manual-collections", withoutKeys(params.Arguments, "collectionId"))
+	case "foliospace.get_manual_collection":
+		data, err = s.get(ctx, fmt.Sprintf("/api/client/manual-collections/%d", intArg(params.Arguments, "collectionId")))
+	case "foliospace.add_manual_collection_item":
+		collectionID := intArg(params.Arguments, "collectionId")
+		body := withoutKeys(params.Arguments, "collectionId")
+		data, err = s.post(ctx, fmt.Sprintf("/api/client/manual-collections/%d/items", collectionID), body)
+	case "foliospace.remove_manual_collection_item":
+		collectionID := intArg(params.Arguments, "collectionId")
+		assetType := url.PathEscape(stringArg(params.Arguments, "assetType"))
+		assetID := intArg(params.Arguments, "assetId")
+		data, err = s.delete(ctx, fmt.Sprintf("/api/client/manual-collections/%d/items/%s/%d", collectionID, assetType, assetID))
 	case "foliospace.scan_library":
 		body := map[string]any{}
 		if path := strings.TrimSpace(stringArg(params.Arguments, "path")); path != "" {
@@ -463,7 +494,17 @@ func gameListQuery(args map[string]any) string {
 	if offset > 0 {
 		values.Set("offset", strconv.FormatInt(offset, 10))
 	}
-	for _, key := range []string{"q", "platform", "format", "sort"} {
+	for _, key := range []string{"q", "platform", "romSetName", "format", "sort"} {
+		if value := stringArg(args, key); value != "" {
+			values.Set(key, value)
+		}
+	}
+	return values.Encode()
+}
+
+func gameGamelistQuery(args map[string]any) string {
+	values := url.Values{}
+	for _, key := range []string{"q", "platform", "romSetName", "format", "basePath"} {
 		if value := stringArg(args, key); value != "" {
 			values.Set(key, value)
 		}

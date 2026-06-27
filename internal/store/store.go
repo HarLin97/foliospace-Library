@@ -612,6 +612,152 @@ func (s *Store) applyCollectionPrivateStates(profileID int64, items []domain.Ser
 	return items, nil
 }
 
+func (s *Store) CreateManualCollection(collection domain.ManualCollection) (domain.ManualCollection, error) {
+	name := strings.TrimSpace(collection.Name)
+	if name == "" {
+		return domain.ManualCollection{}, fmt.Errorf("manual collection name is required")
+	}
+	description := strings.TrimSpace(collection.Description)
+	res, err := s.db.Exec(`INSERT INTO manual_collections(name, description) VALUES(?, ?)`, name, description)
+	if err != nil {
+		return domain.ManualCollection{}, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return domain.ManualCollection{}, err
+	}
+	return s.ManualCollectionByID(id)
+}
+
+func (s *Store) UpdateManualCollection(collectionID int64, collection domain.ManualCollection) (domain.ManualCollection, error) {
+	name := strings.TrimSpace(collection.Name)
+	if name == "" {
+		return domain.ManualCollection{}, fmt.Errorf("manual collection name is required")
+	}
+	description := strings.TrimSpace(collection.Description)
+	res, err := s.db.Exec(`UPDATE manual_collections SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, name, description, collectionID)
+	if err != nil {
+		return domain.ManualCollection{}, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return domain.ManualCollection{}, err
+	}
+	if affected == 0 {
+		return domain.ManualCollection{}, sql.ErrNoRows
+	}
+	return s.ManualCollectionByID(collectionID)
+}
+
+func (s *Store) DeleteManualCollection(collectionID int64) error {
+	res, err := s.db.Exec(`DELETE FROM manual_collections WHERE id = ?`, collectionID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) ManualCollectionByID(collectionID int64) (domain.ManualCollection, error) {
+	row := s.db.QueryRow(`SELECT c.id, c.name, c.description, COUNT(i.asset_id), c.created_at, c.updated_at
+		FROM manual_collections c
+		LEFT JOIN manual_collection_items i ON i.collection_id = c.id
+		WHERE c.id = ?
+		GROUP BY c.id`, collectionID)
+	return scanManualCollection(row)
+}
+
+func (s *Store) ListManualCollections() ([]domain.ManualCollection, error) {
+	rows, err := s.db.Query(`SELECT c.id, c.name, c.description, COUNT(i.asset_id), c.created_at, c.updated_at
+		FROM manual_collections c
+		LEFT JOIN manual_collection_items i ON i.collection_id = c.id
+		GROUP BY c.id
+		ORDER BY LOWER(c.name), c.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.ManualCollection, 0)
+	for rows.Next() {
+		collection, err := scanManualCollection(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, collection)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AddManualCollectionItem(collectionID int64, item domain.ManualCollectionItem) error {
+	if _, err := s.ManualCollectionByID(collectionID); err != nil {
+		return err
+	}
+	assetType := normalizeManualCollectionAssetType(item.AssetType)
+	if assetType == "" {
+		return fmt.Errorf("unsupported manual collection asset type: %s", item.AssetType)
+	}
+	if item.AssetID <= 0 {
+		return fmt.Errorf("manual collection asset id is required")
+	}
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO manual_collection_items(collection_id, asset_type, asset_id) VALUES(?, ?, ?)`, collectionID, assetType, item.AssetID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE manual_collections SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, collectionID)
+	return err
+}
+
+func (s *Store) RemoveManualCollectionItem(collectionID int64, assetType string, assetID int64) error {
+	assetType = normalizeManualCollectionAssetType(assetType)
+	if assetType == "" {
+		return fmt.Errorf("unsupported manual collection asset type")
+	}
+	res, err := s.db.Exec(`DELETE FROM manual_collection_items WHERE collection_id = ? AND asset_type = ? AND asset_id = ?`, collectionID, assetType, assetID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	_, err = s.db.Exec(`UPDATE manual_collections SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, collectionID)
+	return err
+}
+
+func (s *Store) ListManualCollectionItems(collectionID int64) ([]domain.ManualCollectionItem, error) {
+	if _, err := s.ManualCollectionByID(collectionID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT collection_id, asset_type, asset_id, created_at
+		FROM manual_collection_items
+		WHERE collection_id = ?
+		ORDER BY created_at, rowid`, collectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]domain.ManualCollectionItem, 0)
+	for rows.Next() {
+		var item domain.ManualCollectionItem
+		var createdAt string
+		if err := rows.Scan(&item.CollectionID, &item.AssetType, &item.AssetID, &createdAt); err != nil {
+			return nil, err
+		}
+		item.CreatedAt = parseTime(createdAt)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) DeleteSkippedDirectoryEntries(libraryID int64, names []string) (int64, error) {
 	if len(names) == 0 {
 		return 0, nil
@@ -1329,8 +1475,20 @@ func (s *Store) UpsertGame(game domain.GameAsset) (domain.GameAsset, error) {
 }
 
 func (s *Store) GameByID(id int64) (domain.GameAsset, error) {
+	return s.GameByIDForProfile(id, defaultProfileID)
+}
+
+func (s *Store) GameByIDForProfile(id int64, profileID int64) (domain.GameAsset, error) {
 	row := s.db.QueryRow(gameSelectSQL()+` WHERE id = ?`, id)
-	return scanGame(row)
+	game, err := scanGame(row)
+	if err != nil {
+		return domain.GameAsset{}, err
+	}
+	items, err := s.applyGamePrivateStates(profileID, []domain.GameAsset{game})
+	if err != nil {
+		return domain.GameAsset{}, err
+	}
+	return items[0], nil
 }
 
 func (s *Store) GameByPath(filePath string) (domain.GameAsset, error) {
@@ -1354,6 +1512,10 @@ func (s *Store) ListRecentGames(limit int) ([]domain.GameAsset, error) {
 }
 
 func (s *Store) ListGamesPage(options domain.GameListOptions) (domain.GameListPage, error) {
+	return s.ListGamesPageForProfile(options, defaultProfileID)
+}
+
+func (s *Store) ListGamesPageForProfile(options domain.GameListOptions, profileID int64) (domain.GameListPage, error) {
 	limit := options.Limit
 	if limit <= 0 {
 		limit = 50
@@ -1384,6 +1546,10 @@ func (s *Store) ListGamesPage(options domain.GameListOptions) (domain.GameListPa
 	if err != nil {
 		return domain.GameListPage{}, err
 	}
+	items, err = s.applyGamePrivateStates(profileID, items)
+	if err != nil {
+		return domain.GameListPage{}, err
+	}
 	return domain.GameListPage{
 		Items:   items,
 		Total:   total,
@@ -1391,6 +1557,87 @@ func (s *Store) ListGamesPage(options domain.GameListOptions) (domain.GameListPa
 		Offset:  offset,
 		HasMore: int64(offset+len(items)) < total,
 	}, nil
+}
+
+func (s *Store) GamePrivateStateForProfile(gameID int64, profileID int64) (domain.GamePrivateState, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.GamePrivateState{}, err
+	}
+	var favorite int
+	var liked int
+	err = s.db.QueryRow(`SELECT favorite, liked FROM game_private_states WHERE profile_id = ? AND game_id = ?`, profileID, gameID).Scan(&favorite, &liked)
+	if err == sql.ErrNoRows {
+		return domain.GamePrivateState{}, nil
+	}
+	if err != nil {
+		return domain.GamePrivateState{}, err
+	}
+	return domain.GamePrivateState{Favorite: favorite != 0, Liked: liked != 0}, nil
+}
+
+func (s *Store) UpdateGamePrivateStateForProfile(gameID int64, profileID int64, state domain.GamePrivateState) error {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return err
+	}
+	if _, err := scanGame(s.db.QueryRow(gameSelectSQL()+` WHERE id = ?`, gameID)); err != nil {
+		return err
+	}
+	favorite := 0
+	if state.Favorite {
+		favorite = 1
+	}
+	liked := 0
+	if state.Liked {
+		liked = 1
+	}
+	_, err = s.db.Exec(`INSERT INTO game_private_states(profile_id, game_id, favorite, liked)
+		VALUES(?, ?, ?, ?)
+		ON CONFLICT(profile_id, game_id) DO UPDATE SET favorite = excluded.favorite,
+			liked = excluded.liked,
+			updated_at = CURRENT_TIMESTAMP`, profileID, gameID, favorite, liked)
+	return err
+}
+
+func (s *Store) applyGamePrivateStates(profileID int64, items []domain.GameAsset) ([]domain.GameAsset, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT game_id, favorite, liked FROM game_private_states WHERE profile_id = ?`, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type state struct {
+		favorite bool
+		liked    bool
+	}
+	states := make(map[int64]state)
+	for rows.Next() {
+		var gameID int64
+		var favorite int
+		var liked int
+		if err := rows.Scan(&gameID, &favorite, &liked); err != nil {
+			return nil, err
+		}
+		states[gameID] = state{favorite: favorite != 0, liked: liked != 0}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if itemState, ok := states[items[i].ID]; ok {
+			items[i].Favorite = itemState.favorite
+			items[i].Liked = itemState.liked
+		}
+	}
+	return items, nil
 }
 
 func (s *Store) ListGamesByROMSet(romSetName string) ([]domain.GameAsset, error) {
@@ -1409,6 +1656,155 @@ func (s *Store) ListGamesByPlatform(platform string) ([]domain.GameAsset, error)
 	}
 	defer rows.Close()
 	return scanGames(rows)
+}
+
+func (s *Store) UpsertGameMetadata(metadata domain.GameMetadata) error {
+	_, err := s.db.Exec(`INSERT INTO game_metadata(game_id, display_title, summary, release_date, genres, developers, publishers, players, rating, external_links)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(game_id) DO UPDATE SET
+			display_title = excluded.display_title,
+			summary = excluded.summary,
+			release_date = excluded.release_date,
+			genres = excluded.genres,
+			developers = excluded.developers,
+			publishers = excluded.publishers,
+			players = excluded.players,
+			rating = excluded.rating,
+			external_links = excluded.external_links,
+			updated_at = CURRENT_TIMESTAMP`,
+		metadata.GameID,
+		strings.TrimSpace(metadata.DisplayTitle),
+		strings.TrimSpace(metadata.Summary),
+		strings.TrimSpace(metadata.ReleaseDate),
+		encodeStringList(metadata.Genres),
+		encodeStringList(metadata.Developers),
+		encodeStringList(metadata.Publishers),
+		strings.TrimSpace(metadata.Players),
+		metadata.Rating,
+		encodeStringList(metadata.ExternalLinks))
+	return err
+}
+
+func (s *Store) UpsertGameMetadataSource(source domain.GameMetadataSource) (domain.GameMetadataSource, error) {
+	source.Source = strings.TrimSpace(source.Source)
+	source.SourceID = strings.TrimSpace(source.SourceID)
+	source.MatchedBy = strings.TrimSpace(source.MatchedBy)
+	_, err := s.db.Exec(`INSERT INTO game_metadata_sources(game_id, source, source_id, matched_by, confidence, raw_json)
+		VALUES(?, ?, ?, ?, ?, ?)
+		ON CONFLICT(game_id, source, source_id) DO UPDATE SET
+			matched_by = excluded.matched_by,
+			confidence = excluded.confidence,
+			raw_json = excluded.raw_json,
+			updated_at = CURRENT_TIMESTAMP`,
+		source.GameID, source.Source, source.SourceID, source.MatchedBy, source.Confidence, strings.TrimSpace(source.RawJSON))
+	if err != nil {
+		return domain.GameMetadataSource{}, err
+	}
+	row := s.db.QueryRow(`SELECT id, game_id, source, source_id, matched_by, confidence, raw_json, created_at, updated_at
+		FROM game_metadata_sources WHERE game_id = ? AND source = ? AND source_id = ?`, source.GameID, source.Source, source.SourceID)
+	return scanGameMetadataSource(row)
+}
+
+func (s *Store) UpsertGameArtwork(artwork domain.GameArtwork) (domain.GameArtwork, error) {
+	artwork.Source = strings.TrimSpace(artwork.Source)
+	artwork.Kind = strings.TrimSpace(artwork.Kind)
+	artwork.URL = strings.TrimSpace(artwork.URL)
+	artwork.CachePath = strings.TrimSpace(artwork.CachePath)
+	_, err := s.db.Exec(`INSERT INTO game_artwork(game_id, source, kind, url, cache_path, width, height, selected, confidence)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(game_id, source, kind, url, cache_path) DO UPDATE SET
+			width = excluded.width,
+			height = excluded.height,
+			selected = excluded.selected,
+			confidence = excluded.confidence,
+			updated_at = CURRENT_TIMESTAMP`,
+		artwork.GameID, artwork.Source, artwork.Kind, artwork.URL, artwork.CachePath, artwork.Width, artwork.Height, boolInt(artwork.Selected), artwork.Confidence)
+	if err != nil {
+		return domain.GameArtwork{}, err
+	}
+	row := s.db.QueryRow(`SELECT id, game_id, source, kind, url, cache_path, width, height, selected, confidence, created_at, updated_at
+		FROM game_artwork WHERE game_id = ? AND source = ? AND kind = ? AND url = ? AND cache_path = ?`,
+		artwork.GameID, artwork.Source, artwork.Kind, artwork.URL, artwork.CachePath)
+	return scanGameArtwork(row)
+}
+
+func (s *Store) GameDetails(id int64) (domain.GameDetails, error) {
+	game, err := s.GameByID(id)
+	if err != nil {
+		return domain.GameDetails{}, err
+	}
+	metadata, hasMetadata, err := s.gameMetadata(id)
+	if err != nil {
+		return domain.GameDetails{}, err
+	}
+	sources, err := s.gameMetadataSources(id)
+	if err != nil {
+		return domain.GameDetails{}, err
+	}
+	artwork, err := s.gameArtwork(id)
+	if err != nil {
+		return domain.GameDetails{}, err
+	}
+	status := "unmatched"
+	if hasMetadata || len(sources) > 0 {
+		status = "matched"
+	}
+	if metadata.GameID == 0 {
+		metadata.GameID = id
+	}
+	return domain.GameDetails{
+		Game:           game,
+		MetadataStatus: status,
+		Metadata:       metadata,
+		Sources:        sources,
+		Artwork:        artwork,
+	}, nil
+}
+
+func (s *Store) gameMetadata(gameID int64) (domain.GameMetadata, bool, error) {
+	row := s.db.QueryRow(`SELECT game_id, display_title, summary, release_date, genres, developers, publishers, players, rating, external_links, updated_at
+		FROM game_metadata WHERE game_id = ?`, gameID)
+	metadata, err := scanGameMetadata(row)
+	if err == sql.ErrNoRows {
+		return emptyGameMetadata(gameID), false, nil
+	}
+	return metadata, err == nil, err
+}
+
+func (s *Store) gameMetadataSources(gameID int64) ([]domain.GameMetadataSource, error) {
+	rows, err := s.db.Query(`SELECT id, game_id, source, source_id, matched_by, confidence, raw_json, created_at, updated_at
+		FROM game_metadata_sources WHERE game_id = ? ORDER BY source, id`, gameID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.GameMetadataSource{}
+	for rows.Next() {
+		source, err := scanGameMetadataSource(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, source)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) gameArtwork(gameID int64) ([]domain.GameArtwork, error) {
+	rows, err := s.db.Query(`SELECT id, game_id, source, kind, url, cache_path, width, height, selected, confidence, created_at, updated_at
+		FROM game_artwork WHERE game_id = ? ORDER BY selected DESC, kind, source, id`, gameID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.GameArtwork{}
+	for rows.Next() {
+		artwork, err := scanGameArtwork(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, artwork)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) UpsertVideo(video domain.VideoAsset) (domain.VideoAsset, error) {
@@ -1522,6 +1918,10 @@ func gameListWhere(options domain.GameListOptions) (string, []any) {
 	if platform := strings.TrimSpace(options.Platform); platform != "" {
 		clauses = append(clauses, `LOWER(platform) = LOWER(?)`)
 		args = append(args, platform)
+	}
+	if romSetName := strings.TrimSpace(options.ROMSetName); romSetName != "" {
+		clauses = append(clauses, `LOWER(rom_set_name) = LOWER(?)`)
+		args = append(args, romSetName)
 	}
 	if format := strings.TrimSpace(options.Format); format != "" {
 		clauses = append(clauses, `LOWER(format) = LOWER(?)`)
@@ -2517,6 +2917,20 @@ func decodeStringList(value string) []string {
 	return out
 }
 
+func nonNilStringList(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func scanSeries(row scanner) (domain.Series, error) {
 	var series domain.Series
 	var addedAt string
@@ -2695,6 +3109,31 @@ func bookSelectSQL(profileID int64) string {
 		LEFT JOIN book_private_states ps ON ps.book_id = b.id AND ps.profile_id = ` + profileIDValue
 }
 
+func scanManualCollection(row scanner) (domain.ManualCollection, error) {
+	var collection domain.ManualCollection
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(&collection.ID, &collection.Name, &collection.Description, &collection.ItemCount, &createdAt, &updatedAt); err != nil {
+		return collection, err
+	}
+	collection.CreatedAt = parseTime(createdAt)
+	collection.UpdatedAt = parseTime(updatedAt)
+	return collection, nil
+}
+
+func normalizeManualCollectionAssetType(assetType string) string {
+	switch strings.ToLower(strings.TrimSpace(assetType)) {
+	case "book", "comic":
+		return "book"
+	case "game":
+		return "game"
+	case "video":
+		return "video"
+	default:
+		return ""
+	}
+}
+
 func scanFile(row scanner) (domain.File, error) {
 	var file domain.File
 	var mtime string
@@ -2754,6 +3193,95 @@ func scanGame(row scanner) (domain.GameAsset, error) {
 	game.CreatedAt = parseTime(createdAt)
 	game.UpdatedAt = parseTime(updatedAt)
 	return game, nil
+}
+
+func scanGameMetadata(row scanner) (domain.GameMetadata, error) {
+	var metadata domain.GameMetadata
+	var genres string
+	var developers string
+	var publishers string
+	var externalLinks string
+	var updatedAt string
+	if err := row.Scan(
+		&metadata.GameID,
+		&metadata.DisplayTitle,
+		&metadata.Summary,
+		&metadata.ReleaseDate,
+		&genres,
+		&developers,
+		&publishers,
+		&metadata.Players,
+		&metadata.Rating,
+		&externalLinks,
+		&updatedAt,
+	); err != nil {
+		return metadata, err
+	}
+	metadata.Genres = nonNilStringList(decodeStringList(genres))
+	metadata.Developers = nonNilStringList(decodeStringList(developers))
+	metadata.Publishers = nonNilStringList(decodeStringList(publishers))
+	metadata.ExternalLinks = nonNilStringList(decodeStringList(externalLinks))
+	metadata.UpdatedAt = parseTime(updatedAt)
+	return metadata, nil
+}
+
+func emptyGameMetadata(gameID int64) domain.GameMetadata {
+	return domain.GameMetadata{
+		GameID:        gameID,
+		Genres:        []string{},
+		Developers:    []string{},
+		Publishers:    []string{},
+		ExternalLinks: []string{},
+	}
+}
+
+func scanGameMetadataSource(row scanner) (domain.GameMetadataSource, error) {
+	var source domain.GameMetadataSource
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(
+		&source.ID,
+		&source.GameID,
+		&source.Source,
+		&source.SourceID,
+		&source.MatchedBy,
+		&source.Confidence,
+		&source.RawJSON,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return source, err
+	}
+	source.CreatedAt = parseTime(createdAt)
+	source.UpdatedAt = parseTime(updatedAt)
+	return source, nil
+}
+
+func scanGameArtwork(row scanner) (domain.GameArtwork, error) {
+	var artwork domain.GameArtwork
+	var selected int
+	var createdAt string
+	var updatedAt string
+	if err := row.Scan(
+		&artwork.ID,
+		&artwork.GameID,
+		&artwork.Source,
+		&artwork.Kind,
+		&artwork.URL,
+		&artwork.CachePath,
+		&artwork.Width,
+		&artwork.Height,
+		&selected,
+		&artwork.Confidence,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return artwork, err
+	}
+	artwork.Selected = selected != 0
+	artwork.CreatedAt = parseTime(createdAt)
+	artwork.UpdatedAt = parseTime(updatedAt)
+	return artwork, nil
 }
 
 func videoSelectSQL() string {

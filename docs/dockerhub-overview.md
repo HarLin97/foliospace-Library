@@ -4,6 +4,16 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.970 Release: Manual Collections and Game Library Controls
+
+Release `0.970` adds a more flexible personal-library layer on top of indexed assets.
+
+- User-defined manual collections can group books, games, and videos without moving files on disk.
+- Game assets can now be marked favorite or liked from the web UI, Client API, and MCP.
+- Game catalog browsing can filter by platform groups derived from indexed game collections.
+- Game metadata helpers include provider discovery and `gamelist.xml` export for launcher-style integrations.
+- Service and MCP metadata now report version `0.970`.
+
 ## 0.969 Release: PDF Metadata and Scan Excludes
 
 Release `0.969` improves scan results for PDF-heavy libraries and mixed folders that contain generated artwork.
@@ -76,7 +86,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.969
+docker pull funland/foliospace-library:0.970
 ```
 
 ```bash
@@ -86,7 +96,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.969
+  funland/foliospace-library:0.970
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

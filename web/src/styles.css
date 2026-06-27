@@ -1106,6 +1106,11 @@ button:hover {
   text-align: left;
 }
 
+.shelfBookShell {
+  position: relative;
+  min-width: 0;
+}
+
 .shelfBook:hover,
 .shelfBook:focus-visible {
   border-color: transparent;
@@ -1385,6 +1390,108 @@ h1 {
   opacity: 0.82;
 }
 
+.gameCard {
+  position: relative;
+}
+
+.gameCardButton {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+
+.gameCardButton:hover .shelfCover,
+.gameCardButton:focus-visible .shelfCover,
+.gameCard:hover .shelfCover {
+  border-color: #6c8a96;
+  box-shadow: 0 14px 28px rgba(31, 42, 46, 0.16);
+  transform: translateY(-2px);
+}
+
+.gameCardActions {
+  position: absolute;
+  z-index: 4;
+  top: 7px;
+  right: 7px;
+  display: flex;
+  gap: 5px;
+}
+
+.gameCardAction {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background: rgba(31, 42, 46, 0.62);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  box-shadow: 0 6px 12px rgba(31, 42, 46, 0.18);
+}
+
+.gameCardAction:hover,
+.gameCardAction:focus-visible,
+.gameCardAction.active {
+  border-color: #ffffff;
+  background: #337f92;
+  color: #ffffff;
+}
+
+.manualCollectionAction {
+  position: absolute;
+  z-index: 4;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background: rgba(31, 42, 46, 0.62);
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  box-shadow: 0 6px 12px rgba(31, 42, 46, 0.18);
+}
+
+.manualCollectionAction:hover,
+.manualCollectionAction:focus-visible {
+  border-color: #ffffff;
+  background: #337f92;
+}
+
+.videoCard {
+  position: relative;
+}
+
+.videoCardButton {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+
 .videoCover {
   display: grid;
   place-items: center;
@@ -1504,6 +1611,54 @@ h1 {
 
 .catalogGrid.videos {
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.gamePlatformList {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0 18px;
+}
+
+.gamePlatformGroup {
+  display: grid;
+  gap: 0;
+  border-bottom: 1px solid #eef2f3;
+}
+
+.gamePlatformHeader {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(250, 253, 253, 0.96);
+  border-bottom: 1px solid #eef2f3;
+  padding: 12px 18px;
+}
+
+.gamePlatformHeader h2 {
+  margin: 0;
+  color: #1f2a2e;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.gamePlatformHeader small {
+  color: #647177;
+  font-size: 12px;
+}
+
+.gamePlatformList .catalogGrid {
+  min-height: auto;
+  overflow: visible;
+  padding-top: 14px;
+}
+
+.gamePlatformLoadMore {
+  display: grid;
+  margin: 18px auto 0;
 }
 
 .catalogLoadMore {

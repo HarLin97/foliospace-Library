@@ -30,7 +30,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.969"
+const serviceVersion = "0.970"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -55,6 +55,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/client/preferences", s.handleClientPreferences)
 	mux.HandleFunc("/api/client/home", s.handleClientHome)
 	mux.HandleFunc("/api/client/search", s.handleClientSearch)
+	mux.HandleFunc("/api/client/manual-collections", s.handleClientManualCollections)
+	mux.HandleFunc("/api/client/manual-collections/", s.handleClientManualCollectionAction)
 	mux.HandleFunc("/api/client/games", s.handleClientGames)
 	mux.HandleFunc("/api/client/games/", s.handleClientGameAction)
 	mux.HandleFunc("/api/client/videos", s.handleClientVideos)
@@ -75,6 +77,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/books/favorites", s.handleFavoriteBooks)
 	mux.HandleFunc("/api/books/private-status/", s.handlePrivateStatusBooks)
 	mux.HandleFunc("/api/books/", s.handleBookAction)
+	mux.HandleFunc("/api/games/metadata/providers", s.handleGameMetadataProviders)
+	mux.HandleFunc("/api/games/gamelist.xml", s.handleGameGamelistExport)
 	mux.HandleFunc("/api/games/", s.handleGameAction)
 	mux.HandleFunc("/api/games/recent", s.handleRecentGames)
 	mux.HandleFunc("/api/videos/", s.handleVideoAction)
@@ -239,6 +243,35 @@ func (s *Server) handleScanSettings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleGameMetadataProviders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, map[string]any{"providers": s.service.GameMetadataProviders()})
+}
+
+func (s *Server) handleGameGamelistExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	data, err := s.service.ExportGameGamelistXML(domain.GameListOptions{
+		Query:      r.URL.Query().Get("q"),
+		Platform:   r.URL.Query().Get("platform"),
+		ROMSetName: r.URL.Query().Get("romSetName"),
+		Format:     r.URL.Query().Get("format"),
+		BasePath:   r.URL.Query().Get("basePath"),
+	})
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="gamelist.xml"`)
+	_, _ = w.Write(data)
+}
+
 func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -289,34 +322,35 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		APIVersion:       "v1",
 		SupportedFormats: []string{"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"},
 		Capabilities: clientCapabilities{
-			ClientHome:          true,
-			UnifiedManifest:     true,
-			ProgressSync:        true,
-			EPUBStreaming:       true,
-			PDFStreaming:        true,
-			PDFPageLayout:       true,
-			PDFWebtoonLayout:    true,
-			ComicWebtoonLayout:  true,
-			WebtoonPositionSync: true,
-			CompactReader:       true,
-			PageStreaming:       true,
-			PageImageDownsample: true,
-			BookCatalog:         true,
-			CollectionCatalog:   true,
-			GameShelf:           true,
-			GameCatalog:         true,
-			VideoCatalog:        true,
-			VideoHLS:            true,
-			PrivateState:        true,
-			Search:              true,
-			Preferences:         true,
-			Profiles:            true,
-			BearerTokenAuth:     s.authEnabled(),
-			SetupWizard:         true,
-			ScannerJobEvents:    true,
-			ScannerJobControl:   true,
-			ScanSettings:        true,
-			RecentScan:          true,
+			ClientHome:            true,
+			UnifiedManifest:       true,
+			ProgressSync:          true,
+			EPUBStreaming:         true,
+			PDFStreaming:          true,
+			PDFPageLayout:         true,
+			PDFWebtoonLayout:      true,
+			ComicWebtoonLayout:    true,
+			WebtoonPositionSync:   true,
+			CompactReader:         true,
+			PageStreaming:         true,
+			PageImageDownsample:   true,
+			BookCatalog:           true,
+			CollectionCatalog:     true,
+			GameShelf:             true,
+			GameCatalog:           true,
+			VideoCatalog:          true,
+			VideoHLS:              true,
+			PrivateState:          true,
+			Search:                true,
+			Preferences:           true,
+			Profiles:              true,
+			BearerTokenAuth:       s.authEnabled(),
+			SetupWizard:           true,
+			ScannerJobEvents:      true,
+			ScannerJobControl:     true,
+			ScanSettings:          true,
+			RecentScan:            true,
+			GameMetadataProviders: true,
 		},
 	})
 }
@@ -455,6 +489,88 @@ func (s *Server) handleClientBooks(w http.ResponseWriter, r *http.Request) {
 	writeJSONOrError(w, clientBookListPage(bookListPageWithThumbnails(page)), err)
 }
 
+func (s *Server) handleClientManualCollections(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		collections, err := s.service.ListManualCollections()
+		writeJSONOrError(w, collections, err)
+	case http.MethodPost:
+		var req domain.ManualCollection
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		collection, err := s.service.CreateManualCollection(req)
+		writeJSONOrError(w, collection, err)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleClientManualCollectionAction(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	id, tail, ok := parseIDTail(r.URL.Path, "/api/client/manual-collections/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if tail == "" {
+		switch r.Method {
+		case http.MethodGet:
+			details, err := s.service.ManualCollectionDetails(id)
+			writeJSONOrError(w, details, err)
+		case http.MethodPut:
+			var req domain.ManualCollection
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			collection, err := s.service.UpdateManualCollection(id, req)
+			writeJSONOrError(w, collection, err)
+		case http.MethodDelete:
+			writeJSONOrError(w, map[string]bool{"ok": true}, s.service.DeleteManualCollection(id))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+		return
+	}
+	if tail == "items" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req domain.ManualCollectionItem
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		collection, err := s.service.AddManualCollectionItem(id, req)
+		writeJSONOrError(w, collection, err)
+		return
+	}
+	if strings.HasPrefix(tail, "items/") && r.Method == http.MethodDelete {
+		parts := strings.Split(strings.TrimPrefix(tail, "items/"), "/")
+		if len(parts) != 2 {
+			http.NotFound(w, r)
+			return
+		}
+		assetID, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		collection, err := s.service.RemoveManualCollectionItem(id, parts[0], assetID)
+		writeJSONOrError(w, collection, err)
+		return
+	}
+	http.NotFound(w, r)
+}
+
 func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeClient(w, r) {
 		return
@@ -471,6 +587,38 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		writeJSON(w, clientGameManifest(game))
+		return
+	}
+	if tail == "details" && r.Method == http.MethodGet {
+		details, err := s.service.GameDetails(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSON(w, clientGameDetails(details))
+		return
+	}
+	if tail == "metadata" && r.Method == http.MethodGet {
+		details, err := s.service.GameDetails(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSON(w, clientGameMetadata(details))
+		return
+	}
+	if tail == "private-state" {
+		if r.Method != http.MethodPut {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req domain.GamePrivateState
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		game, err := s.service.UpdateGamePrivateStateForProfile(id, s.requestProfileID(r), req)
+		writeJSONOrError(w, clientGameItem(game), err)
 		return
 	}
 	if tail == "cover" && r.Method == http.MethodGet {
@@ -499,14 +647,15 @@ func (s *Server) handleClientGames(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	page, err := s.service.ListGamesPage(domain.GameListOptions{
-		Limit:    queryInt(r, "limit", 50, 200),
-		Offset:   queryInt(r, "offset", 0, 0),
-		Query:    r.URL.Query().Get("q"),
-		Platform: r.URL.Query().Get("platform"),
-		Format:   r.URL.Query().Get("format"),
-		Sort:     r.URL.Query().Get("sort"),
-	})
+	page, err := s.service.ListGamesPageForProfile(domain.GameListOptions{
+		Limit:      queryInt(r, "limit", 50, 200),
+		Offset:     queryInt(r, "offset", 0, 0),
+		Query:      r.URL.Query().Get("q"),
+		Platform:   r.URL.Query().Get("platform"),
+		ROMSetName: r.URL.Query().Get("romSetName"),
+		Format:     r.URL.Query().Get("format"),
+		Sort:       r.URL.Query().Get("sort"),
+	}, s.requestProfileID(r))
 	if err != nil {
 		writeJSONOrError(w, nil, err)
 		return
@@ -619,6 +768,35 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if tail == "cover" && r.Method == http.MethodGet {
 		s.streamGameCover(w, id)
+		return
+	}
+	if tail == "metadata/refresh" && r.Method == http.MethodPost {
+		if !s.authorizeAPI(w, r) {
+			return
+		}
+		result, err := s.service.RefreshGameMetadata(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSON(w, gameMetadataActionResponseFromResult(result))
+		return
+	}
+	if tail == "metadata/select-match" && r.Method == http.MethodPost {
+		if !s.authorizeAPI(w, r) {
+			return
+		}
+		var req gameMetadataSelectMatchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		result, err := s.service.SelectGameMetadataMatch(id, req.Source, req.SourceID)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSON(w, gameMetadataActionResponseFromResult(result))
 		return
 	}
 	http.NotFound(w, r)
@@ -1743,34 +1921,35 @@ type clientInfoResponse struct {
 }
 
 type clientCapabilities struct {
-	ClientHome          bool `json:"clientHome"`
-	UnifiedManifest     bool `json:"unifiedManifest"`
-	ProgressSync        bool `json:"progressSync"`
-	EPUBStreaming       bool `json:"epubStreaming"`
-	PDFStreaming        bool `json:"pdfStreaming"`
-	PDFPageLayout       bool `json:"pdfPageLayout"`
-	PDFWebtoonLayout    bool `json:"pdfWebtoonLayout"`
-	ComicWebtoonLayout  bool `json:"comicWebtoonLayout"`
-	WebtoonPositionSync bool `json:"webtoonPositionSync"`
-	CompactReader       bool `json:"compactReader"`
-	PageStreaming       bool `json:"pageStreaming"`
-	PageImageDownsample bool `json:"pageImageDownsample"`
-	BookCatalog         bool `json:"bookCatalog"`
-	CollectionCatalog   bool `json:"collectionCatalog"`
-	GameShelf           bool `json:"gameShelf"`
-	GameCatalog         bool `json:"gameCatalog"`
-	VideoCatalog        bool `json:"videoCatalog"`
-	VideoHLS            bool `json:"videoHls"`
-	PrivateState        bool `json:"privateState"`
-	Search              bool `json:"search"`
-	Preferences         bool `json:"preferences"`
-	Profiles            bool `json:"profiles"`
-	BearerTokenAuth     bool `json:"bearerTokenAuth"`
-	SetupWizard         bool `json:"setupWizard"`
-	ScannerJobEvents    bool `json:"scannerJobEvents"`
-	ScannerJobControl   bool `json:"scannerJobControl"`
-	ScanSettings        bool `json:"scanSettings"`
-	RecentScan          bool `json:"recentScan"`
+	ClientHome            bool `json:"clientHome"`
+	UnifiedManifest       bool `json:"unifiedManifest"`
+	ProgressSync          bool `json:"progressSync"`
+	EPUBStreaming         bool `json:"epubStreaming"`
+	PDFStreaming          bool `json:"pdfStreaming"`
+	PDFPageLayout         bool `json:"pdfPageLayout"`
+	PDFWebtoonLayout      bool `json:"pdfWebtoonLayout"`
+	ComicWebtoonLayout    bool `json:"comicWebtoonLayout"`
+	WebtoonPositionSync   bool `json:"webtoonPositionSync"`
+	CompactReader         bool `json:"compactReader"`
+	PageStreaming         bool `json:"pageStreaming"`
+	PageImageDownsample   bool `json:"pageImageDownsample"`
+	BookCatalog           bool `json:"bookCatalog"`
+	CollectionCatalog     bool `json:"collectionCatalog"`
+	GameShelf             bool `json:"gameShelf"`
+	GameCatalog           bool `json:"gameCatalog"`
+	VideoCatalog          bool `json:"videoCatalog"`
+	VideoHLS              bool `json:"videoHls"`
+	PrivateState          bool `json:"privateState"`
+	Search                bool `json:"search"`
+	Preferences           bool `json:"preferences"`
+	Profiles              bool `json:"profiles"`
+	BearerTokenAuth       bool `json:"bearerTokenAuth"`
+	SetupWizard           bool `json:"setupWizard"`
+	ScannerJobEvents      bool `json:"scannerJobEvents"`
+	ScannerJobControl     bool `json:"scannerJobControl"`
+	ScanSettings          bool `json:"scanSettings"`
+	RecentScan            bool `json:"recentScan"`
+	GameMetadataProviders bool `json:"gameMetadataProviders"`
 }
 
 type clientHomeResponse struct {
@@ -1880,11 +2059,61 @@ type clientGame struct {
 	Compatibility string `json:"compatibility"`
 	CoverURL      string `json:"coverUrl,omitempty"`
 	ManifestURL   string `json:"manifestUrl"`
+	Favorite      bool   `json:"favorite"`
+	Liked         bool   `json:"liked"`
 }
 
 type clientGameManifestResponse struct {
 	Game    clientGame `json:"game"`
 	FileURL string     `json:"fileUrl"`
+}
+
+type clientGameMetadataResponse struct {
+	MetadataStatus string                     `json:"metadataStatus"`
+	Metadata       domain.GameMetadata        `json:"metadata"`
+	Sources        []clientGameMetadataSource `json:"sources"`
+	Artwork        []clientGameArtwork        `json:"artwork"`
+}
+
+type clientGameDetailsResponse struct {
+	Game clientGame `json:"game"`
+	clientGameMetadataResponse
+}
+
+type clientGameMetadataSource struct {
+	ID         int64   `json:"id"`
+	Source     string  `json:"source"`
+	SourceID   string  `json:"sourceId"`
+	MatchedBy  string  `json:"matchedBy"`
+	Confidence float64 `json:"confidence"`
+	UpdatedAt  string  `json:"updatedAt"`
+}
+
+type clientGameArtwork struct {
+	ID         int64   `json:"id"`
+	Source     string  `json:"source"`
+	Kind       string  `json:"kind"`
+	URL        string  `json:"url,omitempty"`
+	Width      int     `json:"width"`
+	Height     int     `json:"height"`
+	Selected   bool    `json:"selected"`
+	Confidence float64 `json:"confidence"`
+	UpdatedAt  string  `json:"updatedAt"`
+}
+
+type gameMetadataActionResponse struct {
+	GameID         int64                               `json:"gameId"`
+	Action         string                              `json:"action"`
+	Status         string                              `json:"status"`
+	Message        string                              `json:"message"`
+	MetadataStatus string                              `json:"metadataStatus"`
+	Sources        []clientGameMetadataSource          `json:"sources"`
+	Providers      []domain.GameMetadataProviderStatus `json:"providers"`
+}
+
+type gameMetadataSelectMatchRequest struct {
+	Source   string `json:"source"`
+	SourceID string `json:"sourceId"`
 }
 
 type clientGameListResponse struct {
@@ -2074,6 +2303,8 @@ func clientGameItem(game domain.GameAsset) clientGame {
 		Compatibility: game.Compatibility,
 		CoverURL:      gameCoverURL(game.ID, game.Platform),
 		ManifestURL:   fmt.Sprintf("/api/client/games/%d/manifest", game.ID),
+		Favorite:      game.Favorite,
+		Liked:         game.Liked,
 	}
 }
 
@@ -2086,6 +2317,67 @@ func clientGameManifest(game domain.GameAsset) clientGameManifestResponse {
 		Game:    clientGameItem(game),
 		FileURL: fmt.Sprintf("/api/client/games/%d/file", game.ID),
 	}
+}
+
+func clientGameDetails(details domain.GameDetails) clientGameDetailsResponse {
+	return clientGameDetailsResponse{
+		Game:                       clientGameItem(details.Game),
+		clientGameMetadataResponse: clientGameMetadata(details),
+	}
+}
+
+func clientGameMetadata(details domain.GameDetails) clientGameMetadataResponse {
+	return clientGameMetadataResponse{
+		MetadataStatus: details.MetadataStatus,
+		Metadata:       details.Metadata,
+		Sources:        clientGameMetadataSources(details.Sources),
+		Artwork:        clientGameArtworkItems(details.Artwork),
+	}
+}
+
+func clientGameMetadataSources(items []domain.GameMetadataSource) []clientGameMetadataSource {
+	out := make([]clientGameMetadataSource, 0, len(items))
+	for _, item := range items {
+		out = append(out, clientGameMetadataSource{
+			ID:         item.ID,
+			Source:     item.Source,
+			SourceID:   item.SourceID,
+			MatchedBy:  item.MatchedBy,
+			Confidence: item.Confidence,
+			UpdatedAt:  formatClientTime(item.UpdatedAt),
+		})
+	}
+	return out
+}
+
+func gameMetadataActionResponseFromResult(result domain.GameMetadataActionResult) gameMetadataActionResponse {
+	return gameMetadataActionResponse{
+		GameID:         result.GameID,
+		Action:         result.Action,
+		Status:         result.Status,
+		Message:        result.Message,
+		MetadataStatus: result.MetadataStatus,
+		Sources:        clientGameMetadataSources(result.Sources),
+		Providers:      result.Providers,
+	}
+}
+
+func clientGameArtworkItems(items []domain.GameArtwork) []clientGameArtwork {
+	out := make([]clientGameArtwork, 0, len(items))
+	for _, item := range items {
+		out = append(out, clientGameArtwork{
+			ID:         item.ID,
+			Source:     item.Source,
+			Kind:       item.Kind,
+			URL:        item.URL,
+			Width:      item.Width,
+			Height:     item.Height,
+			Selected:   item.Selected,
+			Confidence: item.Confidence,
+			UpdatedAt:  formatClientTime(item.UpdatedAt),
+		})
+	}
+	return out
 }
 
 func clientVideos(items []domain.VideoAsset) []clientVideo {

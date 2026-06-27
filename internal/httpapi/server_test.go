@@ -765,7 +765,8 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 		!strings.Contains(infoBody, `"webtoonPositionSync":true`) ||
 		!strings.Contains(infoBody, `"pageImageDownsample":true`) ||
 		!strings.Contains(infoBody, `"compactReader":true`) ||
-		!strings.Contains(infoBody, `"scanSettings":true`) {
+		!strings.Contains(infoBody, `"scanSettings":true`) ||
+		!strings.Contains(infoBody, `"gameMetadataProviders":true`) {
 		t.Fatalf("client info response %q does not include v1 capabilities", infoBody)
 	}
 	if !strings.Contains(infoBody, `"bookCatalog":true`) {
@@ -972,6 +973,19 @@ func TestAPIClientGamesPage(t *testing.T) {
 		t.Fatalf("client games page %q missing manifestUrl", body)
 	}
 
+	updatedState := authPut(t, ts.URL+"/api/client/games/2/private-state", "secret", `{"favorite":true,"liked":true}`)
+	if !strings.Contains(updatedState, `"favorite":true`) || !strings.Contains(updatedState, `"liked":true`) {
+		t.Fatalf("game private-state response %q missing favorite and liked", updatedState)
+	}
+	platformBody := authGet(t, ts.URL+"/api/client/games?limit=20&sort=platform", "secret")
+	if strings.Index(platformBody, `"platform":"arcade"`) > strings.Index(platformBody, `"platform":"gba"`) ||
+		strings.Index(platformBody, `"platform":"gba"`) > strings.Index(platformBody, `"platform":"nes"`) {
+		t.Fatalf("client games page %q is not platform ordered", platformBody)
+	}
+	if !strings.Contains(platformBody, `"title":"Advance Wars"`) || !strings.Contains(platformBody, `"favorite":true`) || !strings.Contains(platformBody, `"liked":true`) {
+		t.Fatalf("client games page %q missing saved private state", platformBody)
+	}
+
 	filtered := authGet(t, ts.URL+"/api/client/games?limit=500&q=japan&platform=nes&format=nes", "secret")
 	if !strings.Contains(filtered, `"title":"Super Contra"`) || !strings.Contains(filtered, `"total":1`) || !strings.Contains(filtered, `"limit":200`) || !strings.Contains(filtered, `"hasMore":false`) {
 		t.Fatalf("filtered client games page = %q, want clamped one-item response", filtered)
@@ -980,6 +994,229 @@ func TestAPIClientGamesPage(t *testing.T) {
 	empty := authGet(t, ts.URL+"/api/client/games?q=missing", "secret")
 	if !strings.Contains(empty, `"items":[]`) || !strings.Contains(empty, `"total":0`) {
 		t.Fatalf("empty client games page = %q, want empty list response", empty)
+	}
+}
+
+func TestAPIClientGameDetailsExposeMetadataState(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID:     lib.ID,
+		Title:         "Super Mario World",
+		Platform:      "snes",
+		ROMSetName:    "No-Intro",
+		Region:        "USA",
+		Format:        "sfc",
+		FilePath:      "/library/snes/Super Mario World.sfc",
+		RelPath:       "snes/Super Mario World.sfc",
+		Size:          1024,
+		MTime:         time.Unix(30, 0),
+		CRC32:         "b19ed489",
+		SHA1:          "0123456789abcdef0123456789abcdef01234567",
+		EmulatorHint:  "snes",
+		Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertGameMetadata(domain.GameMetadata{
+		GameID:       game.ID,
+		DisplayTitle: "Super Mario World",
+		Summary:      "Dinosaur Land platform adventure.",
+		ReleaseDate:  "1990-11-21",
+		Genres:       []string{"Platform"},
+		Developers:   []string{"Nintendo EAD"},
+		Publishers:   []string{"Nintendo"},
+		Players:      "1-2",
+		Rating:       9.3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertGameMetadataSource(domain.GameMetadataSource{
+		GameID:     game.ID,
+		Source:     "gamelist",
+		SourceID:   "snes/smw",
+		MatchedBy:  "manual",
+		Confidence: 1,
+		RawJSON:    `{"name":"Super Mario World"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertGameArtwork(domain.GameArtwork{
+		GameID:     game.ID,
+		Source:     "gamelist",
+		Kind:       "cover",
+		URL:        "/api/games/1/cover",
+		Width:      600,
+		Height:     800,
+		Selected:   true,
+		Confidence: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	body := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/details", "secret")
+	if strings.Contains(body, "/library") || strings.Contains(body, "filePath") || strings.Contains(body, "relPath") {
+		t.Fatalf("client game details leaked internal path: %q", body)
+	}
+	for _, want := range []string{`"metadataStatus":"matched"`, `"displayTitle":"Super Mario World"`, `"source":"gamelist"`, `"kind":"cover"`, `"manifestUrl":"/api/client/games/`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("client game details = %q, want %q", body, want)
+		}
+	}
+
+	metadataBody := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/metadata", "secret")
+	if !strings.Contains(metadataBody, `"metadataStatus":"matched"`) || !strings.Contains(metadataBody, `"sources"`) || strings.Contains(metadataBody, "/library") {
+		t.Fatalf("client game metadata = %q, want safe metadata response", metadataBody)
+	}
+}
+
+func TestAPIGameGamelistExportReturnsDraftXML(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, game := range []domain.GameAsset{
+		{LibraryID: lib.ID, Title: "Advance Wars", Platform: "gba", ROMSetName: "GBA", Region: "USA", Format: "gba", FilePath: "/library/GBA/Advance Wars.gba", RelPath: "GBA/Advance Wars.gba", Size: 1024, MTime: time.Unix(40, 0), CRC32: "11111111", SHA1: "1111111111111111111111111111111111111111", EmulatorHint: "gba", Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Super Mario World", Platform: "snes", ROMSetName: "SNES", Region: "USA", Format: "sfc", FilePath: "/library/SNES/Super Mario World.sfc", RelPath: "SNES/Super Mario World.sfc", Size: 2048, MTime: time.Unix(41, 0), CRC32: "22222222", SHA1: "2222222222222222222222222222222222222222", EmulatorHint: "snes", Compatibility: "unknown"},
+	} {
+		if _, err := st.UpsertGame(game); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/games/gamelist.xml?romSetName=GBA&basePath=GBA", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body = %q, want 200", resp.StatusCode, body)
+	}
+	if !strings.Contains(resp.Header.Get("Content-Type"), "application/xml") {
+		t.Fatalf("content type = %q, want application/xml", resp.Header.Get("Content-Type"))
+	}
+	for _, want := range []string{`<?xml version="1.0" encoding="UTF-8"?>`, `<gameList>`, `<path>./Advance Wars.gba</path>`, `<name>Advance Wars</name>`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("gamelist export = %q, want %q", body, want)
+		}
+	}
+	if strings.Contains(body, "Super Mario World") || strings.Contains(body, "/library") {
+		t.Fatalf("gamelist export = %q, want filtered safe relative paths", body)
+	}
+}
+
+func TestAPIGameMetadataProvidersReportBuiltInAndCredentialedSources(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	body := authGet(t, ts.URL+"/api/games/metadata/providers", "secret")
+	for _, want := range []string{
+		`"id":"gamelist"`,
+		`"enabled":true`,
+		`"requiresCredentials":false`,
+		`"id":"libretro"`,
+		`"id":"igdb"`,
+		`"requiresCredentials":true`,
+		`"configured":false`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("providers response = %q, want %q", body, want)
+		}
+	}
+	if strings.Contains(body, "secret") {
+		t.Fatalf("providers response leaked credential material: %q", body)
+	}
+}
+
+func TestAPIGameMetadataActionsReturnProviderState(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID:     lib.ID,
+		Title:         "Unknown Game",
+		Platform:      "gba",
+		Format:        "gba",
+		FilePath:      "/library/gba/Unknown Game.gba",
+		RelPath:       "gba/Unknown Game.gba",
+		Size:          1024,
+		MTime:         time.Unix(31, 0),
+		CRC32:         "11111111",
+		SHA1:          "1111111111111111111111111111111111111111",
+		EmulatorHint:  "gba",
+		Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertGameMetadataSource(domain.GameMetadataSource{
+		GameID:     game.ID,
+		Source:     "gamelist",
+		SourceID:   "gba/Unknown Game.gba",
+		MatchedBy:  "path",
+		Confidence: 1,
+		RawJSON:    `{"name":"Unknown Game"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	refresh := authPost(t, ts.URL+"/api/games/"+itoa(game.ID)+"/metadata/refresh", "secret", `{}`)
+	if !strings.Contains(refresh, `"status":"completed"`) ||
+		!strings.Contains(refresh, `"gameId":`+itoa(game.ID)) ||
+		!strings.Contains(refresh, `"providers"`) ||
+		!strings.Contains(refresh, `"metadataStatus":"matched"`) {
+		t.Fatalf("refresh response = %q, want completed provider state", refresh)
+	}
+
+	selectMatch := authPost(t, ts.URL+"/api/games/"+itoa(game.ID)+"/metadata/select-match", "secret", `{"source":"gamelist","sourceId":"gba/Unknown Game.gba"}`)
+	if !strings.Contains(selectMatch, `"status":"completed"`) ||
+		!strings.Contains(selectMatch, `"action":"select-match"`) ||
+		!strings.Contains(selectMatch, `"matchedBy":"manual"`) {
+		t.Fatalf("select-match response = %q, want completed manual match state", selectMatch)
 	}
 }
 
@@ -1052,6 +1289,77 @@ func TestAPIClientVideosPage(t *testing.T) {
 	queueStatus := authGet(t, ts.URL+"/api/client/videos/transcode/status", "secret")
 	if !strings.Contains(queueStatus, `"status":"idle"`) || !strings.Contains(queueStatus, `"segmentCount":0`) {
 		t.Fatalf("video transcode queue status = %q, want idle status", queueStatus)
+	}
+}
+
+func TestAPIClientManualCollectionsSpanAssetTypes(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	bookLib, err := st.CreateLibraryWithType("Books", "/books", "book")
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(bookLib.ID, "Guides", "Guides")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "Arcade Guide", "pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(book.ID, bookLib.ID, "/books/Guides/Arcade Guide.pdf", "Guides/Arcade Guide.pdf", 2048, time.Unix(10, 0), ".pdf"); err != nil {
+		t.Fatal(err)
+	}
+	gameLib, err := st.CreateLibraryWithType("Games", "/games", "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{LibraryID: gameLib.ID, Title: "Metal Slug", Platform: "arcade", ROMSetName: "MAME", Format: "zip", FilePath: "/games/arcade/mslug.zip", RelPath: "arcade/mslug.zip", Size: 1024, MTime: time.Unix(11, 0), CRC32: "22222222", SHA1: "2222222222222222222222222222222222222222", EmulatorHint: "arcade", Compatibility: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	videoLib, err := st.CreateLibraryWithType("Videos", "/videos", "video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	video, err := st.UpsertVideo(domain.VideoAsset{LibraryID: videoLib.ID, Title: "Cabinet Tour", Format: "mp4", FilePath: "/videos/Cabinet Tour.mp4", RelPath: "Cabinet Tour.mp4", Size: 4096, MTime: time.Unix(12, 0), ThumbnailStatus: "placeholder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	created := authPost(t, ts.URL+"/api/client/manual-collections", "secret", `{"name":"Arcade Night","description":"Cross-media picks"}`)
+	if !strings.Contains(created, `"name":"Arcade Night"`) || !strings.Contains(created, `"itemCount":0`) {
+		t.Fatalf("create manual collection = %q, want empty collection", created)
+	}
+	for _, body := range []string{
+		`{"assetType":"book","assetId":` + itoa(book.ID) + `}`,
+		`{"assetType":"game","assetId":` + itoa(game.ID) + `}`,
+		`{"assetType":"video","assetId":` + itoa(video.ID) + `}`,
+	} {
+		added := authPost(t, ts.URL+"/api/client/manual-collections/1/items", "secret", body)
+		if !strings.Contains(added, `"itemCount"`) {
+			t.Fatalf("add manual collection item = %q, want collection response", added)
+		}
+	}
+	details := authGet(t, ts.URL+"/api/client/manual-collections/1", "secret")
+	if strings.Contains(details, "/books/Guides") || strings.Contains(details, "/games/arcade") || strings.Contains(details, "/videos/Cabinet") || strings.Contains(details, "filePath") || strings.Contains(details, "relPath") {
+		t.Fatalf("manual collection details leaked internal paths: %q", details)
+	}
+	if !strings.Contains(details, `"assetType":"book"`) || !strings.Contains(details, `"title":"Arcade Guide"`) ||
+		!strings.Contains(details, `"assetType":"game"`) || !strings.Contains(details, `"title":"Metal Slug"`) ||
+		!strings.Contains(details, `"assetType":"video"`) || !strings.Contains(details, `"title":"Cabinet Tour"`) {
+		t.Fatalf("manual collection details = %q, want resolved book/game/video items", details)
+	}
+	authDelete(t, ts.URL+"/api/client/manual-collections/1/items/game/"+itoa(game.ID), "secret")
+	afterDelete := authGet(t, ts.URL+"/api/client/manual-collections/1", "secret")
+	if strings.Contains(afterDelete, `"title":"Metal Slug"`) || !strings.Contains(afterDelete, `"itemCount":2`) {
+		t.Fatalf("manual collection after delete = %q, want game removed", afterDelete)
 	}
 }
 
@@ -1750,6 +2058,29 @@ func authGet(t *testing.T, url string, token string) string {
 	return string(data)
 }
 
+func authPost(t *testing.T, url string, token string, body string) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode >= 400 {
+		t.Fatalf("POST %s status %d: %s", url, resp.StatusCode, data)
+	}
+	return string(data)
+}
+
 func post(t *testing.T, url string, body string) {
 	t.Helper()
 	resp, err := http.Post(url, "application/json", strings.NewReader(body))
@@ -1799,6 +2130,51 @@ func postJSONBodyWithToken(t *testing.T, url string, body string, token string) 
 	}
 	if resp.StatusCode >= 400 {
 		t.Fatalf("POST %s status %d: %s", url, resp.StatusCode, data)
+	}
+	return string(data)
+}
+
+func authPut(t *testing.T, url string, token string, body string) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode >= 400 {
+		t.Fatalf("PUT %s status %d: %s", url, resp.StatusCode, data)
+	}
+	return string(data)
+}
+
+func authDelete(t *testing.T, url string, token string) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode >= 400 {
+		t.Fatalf("DELETE %s status %d: %s", url, resp.StatusCode, data)
 	}
 	return string(data)
 }

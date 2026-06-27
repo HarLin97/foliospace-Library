@@ -21,10 +21,10 @@ This installs `foliospace-mcp` to:
 Release packages are expected at:
 
 ```text
-https://foliospace.app/releases/foliospace-mcp_0.966_darwin_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.966_darwin_amd64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.966_linux_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.966_linux_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.970_darwin_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.970_darwin_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.970_linux_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.970_linux_amd64.tar.gz
 https://foliospace.app/releases/checksums.txt
 ```
 
@@ -124,8 +124,11 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.home`: continue reading, recent books, and collections.
 - `foliospace.search_books`: search indexed books and comics.
 - `foliospace.open_book_manifest`: open a CBZ/ZIP/EPUB/PDF client manifest by `bookId`. Manifests include `readerModes` and `defaultReaderMode` so clients can expose single-page, double-page, or webtoon/vertical-scroll controls without guessing from the extension. CBZ/ZIP page entries include `pageKey`, `url` for the original image, and `displayUrl` for a server-downsampled mobile/tablet-safe image. PDF manifests expose the opaque PDF stream URL; clients should use HTTP Range capable reads against that URL.
-- `foliospace.list_games`: list paginated client-safe ROM assets with `limit`, `offset`, `q`, `platform`, `format`, and `sort`.
+- `foliospace.list_games`: list paginated client-safe ROM assets with `limit`, `offset`, `q`, `platform`, `romSetName`, `format`, and `sort`.
 - `foliospace.open_game_manifest`: open a ROM client manifest by `gameId`.
+- `foliospace.get_game_metadata_providers`: list game metadata provider status and local artwork import capabilities.
+- `foliospace.export_game_gamelist`: export indexed games as `gamelist.xml` with optional catalog filters.
+- `foliospace.save_game_private_state`: save profile-scoped game `favorite` and `liked` flags.
 - `foliospace.list_videos`: list paginated client-safe video assets with `limit`, `offset`, `q`, `format`, and `sort`.
 - `foliospace.open_video_manifest`: open a video client manifest by `videoId`; the returned `fileUrl` is an opaque Range-capable service URL, while `hlsUrl` is used when `playbackMode` is `hls`.
 - `foliospace.get_video_transcode_status`: read HLS transcode/cache status for a video; returns `idle`, `starting`, `running`, `queued`, `ready`, or `failed`.
@@ -150,6 +153,7 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.save_collection_state`: save collection `favorite` and `liked` flags.
 - `foliospace.list_collection_volumes`: list books/comics in a collection with optional `limit`, `offset`, `q`, and `sort`.
 - `foliospace.list_collection_assets`: list mixed collection assets by `collectionId`.
+- `foliospace.list_manual_collections`, `foliospace.create_manual_collection`, `foliospace.get_manual_collection`, `foliospace.add_manual_collection_item`, and `foliospace.remove_manual_collection_item`: manage user-defined shelves that can mix books, games, and videos.
 - `foliospace.scan_library`: start a library scan by `libraryId`; optional `path` scans one container-visible subdirectory or file inside the library root.
 - `foliospace.scan_recent`: scan only the latest new or changed files under a library or optional target path. Use this after adding several files to a large directory; `recentLimit` defaults to 20.
 - `foliospace.list_jobs`: list scan/import jobs.

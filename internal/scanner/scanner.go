@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -26,8 +27,9 @@ import (
 )
 
 type Scanner struct {
-	store       *store.Store
-	workerCount func() int
+	store         *store.Store
+	workerCount   func() int
+	gamelistCache sync.Map
 }
 
 type scanScope struct {
@@ -1161,7 +1163,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	}
 	title := gameTitle(path)
 	platform := inferGamePlatform(ext, relPath)
-	_, err = s.store.UpsertGame(domain.GameAsset{
+	game, err := s.store.UpsertGame(domain.GameAsset{
 		LibraryID:     library.ID,
 		Title:         title,
 		Platform:      platform,
@@ -1177,7 +1179,241 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		EmulatorHint:  platform,
 		Compatibility: "unknown",
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return s.applyGamelistMetadata(library, path, filepath.ToSlash(relPath), game.ID)
+}
+
+type gamelistXML struct {
+	Games []gamelistGame `xml:"game"`
+}
+
+type gamelistGame struct {
+	Path        string `xml:"path" json:"path,omitempty"`
+	Name        string `xml:"name" json:"name,omitempty"`
+	Desc        string `xml:"desc" json:"desc,omitempty"`
+	ReleaseDate string `xml:"releasedate" json:"releasedate,omitempty"`
+	Developer   string `xml:"developer" json:"developer,omitempty"`
+	Publisher   string `xml:"publisher" json:"publisher,omitempty"`
+	Genre       string `xml:"genre" json:"genre,omitempty"`
+	Players     string `xml:"players" json:"players,omitempty"`
+	Image       string `xml:"image" json:"image,omitempty"`
+	Thumbnail   string `xml:"thumbnail" json:"thumbnail,omitempty"`
+	Marquee     string `xml:"marquee" json:"marquee,omitempty"`
+	Screenshot  string `xml:"screenshot" json:"screenshot,omitempty"`
+	TitleScreen string `xml:"title_screen" json:"title_screen,omitempty"`
+	Manual      string `xml:"manual" json:"manual,omitempty"`
+}
+
+type gamelistIndex struct {
+	rootPath     string
+	gamelistPath string
+	mtime        time.Time
+	size         int64
+	games        map[string]gamelistGame
+}
+
+func (s *Scanner) applyGamelistMetadata(library domain.Library, gamePath string, relPath string, gameID int64) error {
+	index, entry, ok := s.gamelistEntryForGame(library.RootPath, gamePath, relPath)
+	if !ok {
+		return nil
+	}
+	if hasGamelistMetadata(entry) {
+		if err := s.store.UpsertGameMetadata(domain.GameMetadata{
+			GameID:       gameID,
+			DisplayTitle: strings.TrimSpace(entry.Name),
+			Summary:      strings.TrimSpace(entry.Desc),
+			ReleaseDate:  normalizeGamelistReleaseDate(entry.ReleaseDate),
+			Genres:       splitGamelistValues(entry.Genre),
+			Developers:   splitGamelistValues(entry.Developer),
+			Publishers:   splitGamelistValues(entry.Publisher),
+			Players:      strings.TrimSpace(entry.Players),
+		}); err != nil {
+			return err
+		}
+	}
+	rawJSON, _ := json.Marshal(entry)
+	if _, err := s.store.UpsertGameMetadataSource(domain.GameMetadataSource{
+		GameID:     gameID,
+		Source:     "gamelist",
+		SourceID:   filepath.ToSlash(relPath),
+		MatchedBy:  "path",
+		Confidence: 1,
+		RawJSON:    string(rawJSON),
+	}); err != nil {
+		return err
+	}
+
+	for _, item := range []struct {
+		kind     string
+		rawPath  string
+		selected bool
+	}{
+		{kind: "cover", rawPath: entry.Image, selected: true},
+		{kind: "thumbnail", rawPath: entry.Thumbnail},
+		{kind: "marquee", rawPath: entry.Marquee},
+		{kind: "screenshot", rawPath: entry.Screenshot},
+		{kind: "title_screen", rawPath: entry.TitleScreen},
+		{kind: "manual", rawPath: entry.Manual},
+	} {
+		cachePath, ok := resolveGamelistPath(library.RootPath, filepath.Dir(index.gamelistPath), item.rawPath)
+		if !ok {
+			continue
+		}
+		info, err := os.Stat(cachePath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if _, err := s.store.UpsertGameArtwork(domain.GameArtwork{
+			GameID:     gameID,
+			Source:     "gamelist",
+			Kind:       item.kind,
+			CachePath:  cachePath,
+			Selected:   item.selected,
+			Confidence: 1,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Scanner) gamelistEntryForGame(libraryRoot string, gamePath string, relPath string) (gamelistIndex, gamelistGame, bool) {
+	rootPath := filepath.Clean(libraryRoot)
+	gameDir := filepath.Dir(gamePath)
+	searchDirs := []string{gameDir}
+	if filepath.Clean(gameDir) != rootPath {
+		searchDirs = append(searchDirs, rootPath)
+	}
+	relPath = filepath.ToSlash(relPath)
+	for _, dir := range searchDirs {
+		index, ok := s.gamelistIndexForDirectory(rootPath, dir)
+		if !ok {
+			continue
+		}
+		entry, ok := index.games[relPath]
+		if ok {
+			return index, entry, true
+		}
+	}
+	return gamelistIndex{}, gamelistGame{}, false
+}
+
+func (s *Scanner) gamelistIndexForDirectory(libraryRoot string, dir string) (gamelistIndex, bool) {
+	gamelistPath := filepath.Join(dir, "gamelist.xml")
+	info, err := os.Stat(gamelistPath)
+	if err != nil || info.IsDir() {
+		return gamelistIndex{}, false
+	}
+	if cached, ok := s.gamelistCache.Load(gamelistPath); ok {
+		index := cached.(gamelistIndex)
+		if index.mtime.Equal(info.ModTime()) && index.size == info.Size() && index.rootPath == filepath.Clean(libraryRoot) {
+			return index, len(index.games) > 0
+		}
+	}
+	index, err := parseGamelistIndex(libraryRoot, gamelistPath, info)
+	if err != nil {
+		return gamelistIndex{}, false
+	}
+	s.gamelistCache.Store(gamelistPath, index)
+	return index, len(index.games) > 0
+}
+
+func parseGamelistIndex(libraryRoot string, gamelistPath string, info os.FileInfo) (gamelistIndex, error) {
+	data, err := os.ReadFile(gamelistPath)
+	if err != nil {
+		return gamelistIndex{}, err
+	}
+	var parsed gamelistXML
+	if err := xml.Unmarshal(data, &parsed); err != nil {
+		return gamelistIndex{}, err
+	}
+	baseDir := filepath.Dir(gamelistPath)
+	index := gamelistIndex{
+		rootPath:     filepath.Clean(libraryRoot),
+		gamelistPath: gamelistPath,
+		mtime:        info.ModTime(),
+		size:         info.Size(),
+		games:        map[string]gamelistGame{},
+	}
+	for _, game := range parsed.Games {
+		_, relPath, ok := resolveGamelistPathWithRel(libraryRoot, baseDir, game.Path)
+		if !ok || relPath == "" {
+			continue
+		}
+		index.games[relPath] = game
+	}
+	return index, nil
+}
+
+func hasGamelistMetadata(game gamelistGame) bool {
+	return strings.TrimSpace(game.Name) != "" ||
+		strings.TrimSpace(game.Desc) != "" ||
+		strings.TrimSpace(game.ReleaseDate) != "" ||
+		strings.TrimSpace(game.Developer) != "" ||
+		strings.TrimSpace(game.Publisher) != "" ||
+		strings.TrimSpace(game.Genre) != "" ||
+		strings.TrimSpace(game.Players) != ""
+}
+
+func resolveGamelistPath(libraryRoot string, baseDir string, rawPath string) (string, bool) {
+	path, _, ok := resolveGamelistPathWithRel(libraryRoot, baseDir, rawPath)
+	return path, ok
+}
+
+func resolveGamelistPathWithRel(libraryRoot string, baseDir string, rawPath string) (string, string, bool) {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return "", "", false
+	}
+	rawPath = strings.ReplaceAll(rawPath, "\\", "/")
+	var absPath string
+	if filepath.IsAbs(rawPath) {
+		absPath = filepath.Clean(rawPath)
+	} else {
+		absPath = filepath.Clean(filepath.Join(baseDir, filepath.FromSlash(rawPath)))
+	}
+	rootPath := filepath.Clean(libraryRoot)
+	relPath, err := filepath.Rel(rootPath, absPath)
+	if err != nil || relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) || filepath.IsAbs(relPath) {
+		return "", "", false
+	}
+	return absPath, filepath.ToSlash(relPath), true
+}
+
+func normalizeGamelistReleaseDate(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 8 && allDigits(value[:8]) {
+		return value[:4] + "-" + value[4:6] + "-" + value[6:8]
+	}
+	return value
+}
+
+func allDigits(value string) bool {
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return value != ""
+}
+
+func splitGamelistValues(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';'
+	})
+	values := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		values = append(values, item)
+	}
+	return values
 }
 
 func (s *Scanner) indexVideoFile(library domain.Library, path string, info fs.FileInfo, ext string) error {

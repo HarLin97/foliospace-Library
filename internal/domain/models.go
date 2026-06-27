@@ -122,6 +122,36 @@ type CollectionPrivateState struct {
 	Liked    bool `json:"liked"`
 }
 
+type ManualCollection struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	ItemCount   int64     `json:"itemCount"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+type ManualCollectionItem struct {
+	CollectionID int64     `json:"collectionId,omitempty"`
+	AssetType    string    `json:"assetType"`
+	AssetID      int64     `json:"assetId"`
+	Title        string    `json:"title,omitempty"`
+	Subtitle     string    `json:"subtitle,omitempty"`
+	CoverURL     string    `json:"coverUrl,omitempty"`
+	ManifestURL  string    `json:"manifestUrl,omitempty"`
+	CreatedAt    time.Time `json:"createdAt,omitempty"`
+}
+
+type ManualCollectionDetails struct {
+	Collection ManualCollection       `json:"collection"`
+	Items      []ManualCollectionItem `json:"items"`
+}
+
+type GamePrivateState struct {
+	Favorite bool `json:"favorite"`
+	Liked    bool `json:"liked"`
+}
+
 type ClientPreferences struct {
 	Locale         string `json:"locale"`
 	ReaderPageMode string `json:"readerPageMode"`
@@ -147,9 +177,82 @@ type GameAsset struct {
 	EmulatorHint  string    `json:"emulatorHint"`
 	Compatibility string    `json:"compatibility"`
 	CoverURL      string    `json:"coverUrl,omitempty"`
+	Favorite      bool      `json:"favorite"`
+	Liked         bool      `json:"liked"`
 	LastPlayedAt  time.Time `json:"lastPlayedAt,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+type GameMetadata struct {
+	GameID        int64     `json:"gameId"`
+	DisplayTitle  string    `json:"displayTitle"`
+	Summary       string    `json:"summary"`
+	ReleaseDate   string    `json:"releaseDate"`
+	Genres        []string  `json:"genres"`
+	Developers    []string  `json:"developers"`
+	Publishers    []string  `json:"publishers"`
+	Players       string    `json:"players"`
+	Rating        float64   `json:"rating"`
+	ExternalLinks []string  `json:"externalLinks"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+type GameMetadataSource struct {
+	ID         int64     `json:"id"`
+	GameID     int64     `json:"gameId"`
+	Source     string    `json:"source"`
+	SourceID   string    `json:"sourceId"`
+	MatchedBy  string    `json:"matchedBy"`
+	Confidence float64   `json:"confidence"`
+	RawJSON    string    `json:"rawJson,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+type GameArtwork struct {
+	ID         int64     `json:"id"`
+	GameID     int64     `json:"gameId"`
+	Source     string    `json:"source"`
+	Kind       string    `json:"kind"`
+	URL        string    `json:"url,omitempty"`
+	CachePath  string    `json:"cachePath,omitempty"`
+	Width      int       `json:"width"`
+	Height     int       `json:"height"`
+	Selected   bool      `json:"selected"`
+	Confidence float64   `json:"confidence"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+type GameDetails struct {
+	Game           GameAsset            `json:"game"`
+	MetadataStatus string               `json:"metadataStatus"`
+	Metadata       GameMetadata         `json:"metadata"`
+	Sources        []GameMetadataSource `json:"sources"`
+	Artwork        []GameArtwork        `json:"artwork"`
+}
+
+type GameMetadataProviderStatus struct {
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Enabled             bool     `json:"enabled"`
+	Configured          bool     `json:"configured"`
+	RequiresCredentials bool     `json:"requiresCredentials"`
+	Free                bool     `json:"free"`
+	Network             bool     `json:"network"`
+	Capabilities        []string `json:"capabilities"`
+	Message             string   `json:"message,omitempty"`
+}
+
+type GameMetadataActionResult struct {
+	GameID         int64                        `json:"gameId"`
+	Action         string                       `json:"action"`
+	Status         string                       `json:"status"`
+	Message        string                       `json:"message"`
+	MetadataStatus string                       `json:"metadataStatus"`
+	Sources        []GameMetadataSource         `json:"sources"`
+	Providers      []GameMetadataProviderStatus `json:"providers"`
 }
 
 type VideoAsset struct {
@@ -195,12 +298,14 @@ type BookListPage struct {
 }
 
 type GameListOptions struct {
-	Limit    int
-	Offset   int
-	Query    string
-	Platform string
-	Format   string
-	Sort     string
+	Limit      int
+	Offset     int
+	Query      string
+	Platform   string
+	ROMSetName string
+	Format     string
+	Sort       string
+	BasePath   string
 }
 
 type GameListPage struct {

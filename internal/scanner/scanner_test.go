@@ -900,6 +900,191 @@ func TestScanLibraryIndexesGameROMMetadata(t *testing.T) {
 	}
 }
 
+func TestScanLibraryImportsGamelistMetadata(t *testing.T) {
+	root := t.TempDir()
+	platformDir := filepath.Join(root, "SNES")
+	romPath := filepath.Join(platformDir, "Super Mario World (USA).sfc")
+	coverPath := filepath.Join(platformDir, "media", "covers", "Super Mario World.png")
+	manualPath := filepath.Join(platformDir, "manuals", "Super Mario World.pdf")
+	outsidePath := filepath.Join(filepath.Dir(root), "outside.png")
+	if err := os.MkdirAll(filepath.Dir(coverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(manualPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(romPath, []byte("rom-body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(coverPath, []byte("cover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manualPath, []byte("manual"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outsidePath, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gamelist := `<?xml version="1.0"?>
+<gameList>
+  <game>
+    <path>./Super Mario World (USA).sfc</path>
+    <name>Super Mario World</name>
+    <desc>Dinosaur Land platform adventure.</desc>
+    <releasedate>19901121T000000</releasedate>
+    <developer>Nintendo EAD</developer>
+    <publisher>Nintendo</publisher>
+    <genre>Platform</genre>
+    <players>1-2</players>
+    <image>./media/covers/Super Mario World.png</image>
+    <manual>./manuals/Super Mario World.pdf</manual>
+    <screenshot>../../outside.png</screenshot>
+  </game>
+</gameList>`
+	if err := os.WriteFile(filepath.Join(platformDir, "gamelist.xml"), []byte(gamelist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.IndexedFiles != 1 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want one indexed ROM and no errors", job)
+	}
+
+	games, err := st.ListRecentGames(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("games len = %d, want 1", len(games))
+	}
+	details, err := st.GameDetails(games[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.MetadataStatus != "matched" {
+		t.Fatalf("metadata status = %q, want matched", details.MetadataStatus)
+	}
+	if details.Metadata.DisplayTitle != "Super Mario World" ||
+		details.Metadata.Summary != "Dinosaur Land platform adventure." ||
+		details.Metadata.ReleaseDate != "1990-11-21" ||
+		details.Metadata.Players != "1-2" {
+		t.Fatalf("metadata = %#v, want gamelist fields", details.Metadata)
+	}
+	if len(details.Metadata.Genres) != 1 || details.Metadata.Genres[0] != "Platform" {
+		t.Fatalf("genres = %#v, want Platform", details.Metadata.Genres)
+	}
+	if len(details.Metadata.Developers) != 1 || details.Metadata.Developers[0] != "Nintendo EAD" {
+		t.Fatalf("developers = %#v, want Nintendo EAD", details.Metadata.Developers)
+	}
+	if len(details.Metadata.Publishers) != 1 || details.Metadata.Publishers[0] != "Nintendo" {
+		t.Fatalf("publishers = %#v, want Nintendo", details.Metadata.Publishers)
+	}
+	if len(details.Sources) != 1 ||
+		details.Sources[0].Source != "gamelist" ||
+		details.Sources[0].MatchedBy != "path" ||
+		details.Sources[0].Confidence != 1 {
+		t.Fatalf("sources = %#v, want gamelist path match", details.Sources)
+	}
+
+	artworkByKind := map[string]domain.GameArtwork{}
+	for _, artwork := range details.Artwork {
+		artworkByKind[artwork.Kind] = artwork
+	}
+	cover := artworkByKind["cover"]
+	if cover.Source != "gamelist" || cover.CachePath != coverPath || !cover.Selected {
+		t.Fatalf("cover artwork = %#v, want selected local cover", cover)
+	}
+	manual := artworkByKind["manual"]
+	if manual.Source != "gamelist" || manual.CachePath != manualPath {
+		t.Fatalf("manual artwork = %#v, want local manual", manual)
+	}
+	if screenshot, ok := artworkByKind["screenshot"]; ok {
+		t.Fatalf("screenshot artwork = %#v, want outside-library path ignored", screenshot)
+	}
+}
+
+func TestScanLibraryImportsRootGamelistMetadata(t *testing.T) {
+	root := t.TempDir()
+	romPath := filepath.Join(root, "SNES", "Chrono Trigger.sfc")
+	coverPath := filepath.Join(root, "media", "Chrono Trigger.png")
+	if err := os.MkdirAll(filepath.Dir(romPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(coverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(romPath, []byte("rom-body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(coverPath, []byte("cover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gamelist := `<?xml version="1.0"?>
+<gameList>
+  <game>
+    <path>./SNES/Chrono Trigger.sfc</path>
+    <name>Chrono Trigger</name>
+    <desc>Time travel RPG.</desc>
+    <releasedate>19950311T000000</releasedate>
+    <developer>Square</developer>
+    <publisher>Square</publisher>
+    <genre>RPG</genre>
+    <players>1</players>
+    <image>./media/Chrono Trigger.png</image>
+  </game>
+</gameList>`
+	if err := os.WriteFile(filepath.Join(root, "gamelist.xml"), []byte(gamelist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(st).ScanLibrary(lib); err != nil {
+		t.Fatal(err)
+	}
+	games, err := st.ListRecentGames(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("games len = %d, want 1", len(games))
+	}
+	details, err := st.GameDetails(games[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.Metadata.DisplayTitle != "Chrono Trigger" || details.Metadata.ReleaseDate != "1995-03-11" {
+		t.Fatalf("metadata = %#v, want root gamelist fields", details.Metadata)
+	}
+	if len(details.Artwork) != 1 || details.Artwork[0].Kind != "cover" || details.Artwork[0].CachePath != coverPath {
+		t.Fatalf("artwork = %#v, want root gamelist cover", details.Artwork)
+	}
+}
+
 func TestScanLibraryIndexesVideoMetadata(t *testing.T) {
 	root := t.TempDir()
 	videoPath := filepath.Join(root, "Movies", "Demo.Movie.mp4")
