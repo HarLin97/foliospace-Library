@@ -161,6 +161,10 @@ func Migrate(conn *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_game_metadata_sources_game ON game_metadata_sources(game_id, source)`,
 		`CREATE INDEX IF NOT EXISTS idx_game_artwork_game ON game_artwork(game_id, kind, selected DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_series_title ON books(series_id, title, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_books_created_id ON books(created_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_files_book ON files(book_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_games_updated_id ON games(updated_at DESC, id DESC)`,
 		`CREATE TABLE IF NOT EXISTS videos (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
@@ -296,6 +300,10 @@ func Migrate(conn *sql.DB) error {
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY(profile_id, game_id)
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_profile_read_progress_profile_updated ON profile_read_progress(profile_id, updated_at DESC, book_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_book_private_states_profile_favorite_updated ON book_private_states(profile_id, favorite, updated_at DESC, book_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_book_private_states_profile_status_updated ON book_private_states(profile_id, private_status, updated_at DESC, book_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_videos_updated_id ON videos(updated_at DESC, id DESC)`,
 		`CREATE TABLE IF NOT EXISTS manual_collections (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,

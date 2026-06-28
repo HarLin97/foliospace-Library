@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"foliospace-reader/internal/domain"
@@ -365,38 +366,65 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	profileID := s.requestProfileID(r)
-	continueReading, err := s.service.ContinueReadingForProfile(profileID, queryLimit(r, 12))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+	limit := queryLimit(r, 12)
+	var (
+		continueReading []domain.Book
+		recentBooks     []domain.Book
+		favoriteBooks   []domain.Book
+		wantBooks       []domain.Book
+		gameShelf       []domain.GameAsset
+		videoShelf      []domain.VideoAsset
+		collections     []domain.Series
+	)
+	errs := make(chan error, 7)
+	var wg sync.WaitGroup
+	run := func(fn func() error) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := fn(); err != nil {
+				errs <- err
+			}
+		}()
 	}
-	recentBooks, err := s.service.RecentBooksForProfile(profileID, queryLimit(r, 12))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	favoriteBooks, err := s.service.FavoriteBooksForProfile(profileID, queryLimit(r, 12))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	wantBooks, err := s.service.BooksByPrivateStatusForProfile(profileID, "want", queryLimit(r, 12))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	gameShelf, err := s.service.RecentGames(queryLimit(r, 12))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	videoShelf, err := s.service.RecentVideos(queryLimit(r, 12))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	collections, err := s.service.ListSeriesForProfileLimit(profileID, queryLimit(r, 12))
-	if err != nil {
+	run(func() error {
+		var err error
+		continueReading, err = s.service.ContinueReadingForProfile(profileID, limit)
+		return err
+	})
+	run(func() error {
+		var err error
+		recentBooks, err = s.service.RecentBooksForProfile(profileID, limit)
+		return err
+	})
+	run(func() error {
+		var err error
+		favoriteBooks, err = s.service.FavoriteBooksForProfile(profileID, limit)
+		return err
+	})
+	run(func() error {
+		var err error
+		wantBooks, err = s.service.BooksByPrivateStatusForProfile(profileID, "want", limit)
+		return err
+	})
+	run(func() error {
+		var err error
+		gameShelf, err = s.service.RecentGames(limit)
+		return err
+	})
+	run(func() error {
+		var err error
+		videoShelf, err = s.service.RecentVideos(limit)
+		return err
+	})
+	run(func() error {
+		var err error
+		collections, err = s.service.ListSeriesForProfileLimit(profileID, limit)
+		return err
+	})
+	wg.Wait()
+	close(errs)
+	if err := firstError(errs); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -409,6 +437,15 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		VideoShelf:      clientVideos(videoShelf),
 		Collections:     clientCollections(collections),
 	})
+}
+
+func firstError(errs <-chan error) error {
+	for err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleClientPreferences(w http.ResponseWriter, r *http.Request) {
