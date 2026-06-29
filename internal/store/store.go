@@ -580,7 +580,13 @@ func (s *Store) applyCollectionPrivateStates(profileID int64, items []domain.Ser
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT series_id, favorite, liked FROM collection_private_states WHERE profile_id = ?`, profileID)
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(items)), ",")
+	args := make([]any, 0, len(items)+1)
+	args = append(args, profileID)
+	for _, item := range items {
+		args = append(args, item.ID)
+	}
+	rows, err := s.db.Query(`SELECT series_id, favorite, liked FROM collection_private_states WHERE profile_id = ? AND series_id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1639,7 +1645,13 @@ func (s *Store) applyGamePrivateStates(profileID int64, items []domain.GameAsset
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT game_id, favorite, liked FROM game_private_states WHERE profile_id = ?`, profileID)
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(items)), ",")
+	args := make([]any, 0, len(items)+1)
+	args = append(args, profileID)
+	for _, item := range items {
+		args = append(args, item.ID)
+	}
+	rows, err := s.db.Query(`SELECT game_id, favorite, liked FROM game_private_states WHERE profile_id = ? AND game_id IN (`+placeholders+`)`, args...)
 	if err != nil {
 		return nil, err
 	}

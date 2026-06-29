@@ -165,6 +165,9 @@ func Migrate(conn *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_books_created_id ON books(created_at DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_files_book ON files(book_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_games_updated_id ON games(updated_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_games_lower_title ON games(LOWER(title), id)`,
+		`CREATE INDEX IF NOT EXISTS idx_games_lower_platform_title ON games(LOWER(platform), LOWER(title), id)`,
+		`CREATE INDEX IF NOT EXISTS idx_games_lower_filters ON games(LOWER(platform), LOWER(rom_set_name), LOWER(format), LOWER(emulator_hint))`,
 		`CREATE TABLE IF NOT EXISTS videos (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,

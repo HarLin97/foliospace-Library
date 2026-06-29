@@ -39,6 +39,7 @@ type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
 type ReaderImageSize = { width: number; height: number };
 const bookPageSize = 30;
 const catalogPageSize = 200;
+const gameCatalogPageSize = 80;
 
 export function App() {
   const initialPreferences = useRef(readLocalPreferences()).current;
@@ -250,7 +251,7 @@ export function App() {
     if (gameCatalogLoading) return;
     setGameCatalogLoading(true);
     try {
-      const page = await api.clientGames({ limit: catalogPageSize, offset, sort: gameCatalogSort, platform: gameCatalogPlatform });
+      const page = await api.clientGames({ limit: gameCatalogPageSize, offset, sort: gameCatalogSort, platform: gameCatalogPlatform });
       const items = arrayOrEmpty(page.items);
       setGameCatalog((current) => reset ? items : mergeByID(current, items));
       setGameCatalogTotal(page.total);
@@ -306,7 +307,7 @@ export function App() {
   async function loadGameCatalogPageForOptions(sort: GameCatalogSort, platform: string) {
     setGameCatalogLoading(true);
     try {
-      const page = await api.clientGames({ limit: catalogPageSize, offset: 0, sort, platform });
+      const page = await api.clientGames({ limit: gameCatalogPageSize, offset: 0, sort, platform });
       const items = arrayOrEmpty(page.items);
       setGameCatalog(items);
       setGameCatalogTotal(page.total);
