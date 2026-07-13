@@ -248,6 +248,12 @@ func TestStoreManagesThumbnailJobs(t *testing.T) {
 	if duplicate.ID != first.ID {
 		t.Fatalf("duplicate job id = %d, want %d", duplicate.ID, first.ID)
 	}
+	if err := s.EnqueueThumbnailJobs([]domain.ThumbnailJobInput{
+		{BookID: book.ID, Size: "small", CacheKey: "book-1-v1-small", Priority: 1},
+		{BookID: book.ID, Size: "medium", CacheKey: "book-1-v1-medium", Priority: 100},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	high, err := s.EnqueueThumbnailJob(domain.ThumbnailJobInput{
 		BookID:   book.ID,
 		Size:     "medium",

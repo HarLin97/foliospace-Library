@@ -886,8 +886,8 @@ func TestPDFThumbnailFallsBackToRenderedSourceInsteadOfStalePlaceholder(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stream.ContentType != "image/jpeg" || !stream.SourceFallback || stream.StaleFallback || stream.CacheHit || !bytes.Equal(data, renderedJPEG) {
-		t.Fatalf("PDF thumbnail fallback type=%q source=%v stale=%v cacheHit=%v len=%d, want rendered source jpeg", stream.ContentType, stream.SourceFallback, stream.StaleFallback, stream.CacheHit, len(data))
+	if stream.ContentType != "image/jpeg" || stream.SourceFallback || !stream.StaleFallback || !stream.CacheHit || !bytes.Equal(data, staleBytes) {
+		t.Fatalf("PDF thumbnail fallback type=%q source=%v stale=%v cacheHit=%v len=%d, want stale jpeg while background rendering is queued", stream.ContentType, stream.SourceFallback, stream.StaleFallback, stream.CacheHit, len(data))
 	}
 	status, err := svc.ThumbnailWorkerStatus()
 	if err != nil {

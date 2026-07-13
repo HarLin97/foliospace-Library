@@ -29,6 +29,8 @@ const thumbnailClientCacheVersion = thumbnailAlgorithmVersion + "-cover-refresh-
 const thumbnailCacheKeyProfile = "portrait-1x-3x4.15-macos-resource-filter"
 const thumbnailJPEGQuality = 90
 const thumbnailTargetAspectRatio = 3.0 / 4.15
+const thumbnailEnqueueBatchSize = 64
+const thumbnailEnqueueBatchDelay = 25 * time.Millisecond
 
 type ThumbnailStream struct {
 	Body            io.ReadCloser
@@ -182,16 +184,18 @@ func (s *Service) OpenBookThumbnail(bookID int64, size string) (ThumbnailStream,
 			CachePath:   cachePath,
 		}, nil
 	}
-	if _, err := s.store.EnqueueThumbnailJob(domain.ThumbnailJobInput{
+	jobInput := domain.ThumbnailJobInput{
 		BookID:   book.ID,
 		Size:     size,
 		CacheKey: cacheKey,
 		Priority: thumbnailPriorityForSize(size),
-	}); err != nil {
-		return ThumbnailStream{}, err
 	}
-	if s.thumbnailWorker != nil {
-		s.thumbnailWorker.wakeUp()
+	if s.thumbnailWorker != nil && s.thumbnailWorker.isPaused() {
+		if _, err := s.store.EnqueueThumbnailJob(jobInput); err != nil {
+			return ThumbnailStream{}, err
+		}
+	} else {
+		s.queueThumbnailJob(jobInput)
 	}
 	if preferSourceThumbnailFallback(book) {
 		if cover, err := s.openBookThumbnailSource(book); err == nil {
@@ -212,16 +216,23 @@ func (s *Service) OpenBookThumbnail(bookID int64, size string) (ThumbnailStream,
 			CachePath:     path,
 		}, nil
 	}
-	if cover, err := s.OpenCover(book.ID); err == nil {
-		return ThumbnailStream{
-			Body:           cover.Body,
-			ContentType:    cover.ContentType,
-			SourceFallback: true,
-			ETag:           cacheKey,
-		}, nil
+	if book.Format != "pdf" {
+		if cover, err := s.OpenCover(book.ID); err == nil {
+			return ThumbnailStream{
+				Body:           cover.Body,
+				ContentType:    cover.ContentType,
+				SourceFallback: true,
+				ETag:           cacheKey,
+			}, nil
+		}
 	}
 	if stream, err := genericBookThumbnailStream(book, size); err == nil {
-		return stream, nil
+		return ThumbnailStream{
+			Body:            stream.Body,
+			ContentType:     stream.ContentType,
+			GenericFallback: stream.GenericFallback,
+			ETag:            cacheKey,
+		}, nil
 	}
 	return ThumbnailStream{
 		Body:        io.NopCloser(strings.NewReader(thumbnailPlaceholderSVG(size))),
@@ -229,6 +240,59 @@ func (s *Service) OpenBookThumbnail(bookID int64, size string) (ThumbnailStream,
 		CacheHit:    false,
 		ETag:        cacheKey,
 	}, nil
+}
+
+func (s *Service) queueThumbnailJob(input domain.ThumbnailJobInput) {
+	key := fmt.Sprintf("%d|%s|%s", input.BookID, normalizeBookThumbnailSize(input.Size), input.CacheKey)
+	s.thumbnailEnqueueMu.Lock()
+	if _, exists := s.thumbnailEnqueued[key]; exists {
+		s.thumbnailEnqueueMu.Unlock()
+		return
+	}
+	s.thumbnailEnqueued[key] = struct{}{}
+	s.thumbnailEnqueueMu.Unlock()
+
+	select {
+	case s.thumbnailEnqueue <- input:
+	default:
+		s.thumbnailEnqueueMu.Lock()
+		delete(s.thumbnailEnqueued, key)
+		s.thumbnailEnqueueMu.Unlock()
+	}
+}
+
+func (s *Service) thumbnailEnqueueLoop() {
+	batch := make([]domain.ThumbnailJobInput, 0, thumbnailEnqueueBatchSize)
+	for {
+		first := <-s.thumbnailEnqueue
+		batch = append(batch[:0], first)
+		timer := time.NewTimer(thumbnailEnqueueBatchDelay)
+	collect:
+		for len(batch) < thumbnailEnqueueBatchSize {
+			select {
+			case input := <-s.thumbnailEnqueue:
+				batch = append(batch, input)
+			case <-timer.C:
+				break collect
+			}
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		_ = s.store.EnqueueThumbnailJobs(batch)
+		s.thumbnailEnqueueMu.Lock()
+		for _, input := range batch {
+			key := fmt.Sprintf("%d|%s|%s", input.BookID, normalizeBookThumbnailSize(input.Size), input.CacheKey)
+			delete(s.thumbnailEnqueued, key)
+		}
+		s.thumbnailEnqueueMu.Unlock()
+		if s.thumbnailWorker != nil {
+			s.thumbnailWorker.wakeUp()
+		}
+	}
 }
 
 func (s *Service) openStaleBookThumbnail(bookID int64, size string, currentPath string) (io.ReadCloser, string) {
@@ -423,8 +487,14 @@ func (s *Service) generateThumbnailJob(ctx context.Context, job domain.Thumbnail
 		return s.writeGenericThumbnailJob(job, book, cachePath, err)
 	}
 	defer imageStream.Body.Close()
+	s.imageTransforms <- struct{}{}
+	defer func() { <-s.imageTransforms }()
 
-	img, _, err := image.Decode(io.LimitReader(imageStream.Body, 64<<20))
+	data, err := readBoundedImage(imageStream.Body, maxThumbnailSourceBytes)
+	var img image.Image
+	if err == nil {
+		img, _, err = decodeBoundedImage(data, maxDecodedImagePixels)
+	}
 	if err != nil {
 		if book.Format == "pdf" {
 			return fmt.Errorf("decode pdf thumbnail source: %w", err)
@@ -492,7 +562,7 @@ func (s *Service) openBookThumbnailSource(book domain.Book) (PageStream, error) 
 
 func preferSourceThumbnailFallback(book domain.Book) bool {
 	if book.Format == "pdf" {
-		return true
+		return false
 	}
 	return bookThumbnailSourceCacheMarker(book) != ""
 }

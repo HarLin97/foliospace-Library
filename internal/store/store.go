@@ -2488,8 +2488,48 @@ func (s *Store) EnqueueThumbnailJob(input domain.ThumbnailJobInput) (domain.Thum
 	if cacheKey == "" {
 		return domain.ThumbnailJob{}, fmt.Errorf("thumbnail cache key is required")
 	}
-	priority := input.Priority
-	_, err := s.db.Exec(`INSERT INTO thumbnail_jobs(book_id, size, status, priority, cache_key)
+	if existing, err := s.ThumbnailJobByKey(input.BookID, size, cacheKey); err == nil {
+		if existing.Status == "queued" || existing.Status == "running" {
+			return existing, nil
+		}
+	} else if err != sql.ErrNoRows {
+		return domain.ThumbnailJob{}, err
+	}
+	_, err := s.db.Exec(thumbnailJobEnqueueSQL(), input.BookID, size, input.Priority, cacheKey)
+	if err != nil {
+		return domain.ThumbnailJob{}, err
+	}
+	return s.ThumbnailJobByKey(input.BookID, size, cacheKey)
+}
+
+func (s *Store) EnqueueThumbnailJobs(inputs []domain.ThumbnailJobInput) error {
+	if len(inputs) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(thumbnailJobEnqueueSQL())
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, input := range inputs {
+		cacheKey := strings.TrimSpace(input.CacheKey)
+		if cacheKey == "" {
+			continue
+		}
+		if _, err := stmt.Exec(input.BookID, normalizeThumbnailSize(input.Size), input.Priority, cacheKey); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func thumbnailJobEnqueueSQL() string {
+	return `INSERT INTO thumbnail_jobs(book_id, size, status, priority, cache_key)
 		VALUES(?, ?, 'queued', ?, ?)
 		ON CONFLICT(book_id, size, cache_key) DO UPDATE SET
 			priority = CASE WHEN excluded.priority > thumbnail_jobs.priority THEN excluded.priority ELSE thumbnail_jobs.priority END,
@@ -2502,12 +2542,8 @@ func (s *Store) EnqueueThumbnailJob(input domain.ThumbnailJobInput) (domain.Thum
 			error_message = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.error_message ELSE '' END,
 			started_at = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.started_at ELSE '' END,
 			finished_at = CASE WHEN thumbnail_jobs.status = 'running' THEN thumbnail_jobs.finished_at ELSE '' END,
-			updated_at = CURRENT_TIMESTAMP`,
-		input.BookID, size, priority, cacheKey)
-	if err != nil {
-		return domain.ThumbnailJob{}, err
-	}
-	return s.ThumbnailJobByKey(input.BookID, size, cacheKey)
+			updated_at = CURRENT_TIMESTAMP
+		WHERE thumbnail_jobs.status NOT IN ('queued', 'running')`
 }
 
 func (s *Store) ThumbnailJobByKey(bookID int64, size string, cacheKey string) (domain.ThumbnailJob, error) {

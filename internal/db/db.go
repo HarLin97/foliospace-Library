@@ -32,6 +32,8 @@ func Migrate(conn *sql.DB) error {
 		`PRAGMA foreign_keys = ON`,
 		`PRAGMA busy_timeout = 5000`,
 		`PRAGMA journal_mode = WAL`,
+		`PRAGMA synchronous = NORMAL`,
+		`PRAGMA wal_autocheckpoint = 1000`,
 		`CREATE TABLE IF NOT EXISTS libraries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,

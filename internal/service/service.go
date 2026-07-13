@@ -44,6 +44,10 @@ type Service struct {
 	thumbnailCacheStatusMu   sync.Mutex
 	thumbnailCacheStatusSnap domain.ThumbnailCacheStatus
 	thumbnailCacheStatusTime time.Time
+	imageTransforms          chan struct{}
+	thumbnailEnqueue         chan domain.ThumbnailJobInput
+	thumbnailEnqueueMu       sync.Mutex
+	thumbnailEnqueued        map[string]struct{}
 }
 
 const adminTokenHashSetting = "admin_token_sha256"
@@ -127,10 +131,14 @@ func NewWithConfig(store *store.Store, configDir string) *Service {
 		scanner: scanner.NewWithWorkerCount(store, func() int {
 			return scanWorkerCountFromStore(store)
 		}),
-		configDir: strings.TrimSpace(configDir),
+		configDir:         strings.TrimSpace(configDir),
+		imageTransforms:   make(chan struct{}, 2),
+		thumbnailEnqueue:  make(chan domain.ThumbnailJobInput, 512),
+		thumbnailEnqueued: make(map[string]struct{}),
 	}
 	_, _ = store.ResetRunningThumbnailJobs()
 	svc.thumbnailWorker = newThumbnailWorker(svc)
+	go svc.thumbnailEnqueueLoop()
 	svc.thumbnailWorker.start()
 	return svc
 }
@@ -2356,28 +2364,37 @@ func (s *Service) OpenPageWithOptions(bookID int64, pageIndex int, options PageI
 	if options.MaxWidth <= 0 || !strings.HasPrefix(contentType, "image/") {
 		return PageStream{Body: body, ContentType: contentType}, nil
 	}
-	return downsamplePageStream(body, contentType, options.MaxWidth)
+	return s.downsamplePageStream(body, contentType, options.MaxWidth)
 }
 
-func downsamplePageStream(body io.ReadCloser, contentType string, maxWidth int) (PageStream, error) {
+func (s *Service) downsamplePageStream(body io.ReadCloser, contentType string, maxWidth int) (PageStream, error) {
 	defer body.Close()
+	s.imageTransforms <- struct{}{}
+	defer func() { <-s.imageTransforms }()
 
-	data, err := io.ReadAll(body)
+	data, err := readBoundedImage(body, maxPageTransformSourceBytes)
 	if err != nil {
 		return PageStream{}, err
+	}
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: contentType}, nil
+	}
+	srcWidth := config.Width
+	srcHeight := config.Height
+	if srcWidth <= 0 || srcHeight <= 0 || srcWidth <= maxWidth {
+		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: contentType}, nil
+	}
+	if err := validateImageDimensions(srcWidth, srcHeight, maxDecodedImagePixels); err != nil {
+		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: contentType}, nil
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: contentType}, nil
 	}
 	bounds := img.Bounds()
-	srcWidth := bounds.Dx()
-	srcHeight := bounds.Dy()
-	if srcWidth <= 0 || srcHeight <= 0 || srcWidth <= maxWidth {
-		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: contentType}, nil
-	}
 
-	dstWidth := maxWidth
+	dstWidth := boundedOutputWidth(maxWidth, srcWidth, srcHeight, maxPageTransformOutputPixels)
 	dstHeight := max(1, int(float64(srcHeight)*float64(dstWidth)/float64(srcWidth)))
 	dst := image.NewRGBA(image.Rect(0, 0, dstWidth, dstHeight))
 	for y := 0; y < dstHeight; y++ {

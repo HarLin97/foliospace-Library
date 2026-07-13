@@ -20,9 +20,10 @@ import (
 )
 
 type Server struct {
-	service *service.Service
-	static  http.Handler
-	options Options
+	service           *service.Service
+	static            http.Handler
+	options           Options
+	thumbnailRequests chan struct{}
 }
 
 type Options struct {
@@ -37,7 +38,7 @@ func New(service *service.Service, static http.Handler) *Server {
 }
 
 func NewWithOptions(service *service.Service, static http.Handler, options Options) *Server {
-	return &Server{service: service, static: static, options: options}
+	return &Server{service: service, static: static, options: options, thumbnailRequests: make(chan struct{}, 8)}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -1612,6 +1613,14 @@ func (s *Server) streamCover(w http.ResponseWriter, bookID int64) {
 }
 
 func (s *Server) streamBookThumbnail(w http.ResponseWriter, r *http.Request, bookID int64, size string) {
+	select {
+	case s.thumbnailRequests <- struct{}{}:
+		defer func() { <-s.thumbnailRequests }()
+	default:
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusTooManyRequests, fmt.Errorf("thumbnail request limit reached"))
+		return
+	}
 	stream, err := s.service.OpenBookThumbnail(bookID, size)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
