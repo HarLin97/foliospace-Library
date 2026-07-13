@@ -4,6 +4,17 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.976 Release: Bounded Memory and Reader Layouts
+
+Release `0.976` addresses a T0 memory-exhaustion risk on large NAS libraries and expands comic reader display controls.
+
+- Image decoding and thumbnail transforms enforce source-size, pixel-count, output-size, and concurrency limits.
+- PDF thumbnail rendering is handled only by the bounded background worker.
+- Cover-wall cache misses use a bounded queue and batched SQLite writes, keeping the API responsive under thumbnail bursts.
+- Docker deployments receive a 768 MiB Go memory budget and a 1.5 GiB Compose container limit by default.
+- Comic single-page reading supports contain, fit-width, and fit-height modes with left- and right-handed controls.
+- Service and MCP metadata now report version `0.976`.
+
 ## 0.975 Release: Large Game Library Stability
 
 Release `0.975` is a stability and performance hotfix for large game libraries and NAS deployments.
@@ -96,7 +107,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.975
+docker pull funland/foliospace-library:0.976
 ```
 
 ```bash
@@ -106,7 +117,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.975
+  funland/foliospace-library:0.976
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.975`.
+Current release branch: `0.976`.
 
 ## Screenshots
 
@@ -218,6 +218,17 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.976
+
+Release `0.976` is a T0 memory-safety and reader ergonomics release:
+
+- Image decode and thumbnail transforms now enforce source-size, decoded-pixel, output-pixel, and concurrency limits.
+- PDF thumbnail rendering runs only in the bounded background worker instead of spawning synchronous render work on cache misses.
+- Thumbnail cache misses use a bounded in-memory queue and batched SQLite writes, preventing cover walls from blocking the single database connection.
+- The server applies a 768 MiB Go memory budget by default, while the Docker Compose example adds a 1.5 GiB container hard limit.
+- Comic single-page reading adds contain, fit-width, and fit-height display modes plus left- and right-handed control layouts.
+- Service, Client API, and MCP metadata report version `0.976`.
+
 ## MCP
 
 Agent integration docs are in [`docs/mcp/usage.md`](docs/mcp/usage.md). The MCP server wraps the stable Client API for diagnostics, library lookup, manifests, favorites/private-status shelves, preferences, private reader state, game private state, progress, scan jobs, recent-file scans, scan worker settings, job control, manual collections, and collection access. Heavy media streams still use the HTTP URLs returned by the API.
@@ -231,7 +242,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.975 ./scripts/build-mcp-release.sh
+VERSION=0.976 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -251,10 +262,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.975` image tag:
+Release `0.976` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.975
+docker pull funland/foliospace-library:0.976
 ```
 
 For local verification:
@@ -273,7 +284,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.975
+  funland/foliospace-library:0.976
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -288,11 +299,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.975
-git push github v0.975
+git tag v0.976
+git push github v0.976
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.975` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.976` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 
