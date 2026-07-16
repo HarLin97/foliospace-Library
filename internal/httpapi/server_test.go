@@ -946,6 +946,7 @@ func TestAPIClientGamesPage(t *testing.T) {
 		{LibraryID: lib.ID, Title: "Super Contra", Platform: "nes", ROMSetName: "NES", Region: "Japan", Format: "nes", FilePath: "/library/nes/Super Contra.nes", RelPath: "nes/Super Contra.nes", Size: 262160, MTime: time.Unix(30, 0), CRC32: "9bb6059e", SHA1: "5de393e3ad83e6e185e6d338684d7a4475b7d2ce", EmulatorHint: "nes", Compatibility: "unknown"},
 		{LibraryID: lib.ID, Title: "Advance Wars", Platform: "gba", ROMSetName: "GBA", Region: "USA", Format: "gba", FilePath: "/library/gba/Advance Wars.gba", RelPath: "gba/Advance Wars.gba", Size: 1024, MTime: time.Unix(31, 0), CRC32: "11111111", SHA1: "1111111111111111111111111111111111111111", EmulatorHint: "gba", Compatibility: "unknown"},
 		{LibraryID: lib.ID, Title: "Metal Slug", Platform: "arcade", ROMSetName: "MAME", Region: "World", Format: "zip", FilePath: "/library/arcade/mslug.zip", RelPath: "arcade/mslug.zip", Size: 2048, MTime: time.Unix(32, 0), CRC32: "22222222", SHA1: "2222222222222222222222222222222222222222", EmulatorHint: "arcade", Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "srmp7", Platform: "arcade", ROMSetName: "FBNeo", Region: "World", Format: "zip", FilePath: "/library/arcade/srmp7.zip", RelPath: "arcade/srmp7.zip", Size: 4096, MTime: time.Unix(33, 0), CRC32: "33333333", SHA1: "3333333333333333333333333333333333333333", EmulatorHint: "arcade", Compatibility: "unknown"},
 	} {
 		if _, err := st.UpsertGame(game); err != nil {
 			t.Fatal(err)
@@ -967,7 +968,7 @@ func TestAPIClientGamesPage(t *testing.T) {
 	if strings.Contains(body, "/library") || strings.Contains(body, "filePath") || strings.Contains(body, "relPath") {
 		t.Fatalf("client games leaked internal path: %q", body)
 	}
-	if !strings.Contains(body, `"total":3`) || !strings.Contains(body, `"limit":2`) || !strings.Contains(body, `"hasMore":true`) || !strings.Contains(body, `"title":"Advance Wars"`) {
+	if !strings.Contains(body, `"total":4`) || !strings.Contains(body, `"limit":2`) || !strings.Contains(body, `"hasMore":true`) || !strings.Contains(body, `"title":"Advance Wars"`) {
 		t.Fatalf("client games page %q missing pagination metadata or title sort", body)
 	}
 	if !strings.Contains(body, `"/api/client/games/`) || !strings.Contains(body, `/manifest"`) {
@@ -985,6 +986,10 @@ func TestAPIClientGamesPage(t *testing.T) {
 	}
 	if !strings.Contains(platformBody, `"title":"Advance Wars"`) || !strings.Contains(platformBody, `"favorite":true`) || !strings.Contains(platformBody, `"liked":true`) {
 		t.Fatalf("client games page %q missing saved private state", platformBody)
+	}
+	mahjongBody := authGet(t, ts.URL+"/api/client/games?q=srmp7", "secret")
+	if !strings.Contains(mahjongBody, `"title":"srmp7"`) || !strings.Contains(mahjongBody, `"inputProfile":"mahjong"`) {
+		t.Fatalf("client games page %q missing mahjong input profile for srmp7", mahjongBody)
 	}
 
 	oldestBody := authGet(t, ts.URL+"/api/client/games?limit=20&sort=oldest", "secret")
@@ -1017,8 +1022,10 @@ func TestAPIClientGameFacetsUseFullCatalog(t *testing.T) {
 	}
 	for _, game := range []domain.GameAsset{
 		{LibraryID: lib.ID, Title: "SNES A", Platform: "snes", ROMSetName: "SNES", Format: "sfc", FilePath: "/library/snes/a.sfc", RelPath: "snes/a.sfc", Size: 1, MTime: time.Unix(30, 0), Compatibility: "unknown"},
-		{LibraryID: lib.ID, Title: "SNES B", Platform: "snes", ROMSetName: "SNES", Format: "sfc", FilePath: "/library/snes/b.sfc", RelPath: "snes/b.sfc", Size: 1, MTime: time.Unix(31, 0), Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "SNES B", Platform: "snes", ROMSetName: "No-Intro", Format: "smc", FilePath: "/library/snes/b.smc", RelPath: "snes/b.smc", Size: 1, MTime: time.Unix(31, 0), Compatibility: "unknown"},
 		{LibraryID: lib.ID, Title: "Arcade C", Platform: "arcade", ROMSetName: "MAME", Format: "zip", FilePath: "/library/arcade/c.zip", RelPath: "arcade/c.zip", Size: 1, MTime: time.Unix(32, 0), Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Dreamcast D", Platform: "dreamcast", ROMSetName: "DC", Format: "gdi", FilePath: "/library/dc/d.gdi", RelPath: "dc/d.gdi", Size: 1, MTime: time.Unix(33, 0), EmulatorHint: "dreamcast", Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Legacy Disc E", Platform: "disc", ROMSetName: "Legacy", Format: "chd", FilePath: "/library/legacy/e.chd", RelPath: "legacy/e.chd", Size: 1, MTime: time.Unix(34, 0), EmulatorHint: "disc", Compatibility: "unknown"},
 	} {
 		if _, err := st.UpsertGame(game); err != nil {
 			t.Fatal(err)
@@ -1028,21 +1035,231 @@ func TestAPIClientGameFacetsUseFullCatalog(t *testing.T) {
 	defer ts.Close()
 
 	firstPage := authGet(t, ts.URL+"/api/client/games?limit=1&sort=title", "secret")
-	if !strings.Contains(firstPage, `"total":3`) || strings.Count(firstPage, `"assetType":"game"`) != 1 {
-		t.Fatalf("first page = %q, want one item from a three-game catalog", firstPage)
+	if !strings.Contains(firstPage, `"total":5`) || strings.Count(firstPage, `"assetType":"game"`) != 1 {
+		t.Fatalf("first page = %q, want one item from a five-game catalog", firstPage)
 	}
 
 	facets := authGet(t, ts.URL+"/api/client/games/facets", "secret")
 	for _, want := range []string{
-		`"total":3`,
+		`"total":5`,
 		`"platform":"arcade"`,
 		`"count":1`,
+		`"platform":"disc"`,
+		`"platform":"dreamcast"`,
 		`"platform":"snes"`,
 		`"count":2`,
 	} {
 		if !strings.Contains(facets, want) {
 			t.Fatalf("facets = %q, missing %s", facets, want)
 		}
+	}
+	if strings.Count(facets, `"platform":"snes"`) != 1 {
+		t.Fatalf("facets = %q, want exactly one aggregate per platform", facets)
+	}
+	dreamcast := authGet(t, ts.URL+"/api/client/games?platform=dreamcast", "secret")
+	if !strings.Contains(dreamcast, `"total":1`) || !strings.Contains(dreamcast, `"title":"Dreamcast D"`) || strings.Contains(dreamcast, `"title":"Legacy Disc E"`) {
+		t.Fatalf("dreamcast page = %q, want one canonical Dreamcast launch record", dreamcast)
+	}
+	legacyDisc := authGet(t, ts.URL+"/api/client/games?platform=disc", "secret")
+	if !strings.Contains(legacyDisc, `"total":1`) || !strings.Contains(legacyDisc, `"title":"Legacy Disc E"`) {
+		t.Fatalf("legacy disc page = %q, want old platform query compatibility", legacyDisc)
+	}
+}
+
+func TestAPIClientDreamcastManifestListsCompleteGDISet(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"game.gdi":    "2\n1 0 4 2352 track01.bin 0\n2 45000 4 2352 track03.bin 0\n",
+		"track01.bin": "one",
+		"track03.bin": "three",
+		"legacy.bin":  "legacy-single-file",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("DC", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Game", Platform: "dreamcast", ROMSetName: "DC", Format: "gdi",
+		FilePath: filepath.Join(root, "game.gdi"), RelPath: "game.gdi", Size: 100, MTime: time.Unix(30, 0),
+		EmulatorHint: "dreamcast", Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{
+		{GameID: game.ID, Name: "game.gdi", FilePath: filepath.Join(root, "game.gdi"), Size: 64, MTime: time.Unix(30, 0), Role: "entry", Position: 0},
+		{GameID: game.ID, Name: "track01.bin", FilePath: filepath.Join(root, "track01.bin"), Size: 3, MTime: time.Unix(30, 0), Role: "dependency", Position: 1},
+		{GameID: game.ID, Name: "track03.bin", FilePath: filepath.Join(root, "track03.bin"), Size: 5, MTime: time.Unix(30, 0), Role: "dependency", Position: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	manifest := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/manifest", "secret")
+	for _, want := range []string{`"entryFile":"game.gdi"`, `"name":"track01.bin"`, `"role":"dependency"`, `/files/2`} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("manifest = %q, missing %s", manifest, want)
+		}
+	}
+	track := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/files/2", "secret")
+	if track != "three" {
+		t.Fatalf("track download = %q, want complete dependency bytes", track)
+	}
+
+	legacyInfo, err := os.Stat(filepath.Join(root, "legacy.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Legacy", Platform: "disc", Format: "bin",
+		FilePath: filepath.Join(root, "legacy.bin"), RelPath: "legacy.bin", Size: legacyInfo.Size(), MTime: legacyInfo.ModTime(),
+		EmulatorHint: "disc", Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyManifest := authGet(t, ts.URL+"/api/client/games/"+itoa(legacy.ID)+"/manifest", "secret")
+	if !strings.Contains(legacyManifest, `"entryFile":"legacy.bin"`) || !strings.Contains(legacyManifest, `/files/0`) {
+		t.Fatalf("legacy manifest = %q, want synthesized single-file entry", legacyManifest)
+	}
+	legacyBody := authGet(t, ts.URL+"/api/client/games/"+itoa(legacy.ID)+"/files/0", "secret")
+	if legacyBody != "legacy-single-file" {
+		t.Fatalf("legacy file download = %q, want fallback bytes", legacyBody)
+	}
+}
+
+func TestAPIClientSaturnManifestListsCompleteCUESet(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"guardian.cue": `FILE "C:\SATURN\track01.bin" BINARY
+  TRACK 01 MODE1/2352
+FILE "track02.wav" WAVE
+  TRACK 02 AUDIO
+`,
+		"track01.bin": "data-track",
+		"track02.wav": "audio-track",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Saturn", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Guardian Heroes", Platform: "saturn", ROMSetName: "SS", Format: "cue",
+		FilePath: filepath.Join(root, "guardian.cue"), RelPath: "guardian.cue", Size: 100, MTime: time.Unix(30, 0),
+		EmulatorHint: "saturn", Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{
+		{GameID: game.ID, Name: "guardian.cue", FilePath: filepath.Join(root, "guardian.cue"), Size: 100, MTime: time.Unix(30, 0), Role: "entry", Position: 0},
+		{GameID: game.ID, Name: "track01.bin", FilePath: filepath.Join(root, "track01.bin"), Size: 10, MTime: time.Unix(30, 0), Role: "dependency", Position: 1},
+		{GameID: game.ID, Name: "track02.wav", FilePath: filepath.Join(root, "track02.wav"), Size: 11, MTime: time.Unix(30, 0), Role: "dependency", Position: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	manifest := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/manifest", "secret")
+	for _, want := range []string{`"entryFile":"guardian.cue"`, `"name":"track01.bin"`, `"name":"track02.wav"`, `"role":"dependency"`, `/files/2`} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("manifest = %q, missing %s", manifest, want)
+		}
+	}
+	track := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/files/2", "secret")
+	if track != "audio-track" {
+		t.Fatalf("track download = %q, want complete CUE dependency bytes", track)
+	}
+	descriptor := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/files/0", "secret")
+	if strings.Contains(descriptor, `C:\SATURN`) || !strings.Contains(descriptor, `FILE "track01.bin" BINARY`) {
+		t.Fatalf("descriptor download = %q, want normalized relative CUE references", descriptor)
+	}
+}
+
+func TestAPIClientPCFXManifestStreamsVirtualM3UAndCasePreservedTracks(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"Last Imperial Prince - Disc A.cue": `FILE "disc a.BIN" BINARY`,
+		"Last Imperial Prince - Disc A.bin": "disc-a",
+		"Last Imperial Prince - Disc B.cue": `FILE "disc b.BIN" BINARY`,
+		"Last Imperial Prince - Disc B.bin": "disc-b",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("PC-FX", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{LibraryID: lib.ID, Title: "王子最终传承", Platform: "pc-fx", ROMSetName: "PC-FX", Format: "m3u", FilePath: filepath.Join(root, "Last Imperial Prince - Disc A.cue"), RelPath: "Last Imperial Prince - Disc A.cue", Size: 80, MTime: time.Unix(30, 0), CRC32: "crc", SHA1: "sha", EmulatorHint: "pcfx", Compatibility: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []domain.GameFile{
+		{GameID: game.ID, Name: "Last Imperial Prince.m3u", FilePath: game.FilePath, Size: 76, MTime: time.Unix(30, 0), Role: "entry", Position: 0},
+		{GameID: game.ID, Name: "Last Imperial Prince - Disc A.cue", FilePath: filepath.Join(root, "Last Imperial Prince - Disc A.cue"), Size: 24, MTime: time.Unix(30, 0), Role: "dependency", Position: 1},
+		{GameID: game.ID, Name: "disc a.BIN", FilePath: filepath.Join(root, "Last Imperial Prince - Disc A.bin"), Size: 6, MTime: time.Unix(30, 0), Role: "dependency", Position: 2},
+		{GameID: game.ID, Name: "Last Imperial Prince - Disc B.cue", FilePath: filepath.Join(root, "Last Imperial Prince - Disc B.cue"), Size: 24, MTime: time.Unix(30, 0), Role: "dependency", Position: 3},
+		{GameID: game.ID, Name: "disc b.BIN", FilePath: filepath.Join(root, "Last Imperial Prince - Disc B.bin"), Size: 6, MTime: time.Unix(30, 0), Role: "dependency", Position: 4},
+	}
+	if err := st.ReplaceGameFiles(game.ID, files); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	manifest := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/manifest", "secret")
+	for _, want := range []string{`"platform":"pc-fx"`, `"romSetName":"PC-FX"`, `"emulatorHint":"pcfx"`, `"entryFile":"Last Imperial Prince.m3u"`, `"name":"disc a.BIN"`, `"name":"disc b.BIN"`} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("manifest = %q, missing %s", manifest, want)
+		}
+	}
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/client/games/"+itoa(game.ID)+"/files/0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantM3U := "Last Imperial Prince - Disc A.cue\nLast Imperial Prince - Disc B.cue\n"
+	if string(body) != wantM3U || resp.Header.Get("Content-Length") != strconv.Itoa(len(wantM3U)) {
+		t.Fatalf("M3U body=%q Content-Length=%q, want %q and %d", body, resp.Header.Get("Content-Length"), wantM3U, len(wantM3U))
 	}
 }
 

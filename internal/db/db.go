@@ -121,6 +121,19 @@ func Migrate(conn *sql.DB) error {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS game_files (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			file_path TEXT NOT NULL,
+			size INTEGER NOT NULL,
+			mtime TEXT NOT NULL,
+			role TEXT NOT NULL DEFAULT 'dependency',
+			position INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(game_id, name)
+		)`,
 		`CREATE TABLE IF NOT EXISTS game_metadata (
 			game_id INTEGER PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
 			display_title TEXT NOT NULL DEFAULT '',
@@ -170,6 +183,7 @@ func Migrate(conn *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_games_lower_title ON games(LOWER(title), id)`,
 		`CREATE INDEX IF NOT EXISTS idx_games_lower_platform_title ON games(LOWER(platform), LOWER(title), id)`,
 		`CREATE INDEX IF NOT EXISTS idx_games_lower_filters ON games(LOWER(platform), LOWER(rom_set_name), LOWER(format), LOWER(emulator_hint))`,
+		`CREATE INDEX IF NOT EXISTS idx_game_files_game_position ON game_files(game_id, position, id)`,
 		`CREATE TABLE IF NOT EXISTS videos (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,

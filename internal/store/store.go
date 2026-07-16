@@ -858,6 +858,58 @@ func (s *Store) DeleteSkippedDirectoryEntries(libraryID int64, names []string) (
 	return deletedFiles + deletedGames + deletedVideos, tx.Commit()
 }
 
+func (s *Store) DeleteIgnoredAppleDoubleEntries(libraryID int64) (int64, error) {
+	condition := `(LOWER(rel_path) = '.ds_store' OR LOWER(rel_path) GLOB '*/.ds_store' OR LOWER(rel_path) GLOB '._*' OR LOWER(rel_path) GLOB '*/._*')`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT DISTINCT book_id FROM files WHERE library_id = ? AND `+condition, libraryID)
+	if err != nil {
+		return 0, err
+	}
+	bookIDs := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		bookIDs = append(bookIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+
+	var deleted int64
+	for _, table := range []string{"files", "games", "videos"} {
+		result, err := tx.Exec(`DELETE FROM `+table+` WHERE library_id = ? AND `+condition, libraryID)
+		if err != nil {
+			return 0, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		deleted += count
+	}
+	for _, bookID := range bookIDs {
+		if _, err := tx.Exec(`DELETE FROM books WHERE id = ? AND NOT EXISTS (SELECT 1 FROM files WHERE book_id = ?)`, bookID, bookID); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
 func skippedDirectoryConditions(column string, names []string) (string, []any) {
 	conditions := make([]string, 0, len(names)*2)
 	args := make([]any, 0, len(names)*3)
@@ -1507,6 +1559,76 @@ func (s *Store) DeleteGameByPath(filePath string) error {
 	return err
 }
 
+func (s *Store) DeleteGamesByPaths(filePaths []string, exceptGameID int64) error {
+	if len(filePaths) == 0 {
+		return nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(filePaths)), ",")
+	args := make([]any, 0, len(filePaths)+1)
+	for _, path := range filePaths {
+		args = append(args, path)
+	}
+	args = append(args, exceptGameID)
+	_, err := s.db.Exec(`DELETE FROM games WHERE file_path IN (`+placeholders+`) AND id <> ?`, args...)
+	return err
+}
+
+func (s *Store) ReplaceGameFiles(gameID int64, files []domain.GameFile) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM game_files WHERE game_id = ?`, gameID); err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`INSERT INTO game_files(game_id, name, file_path, size, mtime, role, position)
+		VALUES(?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, file := range files {
+		if _, err := stmt.Exec(gameID, file.Name, file.FilePath, file.Size, file.MTime.Format(time.RFC3339Nano), file.Role, file.Position); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) GameFiles(gameID int64) ([]domain.GameFile, error) {
+	rows, err := s.db.Query(`SELECT id, game_id, name, file_path, size, mtime, role, position
+		FROM game_files WHERE game_id = ? ORDER BY position, id`, gameID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	files := make([]domain.GameFile, 0)
+	for rows.Next() {
+		var file domain.GameFile
+		var mtime string
+		if err := rows.Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.Role, &file.Position); err != nil {
+			return nil, err
+		}
+		file.MTime = parseTime(mtime)
+		files = append(files, file)
+	}
+	return files, rows.Err()
+}
+
+func (s *Store) GameFileByPosition(gameID int64, position int) (domain.GameFile, error) {
+	var file domain.GameFile
+	var mtime string
+	err := s.db.QueryRow(`SELECT id, game_id, name, file_path, size, mtime, role, position
+		FROM game_files WHERE game_id = ? AND position = ?`, gameID, position).
+		Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.Role, &file.Position)
+	if err != nil {
+		return domain.GameFile{}, err
+	}
+	file.MTime = parseTime(mtime)
+	return file, nil
+}
+
 func (s *Store) ListRecentGames(limit int) ([]domain.GameAsset, error) {
 	limit = normalizeShelfLimit(limit)
 	rows, err := s.db.Query(gameSelectSQL()+` ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
@@ -1573,10 +1695,14 @@ func (s *Store) ListGameFacets(options domain.GameListOptions) (domain.GameListF
 	}
 
 	rows, err := s.db.Query(`
-		SELECT platform, rom_set_name, format, emulator_hint, COUNT(*)
+		SELECT LOWER(TRIM(platform)),
+			CASE WHEN COUNT(DISTINCT LOWER(TRIM(rom_set_name))) = 1 THEN MIN(rom_set_name) ELSE '' END,
+			CASE WHEN COUNT(DISTINCT LOWER(TRIM(format))) = 1 THEN MIN(format) ELSE '' END,
+			CASE WHEN COUNT(DISTINCT LOWER(TRIM(emulator_hint))) = 1 THEN MIN(emulator_hint) ELSE '' END,
+			COUNT(*)
 		FROM games`+where+`
-		GROUP BY LOWER(platform), LOWER(rom_set_name), LOWER(format), LOWER(emulator_hint)
-		ORDER BY LOWER(platform), LOWER(rom_set_name), LOWER(format), LOWER(emulator_hint)`, args...)
+		GROUP BY LOWER(TRIM(platform))
+		ORDER BY LOWER(TRIM(platform))`, args...)
 	if err != nil {
 		return domain.GameListFacets{}, err
 	}
@@ -2065,8 +2191,14 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "naomi"
 	case GamePlatformCollectionID("saturn"):
 		return "saturn"
+	case GamePlatformCollectionID("dreamcast"):
+		return "dreamcast"
+	case GamePlatformCollectionID("pc-fx"):
+		return "pc-fx"
 	case GamePlatformCollectionID("arcade"):
 		return "arcade"
+	case GamePlatformCollectionID("mame"):
+		return "mame"
 	default:
 		return ""
 	}
@@ -2090,6 +2222,10 @@ func GamePlatformSortRank(platform string) int {
 		return 65
 	case "saturn":
 		return 70
+	case "dreamcast":
+		return 75
+	case "pc-fx":
+		return 76
 	case "neogeo":
 		return 80
 	case "model3":
@@ -2098,6 +2234,8 @@ func GamePlatformSortRank(platform string) int {
 		return 86
 	case "arcade":
 		return 90
+	case "mame":
+		return 91
 	default:
 		return 999
 	}
@@ -2122,8 +2260,14 @@ func GamePlatformLabel(platform string) string {
 		return "NAOMI"
 	case "saturn":
 		return "Saturn"
+	case "dreamcast":
+		return "Dreamcast"
+	case "pc-fx":
+		return "PC-FX"
 	case "arcade":
 		return "Arcade"
+	case "mame":
+		return "MAME"
 	default:
 		if value == "" {
 			return "Unknown"
@@ -2144,9 +2288,33 @@ func (s *Store) CanSkipGame(path string, size int64, mtime time.Time, platform s
 	return game.Size == size &&
 		game.MTime.Equal(mtime) &&
 		game.Platform == platform &&
-		game.EmulatorHint == platform &&
+		game.EmulatorHint == expectedGameEmulatorHint(platform) &&
 		game.CRC32 != "" &&
 		game.SHA1 != ""
+}
+
+func (s *Store) CanSkipGameSet(path string, size int64, mtime time.Time, platform string, expected []domain.GameFile) bool {
+	game, err := s.GameByPath(path)
+	if err != nil || game.Size != size || !game.MTime.Equal(mtime) || game.Platform != platform || game.EmulatorHint != expectedGameEmulatorHint(platform) || game.CRC32 == "" || game.SHA1 == "" {
+		return false
+	}
+	files, err := s.GameFiles(game.ID)
+	if err != nil || len(files) != len(expected) {
+		return false
+	}
+	for index := range files {
+		if files[index].Name != expected[index].Name || files[index].Role != expected[index].Role || files[index].Size != expected[index].Size || !files[index].MTime.Equal(expected[index].MTime) {
+			return false
+		}
+	}
+	return true
+}
+
+func expectedGameEmulatorHint(platform string) string {
+	if strings.EqualFold(strings.TrimSpace(platform), "pc-fx") {
+		return "pcfx"
+	}
+	return platform
 }
 
 func scanBooks(rows *sql.Rows) ([]domain.Book, error) {

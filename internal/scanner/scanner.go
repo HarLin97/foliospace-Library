@@ -33,6 +33,7 @@ type Scanner struct {
 	store         *store.Store
 	workerCount   func() int
 	gamelistCache sync.Map
+	pegasusCache  sync.Map
 }
 
 type scanScope struct {
@@ -218,8 +219,8 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 				_ = s.store.UpdateScanJob(job)
 				return nil
 			}
-			expectedPlatform := inferGamePlatform(ext, relPath)
-			if s.store.CanSkipGame(path, info.Size(), info.ModTime(), expectedPlatform) {
+			expectedPlatform := inferLibraryGamePlatform(library, ext, relPath)
+			if s.canSkipGame(library, path, info, ext, expectedPlatform) {
 				job.SkippedFiles++
 				_ = s.store.UpdateScanJob(job)
 				return nil
@@ -809,8 +810,8 @@ func (s *Scanner) processScanTask(library domain.Library, jobID int64, task scan
 			s.recordTaskError(library.ID, jobID, task.path, domain.ErrorUnknownIO, "relative path failed: ", err, updateJob)
 			return
 		}
-		expectedPlatform := inferGamePlatform(task.ext, relPath)
-		if s.store.CanSkipGame(task.path, task.info.Size(), task.info.ModTime(), expectedPlatform) {
+		expectedPlatform := inferLibraryGamePlatform(library, task.ext, relPath)
+		if s.canSkipGame(library, task.path, task.info, task.ext, expectedPlatform) {
 			updateJob(func(job *domain.ScanJob) {
 				setCurrent(job)
 				job.SkippedFiles++
@@ -930,7 +931,7 @@ func (s *Scanner) scanTaskNeedsIndex(library domain.Library, task scanFileTask, 
 		if err != nil {
 			return true
 		}
-		return !s.store.CanSkipGame(task.path, task.info.Size(), task.info.ModTime(), inferGamePlatform(task.ext, relPath))
+		return !s.canSkipGame(library, task.path, task.info, task.ext, inferLibraryGamePlatform(library, task.ext, relPath))
 	case "video":
 		return !s.store.CanSkipVideo(task.path, task.info.Size(), task.info.ModTime())
 	default:
@@ -946,6 +947,25 @@ func (s *Scanner) scanTaskNeedsIndex(library domain.Library, task scanFileTask, 
 	}
 }
 
+func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileInfo, ext string, platform string) bool {
+	if !isMultiFileGameDescriptor(ext) {
+		return s.store.CanSkipGame(path, info.Size(), info.ModTime(), platform)
+	}
+	files, totalSize, err := indexedGameFiles(path, info, ext)
+	if err != nil {
+		return false
+	}
+	if platform == "pc-fx" && ext == ".cue" {
+		if discPaths := pcfxDiscSetPaths(library.RootPath, path); len(discPaths) > 1 {
+			files, totalSize, err = indexedVirtualM3UFiles(path, discPaths)
+			if err != nil {
+				return false
+			}
+		}
+	}
+	return s.store.CanSkipGameSet(path, totalSize, info.ModTime(), platform, files)
+}
+
 func (s *Scanner) cleanupSkippedEntries(library domain.Library, job *domain.ScanJob) error {
 	deleted, err := s.store.DeleteSkippedDirectoryEntries(library.ID, skippedScanDirNames())
 	if err != nil {
@@ -953,6 +973,13 @@ func (s *Scanner) cleanupSkippedEntries(library domain.Library, job *domain.Scan
 	}
 	if deleted > 0 {
 		_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("removed %d skipped-directory entries", deleted))
+	}
+	ignored, err := s.store.DeleteIgnoredAppleDoubleEntries(library.ID)
+	if err != nil {
+		return err
+	}
+	if ignored > 0 {
+		_ = s.store.AddJobEvent(job.ID, "info", fmt.Sprintf("removed %d AppleDouble entries", ignored))
 	}
 	return s.store.DeleteEmptySeries(library.ID)
 }
@@ -1029,7 +1056,17 @@ func (s *Scanner) applyScanControl(job *domain.ScanJob) error {
 }
 
 func classifyFileKind(library domain.Library, path string, ext string) string {
+	if shouldSkipScanFile(path) || isDiscTrackDependency(path) || isPegasusIgnoredFile(path) {
+		return ""
+	}
 	if library.AssetType == "game" {
+		relPath, err := filepath.Rel(library.RootPath, path)
+		if err == nil && inferLibraryGamePlatform(library, ext, relPath) == "pc-fx" {
+			name := strings.ToLower(filepath.Base(path))
+			if name == "pcfx.rom" || ext == ".bin" || ext == ".img" || ext == ".iso" || ext == ".sub" || isPCFXSecondaryDiscPath(path) {
+				return ""
+			}
+		}
 		if isGameExt(ext) || isGamePackageExt(ext) {
 			return "game"
 		}
@@ -1063,7 +1100,7 @@ func isGamePackageExt(ext string) bool {
 
 func isGameExt(ext string) bool {
 	switch ext {
-	case ".nes", ".sfc", ".smc", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".chd", ".iso", ".bin", ".cue", ".img", ".pbp":
+	case ".nes", ".sfc", ".smc", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".gdi", ".cdi", ".chd", ".iso", ".bin", ".cue", ".ccd", ".toc", ".m3u", ".img", ".pbp":
 		return true
 	default:
 		return false
@@ -1165,31 +1202,617 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		return err
 	}
 	title := gameTitle(path)
-	platform := inferGamePlatform(ext, relPath)
+	platform := inferLibraryGamePlatform(library, ext, relPath)
+	romSetName := inferROMSetName(relPath)
+	emulatorHint := platform
+	pegasus, hasPegasus := pegasusEntryForGame(library.RootPath, path)
+	if hasPegasus && strings.TrimSpace(pegasus.Name) != "" {
+		title = strings.TrimSpace(pegasus.Name)
+	}
+	if platform == "dreamcast" {
+		romSetName = "DC"
+	} else if platform == "saturn" {
+		romSetName = "SS"
+	} else if platform == "pc-fx" {
+		romSetName = "PC-FX"
+		emulatorHint = "pcfx"
+		if !hasPegasus {
+			title = pcfxDirectoryTitle(library.RootPath, path)
+		}
+	}
+	gameFiles, totalSize, err := indexedGameFiles(path, info, ext)
+	if err != nil {
+		return err
+	}
+	format := strings.TrimPrefix(ext, ".")
+	if platform == "pc-fx" && ext == ".cue" {
+		if discPaths := pcfxDiscSetPaths(library.RootPath, path); len(discPaths) > 1 {
+			gameFiles, totalSize, err = indexedVirtualM3UFiles(path, discPaths)
+			if err != nil {
+				return err
+			}
+			format = "m3u"
+		}
+	}
 	game, err := s.store.UpsertGame(domain.GameAsset{
 		LibraryID:     library.ID,
 		Title:         title,
 		Platform:      platform,
-		ROMSetName:    inferROMSetName(relPath),
+		ROMSetName:    romSetName,
 		Region:        inferRegion(path),
-		Format:        strings.TrimPrefix(ext, "."),
+		Format:        format,
 		FilePath:      path,
 		RelPath:       filepath.ToSlash(relPath),
-		Size:          info.Size(),
+		Size:          totalSize,
 		MTime:         info.ModTime(),
 		CRC32:         checksums.crc32,
 		SHA1:          checksums.sha1,
-		EmulatorHint:  platform,
+		EmulatorHint:  emulatorHint,
 		Compatibility: "unknown",
 	})
 	if err != nil {
 		return err
 	}
+	if err := s.store.ReplaceGameFiles(game.ID, gameFiles); err != nil {
+		return err
+	}
+	if len(gameFiles) > 1 {
+		dependencyPaths := make([]string, 0, len(gameFiles)-1)
+		for _, file := range gameFiles {
+			if file.Role == "dependency" {
+				dependencyPaths = append(dependencyPaths, file.FilePath)
+			}
+		}
+		if err := s.store.DeleteGamesByPaths(dependencyPaths, game.ID); err != nil {
+			return err
+		}
+	}
+	if err := s.applyPegasusMetadata(game.ID, pegasus, hasPegasus); err != nil {
+		return err
+	}
 	return s.applyGamelistMetadata(library, path, filepath.ToSlash(relPath), game.ID)
+}
+
+var gdiTrackLinePattern = regexp.MustCompile(`^\s*\d+\s+\d+\s+\d+\s+\d+\s+(?:"([^"]+)"|(\S+))`)
+
+func indexedGameFiles(path string, info fs.FileInfo, ext string) ([]domain.GameFile, int64, error) {
+	entry := domain.GameFile{
+		Name: filepath.Base(path), FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0,
+	}
+	files := []domain.GameFile{entry}
+	if !isMultiFileGameDescriptor(ext) {
+		return files, info.Size(), nil
+	}
+	if ext == ".ccd" {
+		return indexedCCDGameFiles(path, info)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	if ext == ".m3u" {
+		return indexedM3UFiles(path, info, data)
+	}
+	names, err := discDescriptorDependencyNames(ext, data)
+	if err != nil {
+		return nil, 0, fmt.Errorf("parse %s descriptor %s: %w", strings.TrimPrefix(ext, "."), path, err)
+	}
+	totalSize := info.Size()
+	dir := filepath.Dir(path)
+	for index, name := range names {
+		cleanName, err := cleanDiscDependencyName(name)
+		if err != nil {
+			return nil, 0, err
+		}
+		dependencyPath, err := resolveDiscDependencyPath(dir, cleanName)
+		if err != nil {
+			return nil, 0, fmt.Errorf("disc dependency %s: %w", name, err)
+		}
+		dependencyInfo, err := os.Stat(dependencyPath)
+		if err != nil {
+			return nil, 0, fmt.Errorf("disc dependency %s: %w", name, err)
+		}
+		if dependencyInfo.IsDir() {
+			return nil, 0, fmt.Errorf("disc dependency is a directory: %s", name)
+		}
+		files = append(files, domain.GameFile{
+			Name: filepath.ToSlash(cleanName), FilePath: dependencyPath, Size: dependencyInfo.Size(), MTime: dependencyInfo.ModTime(), Role: "dependency", Position: index + 1,
+		})
+		totalSize += dependencyInfo.Size()
+	}
+	return files, totalSize, nil
+}
+
+func indexedCCDGameFiles(path string, info fs.FileInfo) ([]domain.GameFile, int64, error) {
+	files := []domain.GameFile{{Name: filepath.Base(path), FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0}}
+	totalSize := info.Size()
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	for _, suffix := range []string{".img", ".sub"} {
+		dependencyPath, err := resolveDiscDependencyPath(filepath.Dir(path), base+suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			if suffix == ".sub" {
+				continue
+			}
+			return nil, 0, fmt.Errorf("ccd dependency %s: %w", base+suffix, err)
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		dependencyInfo, err := os.Stat(dependencyPath)
+		if err != nil {
+			return nil, 0, err
+		}
+		files = append(files, domain.GameFile{Name: filepath.Base(dependencyPath), FilePath: dependencyPath, Size: dependencyInfo.Size(), MTime: dependencyInfo.ModTime(), Role: "dependency", Position: len(files)})
+		totalSize += dependencyInfo.Size()
+	}
+	return files, totalSize, nil
+}
+
+func cleanDiscDependencyName(name string) (string, error) {
+	normalized := strings.ReplaceAll(strings.TrimSpace(name), `\`, "/")
+	if len(normalized) >= 3 && normalized[1] == ':' && normalized[2] == '/' {
+		normalized = normalized[strings.LastIndex(normalized, "/")+1:]
+	}
+	cleanName := filepath.Clean(filepath.FromSlash(normalized))
+	if filepath.IsAbs(cleanName) || cleanName == "." || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("disc dependency escapes game directory: %s", name)
+	}
+	return cleanName, nil
+}
+
+func resolveDiscDependencyPath(dir string, cleanName string) (string, error) {
+	current := dir
+	for _, part := range strings.Split(filepath.ToSlash(cleanName), "/") {
+		entries, err := os.ReadDir(current)
+		if err != nil {
+			return "", err
+		}
+		match := ""
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), part) {
+				if match != "" && match != entry.Name() {
+					return "", fmt.Errorf("ambiguous case-insensitive match for %s", cleanName)
+				}
+				match = entry.Name()
+			}
+		}
+		if match == "" {
+			return "", os.ErrNotExist
+		}
+		current = filepath.Join(current, match)
+	}
+	return current, nil
+}
+
+func isMultiFileGameDescriptor(ext string) bool {
+	return ext == ".gdi" || ext == ".cue" || ext == ".ccd" || ext == ".toc" || ext == ".m3u"
+}
+
+func discDescriptorDependencyNames(ext string, data []byte) ([]string, error) {
+	switch ext {
+	case ".gdi":
+		return gdiDependencyNames(data)
+	case ".cue":
+		return cueDependencyNames(data)
+	case ".ccd":
+		return nil, nil
+	case ".toc":
+		return tocDependencyNames(data)
+	case ".m3u":
+		return m3uDependencyNames(data)
+	default:
+		return nil, fmt.Errorf("unsupported descriptor format %s", ext)
+	}
+}
+
+func tocDependencyNames(data []byte) ([]string, error) {
+	return cueDependencyNames(data)
+}
+
+func m3uDependencyNames(data []byte) ([]string, error) {
+	lines := strings.Split(strings.ReplaceAll(strings.TrimPrefix(string(data), "\ufeff"), "\r\n", "\n"), "\n")
+	names := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, line := range lines {
+		name := strings.TrimSpace(line)
+		if name == "" || strings.HasPrefix(name, "#") {
+			continue
+		}
+		key := strings.ToLower(filepath.ToSlash(filepath.Clean(strings.ReplaceAll(name, `\`, "/"))))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("contains no disc entries")
+	}
+	return names, nil
+}
+
+func indexedM3UFiles(path string, info fs.FileInfo, data []byte) ([]domain.GameFile, int64, error) {
+	names, err := m3uDependencyNames(data)
+	if err != nil {
+		return nil, 0, err
+	}
+	files := []domain.GameFile{{Name: filepath.Base(path), FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0}}
+	totalSize := info.Size()
+	for _, name := range names {
+		cleanName, err := cleanDiscDependencyName(name)
+		if err != nil {
+			return nil, 0, err
+		}
+		descriptorPath, err := resolveDiscDependencyPath(filepath.Dir(path), cleanName)
+		if err != nil {
+			return nil, 0, fmt.Errorf("m3u dependency %s: %w", name, err)
+		}
+		descriptorInfo, err := os.Stat(descriptorPath)
+		if err != nil {
+			return nil, 0, err
+		}
+		descriptorExt := strings.ToLower(filepath.Ext(descriptorPath))
+		nested, _, err := indexedGameFiles(descriptorPath, descriptorInfo, descriptorExt)
+		if err != nil {
+			return nil, 0, err
+		}
+		for index, file := range nested {
+			file.Role = "dependency"
+			if index == 0 {
+				file.Name = filepath.ToSlash(cleanName)
+			}
+			file.Position = len(files)
+			files = append(files, file)
+			totalSize += file.Size
+		}
+	}
+	return files, totalSize, nil
+}
+
+func indexedVirtualM3UFiles(primaryPath string, discPaths []string) ([]domain.GameFile, int64, error) {
+	entryName := multiDiscBaseName(filepath.Base(primaryPath)) + ".m3u"
+	entryData := virtualM3UDataForPaths(discPaths)
+	primaryInfo, err := os.Stat(primaryPath)
+	if err != nil {
+		return nil, 0, err
+	}
+	files := []domain.GameFile{{Name: entryName, FilePath: primaryPath, Size: int64(len(entryData)), MTime: primaryInfo.ModTime(), Role: "entry", Position: 0}}
+	totalSize := int64(len(entryData))
+	for _, descriptorPath := range discPaths {
+		info, err := os.Stat(descriptorPath)
+		if err != nil {
+			return nil, 0, err
+		}
+		nested, _, err := indexedGameFiles(descriptorPath, info, strings.ToLower(filepath.Ext(descriptorPath)))
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, file := range nested {
+			file.Role = "dependency"
+			file.Position = len(files)
+			files = append(files, file)
+			totalSize += file.Size
+		}
+	}
+	return files, totalSize, nil
+}
+
+func virtualM3UDataForPaths(paths []string) []byte {
+	lines := make([]string, 0, len(paths))
+	for _, path := range paths {
+		lines = append(lines, filepath.Base(path))
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
+}
+
+var multiDiscSuffixPattern = regexp.MustCompile(`(?i)\s*-?\s*disc\s*[a-z0-9]+$`)
+
+func multiDiscBaseName(name string) string {
+	name = strings.TrimSuffix(name, filepath.Ext(name))
+	return strings.TrimSpace(multiDiscSuffixPattern.ReplaceAllString(name, ""))
+}
+
+func gdiDependencyNames(data []byte) ([]string, error) {
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("empty descriptor")
+	}
+	expected, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil || expected <= 0 {
+		return nil, fmt.Errorf("invalid track count")
+	}
+	names := make([]string, 0, expected)
+	seen := map[string]struct{}{}
+	for _, line := range lines[1:] {
+		match := gdiTrackLinePattern.FindStringSubmatch(line)
+		if len(match) == 0 {
+			continue
+		}
+		name := match[1]
+		if name == "" {
+			name = match[2]
+		}
+		key := strings.ToLower(filepath.ToSlash(filepath.Clean(name)))
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		names = append(names, name)
+	}
+	if len(names) != expected {
+		return nil, fmt.Errorf("declares %d tracks but lists %d", expected, len(names))
+	}
+	return names, nil
+}
+
+var cueFileLinePattern = regexp.MustCompile(`(?i)^\s*FILE\s+(?:"([^"]+)"|(\S+))\s+\S+`)
+var cueFileRewritePattern = regexp.MustCompile(`(?i)^(\s*FILE\s+)(?:"([^"]+)"|(\S+))(\s+\S+.*)$`)
+
+func cueDependencyNames(data []byte) ([]string, error) {
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	names := make([]string, 0)
+	seen := map[string]struct{}{}
+	for _, line := range lines {
+		match := cueFileLinePattern.FindStringSubmatch(line)
+		if len(match) == 0 {
+			continue
+		}
+		name := match[1]
+		if name == "" {
+			name = match[2]
+		}
+		key := strings.ToLower(filepath.ToSlash(filepath.Clean(strings.ReplaceAll(name, `\`, "/"))))
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("contains no FILE directives")
+	}
+	return names, nil
+}
+
+func NormalizeCUEFileReferences(data []byte) ([]byte, error) {
+	lineBreak := "\n"
+	if bytes.Contains(data, []byte("\r\n")) {
+		lineBreak = "\r\n"
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	matched := 0
+	for index, line := range lines {
+		match := cueFileRewritePattern.FindStringSubmatch(line)
+		if len(match) == 0 {
+			continue
+		}
+		name := match[2]
+		if name == "" {
+			name = match[3]
+		}
+		cleanName, err := cleanDiscDependencyName(name)
+		if err != nil {
+			return nil, err
+		}
+		lines[index] = match[1] + `"` + filepath.ToSlash(cleanName) + `"` + match[4]
+		matched++
+	}
+	if matched == 0 {
+		return nil, fmt.Errorf("contains no FILE directives")
+	}
+	return []byte(strings.Join(lines, lineBreak)), nil
 }
 
 type gamelistXML struct {
 	Games []gamelistGame `xml:"game"`
+}
+
+type pegasusGame struct {
+	Name        string
+	Description string
+	Developer   string
+	Files       []string
+}
+
+type pegasusMetadata struct {
+	GamesByFile map[string]pegasusGame
+	Ignored     map[string]struct{}
+}
+
+func readPegasusMetadata(rootPath string) (pegasusMetadata, bool) {
+	path := filepath.Join(rootPath, "metadata.pegasus.txt")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return pegasusMetadata{}, false
+	}
+	text := strings.TrimPrefix(string(data), "\ufeff")
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	metadata := pegasusMetadata{GamesByFile: map[string]pegasusGame{}, Ignored: map[string]struct{}{}}
+	var current *pegasusGame
+	flush := func() {
+		if current == nil {
+			return
+		}
+		for _, file := range current.Files {
+			metadata.GamesByFile[strings.ToLower(filepath.ToSlash(filepath.Clean(strings.TrimSpace(file))))] = *current
+		}
+	}
+	lastField := ""
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.Contains(line, ":") && current != nil && lastField == "description" {
+			current.Description = strings.TrimSpace(current.Description + " " + line)
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		value := strings.TrimSpace(parts[1])
+		lastField = key
+		switch key {
+		case "game":
+			flush()
+			current = &pegasusGame{Name: value}
+		case "file":
+			if current != nil && value != "" {
+				current.Files = append(current.Files, value)
+			}
+		case "description":
+			if current != nil {
+				current.Description = value
+			}
+		case "developer":
+			if current != nil {
+				current.Developer = value
+			}
+		case "ignore-file":
+			if value != "" {
+				metadata.Ignored[strings.ToLower(filepath.ToSlash(filepath.Clean(value)))] = struct{}{}
+			}
+		}
+	}
+	flush()
+	return metadata, true
+}
+
+func pegasusEntryForGame(rootPath string, gamePath string) (pegasusGame, bool) {
+	for dir := filepath.Dir(gamePath); ; dir = filepath.Dir(dir) {
+		metadata, ok := readPegasusMetadata(dir)
+		if ok {
+			relPath, err := filepath.Rel(dir, gamePath)
+			if err == nil {
+				entry, found := metadata.GamesByFile[strings.ToLower(filepath.ToSlash(filepath.Clean(relPath)))]
+				if found {
+					return entry, true
+				}
+			}
+		}
+		if filepath.Clean(dir) == filepath.Clean(rootPath) || filepath.Dir(dir) == dir {
+			break
+		}
+	}
+	return pegasusGame{}, false
+}
+
+func isPegasusIgnoredFile(path string) bool {
+	metadata, ok := readPegasusMetadata(filepath.Dir(path))
+	if !ok {
+		return false
+	}
+	_, ignored := metadata.Ignored[strings.ToLower(filepath.Base(path))]
+	return ignored
+}
+
+func pegasusMultiDiscPaths(rootPath string, primaryPath string) []string {
+	metadataRoot := filepath.Dir(primaryPath)
+	metadata, ok := readPegasusMetadata(metadataRoot)
+	if !ok {
+		return nil
+	}
+	base := strings.ToLower(multiDiscBaseName(filepath.Base(primaryPath)))
+	if base == strings.ToLower(strings.TrimSuffix(filepath.Base(primaryPath), filepath.Ext(primaryPath))) {
+		return nil
+	}
+	paths := []string{primaryPath}
+	for ignored := range metadata.Ignored {
+		if strings.ToLower(filepath.Ext(ignored)) != ".cue" || strings.ToLower(multiDiscBaseName(filepath.Base(ignored))) != base {
+			continue
+		}
+		resolved, err := resolveDiscDependencyPath(metadataRoot, filepath.FromSlash(ignored))
+		if err == nil && filepath.Clean(resolved) != filepath.Clean(primaryPath) {
+			paths = append(paths, resolved)
+		}
+	}
+	sort.Slice(paths[1:], func(i, j int) bool { return strings.ToLower(paths[i+1]) < strings.ToLower(paths[j+1]) })
+	return paths
+}
+
+var pcfxDiscDirectorySuffixPattern = regexp.MustCompile(`(?i)\s+CD\s*([0-9]+)$`)
+
+func isPCFXSecondaryDiscPath(path string) bool {
+	match := pcfxDiscDirectorySuffixPattern.FindStringSubmatch(filepath.Base(filepath.Dir(path)))
+	return len(match) == 2 && match[1] != "1"
+}
+
+func pcfxDiscSetPaths(rootPath string, primaryPath string) []string {
+	if paths := pegasusMultiDiscPaths(rootPath, primaryPath); len(paths) > 1 {
+		return paths
+	}
+	dir := filepath.Dir(primaryPath)
+	match := pcfxDiscDirectorySuffixPattern.FindStringSubmatch(filepath.Base(dir))
+	if len(match) != 2 || match[1] != "1" {
+		return nil
+	}
+	dirBase := pcfxDiscDirectorySuffixPattern.ReplaceAllString(filepath.Base(dir), "")
+	parent := filepath.Dir(dir)
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return nil
+	}
+	type discPath struct {
+		number int
+		path   string
+	}
+	discs := []discPath{{number: 1, path: primaryPath}}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidateMatch := pcfxDiscDirectorySuffixPattern.FindStringSubmatch(entry.Name())
+		if len(candidateMatch) != 2 || !strings.EqualFold(pcfxDiscDirectorySuffixPattern.ReplaceAllString(entry.Name(), ""), dirBase) {
+			continue
+		}
+		number, _ := strconv.Atoi(candidateMatch[1])
+		if number <= 1 {
+			continue
+		}
+		cueEntries, _ := filepath.Glob(filepath.Join(parent, entry.Name(), "*.[cC][uU][eE]"))
+		if len(cueEntries) == 1 {
+			discs = append(discs, discPath{number: number, path: cueEntries[0]})
+		}
+	}
+	if len(discs) <= 1 {
+		return nil
+	}
+	sort.Slice(discs, func(i, j int) bool { return discs[i].number < discs[j].number })
+	paths := make([]string, len(discs))
+	for index, disc := range discs {
+		paths[index] = disc.path
+	}
+	return paths
+}
+
+func pcfxDirectoryTitle(rootPath string, gamePath string) string {
+	dir := filepath.Base(filepath.Dir(gamePath))
+	if dir == filepath.Base(filepath.Clean(rootPath)) {
+		return gameTitle(gamePath)
+	}
+	dir = pcfxDiscDirectorySuffixPattern.ReplaceAllString(dir, "")
+	dir = regexp.MustCompile(`^\d{8}\s+`).ReplaceAllString(dir, "")
+	dir = regexp.MustCompile(`\([^)]*\)\s*$`).ReplaceAllString(dir, "")
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return gameTitle(gamePath)
+	}
+	return dir
+}
+
+func (s *Scanner) applyPegasusMetadata(gameID int64, entry pegasusGame, ok bool) error {
+	if !ok {
+		return nil
+	}
+	developers := []string{}
+	if strings.TrimSpace(entry.Developer) != "" {
+		developers = []string{strings.TrimSpace(entry.Developer)}
+	}
+	return s.store.UpsertGameMetadata(domain.GameMetadata{
+		GameID: gameID, DisplayTitle: strings.TrimSpace(entry.Name), Summary: strings.TrimSpace(entry.Description), Developers: developers,
+	})
 }
 
 type gamelistGame struct {
@@ -2073,8 +2696,59 @@ func shouldSkipScanDir(library domain.Library, path string) bool {
 	return false
 }
 
+func shouldSkipScanFile(path string) bool {
+	name := filepath.Base(path)
+	return name == ".DS_Store" || strings.HasPrefix(name, "._")
+}
+
+func isDiscTrackDependency(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != ".bin" && ext != ".raw" && ext != ".wav" && ext != ".mp3" && ext != ".img" && ext != ".sub" && ext != ".cue" && ext != ".ccd" && ext != ".toc" && ext != ".chd" {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return false
+	}
+	cleanPath := filepath.Clean(path)
+	for _, entry := range entries {
+		descriptorExt := strings.ToLower(filepath.Ext(entry.Name()))
+		if entry.IsDir() || !isMultiFileGameDescriptor(descriptorExt) || shouldSkipScanFile(entry.Name()) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(filepath.Dir(path), entry.Name()))
+		if err != nil {
+			continue
+		}
+		names, err := discDescriptorDependencyNames(descriptorExt, data)
+		if err != nil {
+			continue
+		}
+		if descriptorExt == ".ccd" {
+			base := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+			names = []string{base + ".img", base + ".sub"}
+		}
+		for _, name := range names {
+			cleanName, err := cleanDiscDependencyName(name)
+			if err != nil {
+				continue
+			}
+			candidate, err := resolveDiscDependencyPath(filepath.Dir(path), cleanName)
+			if err != nil {
+				continue
+			}
+			candidateInfo, candidateErr := os.Stat(candidate)
+			trackInfo, trackErr := os.Stat(cleanPath)
+			if candidateErr == nil && trackErr == nil && os.SameFile(candidateInfo, trackInfo) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func skippedScanDirNames() []string {
-	return []string{"#recycle", "@eaDir", ".calnotes", "__MACOSX", "media", "covers", "cover", "thumbnails", ".thumbnails", "thumbs", ".thumbs"}
+	return []string{"#recycle", "@eaDir", ".calnotes", "__MACOSX", "media", "covers", "cover", "thumbnails", ".thumbnails", "thumbs", ".thumbs", "出版物附属盘、非卖品", "游戏镜像"}
 }
 
 func seriesIdentityForRelPath(rootPath string, relPath string) (string, string) {
@@ -2151,7 +2825,9 @@ func inferGamePlatform(ext string, relPath string) string {
 			return "nds"
 		case "3ds", "nintendo 3ds":
 			return "3ds"
-		case "arcade", "mame":
+		case "mame", "mahjong":
+			return "mame"
+		case "arcade":
 			return "arcade"
 		case "neogeo", "neo geo", "neo-geo":
 			return "neogeo"
@@ -2163,11 +2839,17 @@ func inferGamePlatform(ext string, relPath string) string {
 			return "32x"
 		case "ss", "saturn", "sega saturn":
 			return "saturn"
+		case "dc", "dreamcast", "sega dreamcast":
+			return "dreamcast"
+		case "pc-fx", "pcfx", "nec pc-fx", "nec pcfx":
+			return "pc-fx"
 		case "ps", "ps1", "psx", "playstation", "playstation 1", "playstation one", "psone":
 			return "ps1"
 		}
 	}
 	switch ext {
+	case ".gdi", ".cdi":
+		return "dreamcast"
 	case ".sfc", ".smc":
 		return "snes"
 	case ".nes":
@@ -2187,10 +2869,36 @@ func inferGamePlatform(ext string, relPath string) string {
 	case ".pbp":
 		return "ps1"
 	case ".zip", ".7z":
-		return "arcade"
+		return "mame"
 	default:
 		return "unknown"
 	}
+}
+
+func inferLibraryGamePlatform(library domain.Library, ext string, relPath string) string {
+	for _, value := range []string{relPath, library.Name, filepath.Base(filepath.Clean(library.RootPath))} {
+		lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(value)))
+		if strings.Contains(lower, "pc-fx") || strings.Contains(lower, "pcfx") {
+			return "pc-fx"
+		}
+	}
+	platform := inferGamePlatform(ext, relPath)
+	if platform != "disc" {
+		return platform
+	}
+	for _, value := range []string{library.Name, filepath.Base(filepath.Clean(library.RootPath))} {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "dc", "dreamcast", "sega dreamcast":
+			if ext == ".chd" {
+				return "dreamcast"
+			}
+		case "ss", "saturn", "sega saturn":
+			if ext == ".cue" || ext == ".chd" || ext == ".iso" {
+				return "saturn"
+			}
+		}
+	}
+	return platform
 }
 
 func inferFBNeoPlatform(path string) string {
@@ -2218,6 +2926,9 @@ func inferFBNeoPlatform(path string) string {
 		case "arcade":
 			if index+2 < len(parts) {
 				shortName := strings.TrimSuffix(parts[index+2], filepath.Ext(parts[index+2]))
+				if isMAMEMahjongShortName(shortName) {
+					return "mame"
+				}
 				if isFBNeoMegaDriveShortName(shortName) {
 					return "md"
 				}
@@ -2242,6 +2953,16 @@ func isFBNeoMegaDriveShortName(name string) bool {
 		}
 	}
 	return false
+}
+
+func isMAMEMahjongShortName(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
+	case "hypreact", "hypreac2", "srmp4":
+		return true
+	default:
+		return false
+	}
 }
 
 func isNeoGeoShortName(name string) bool {
@@ -2271,6 +2992,17 @@ func isNeoGeoShortName(name string) bool {
 func inferROMSetName(relPath string) string {
 	parts := strings.Split(filepath.ToSlash(relPath), "/")
 	if len(parts) > 1 {
+		switch strings.ToLower(strings.TrimSpace(parts[0])) {
+		case "mahjong", "mame":
+			return "MAME"
+		case "fbneo":
+			if len(parts) > 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "arcade") {
+				shortName := strings.TrimSuffix(parts[2], filepath.Ext(parts[2]))
+				if isMAMEMahjongShortName(shortName) {
+					return "MAME"
+				}
+			}
+		}
 		return parts[0]
 	}
 	return ""

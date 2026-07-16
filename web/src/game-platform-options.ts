@@ -39,6 +39,8 @@ function gamePlatformValueFromLabel(label: string) {
       return "model3";
     case "naomi":
       return "naomi";
+    case "mame":
+      return "mame";
     case "32x":
       return "32x";
     default:

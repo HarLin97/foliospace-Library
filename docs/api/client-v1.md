@@ -572,6 +572,14 @@ Response:
 
 The response is aggregate-only and never includes NAS paths, local file paths, or Docker volume paths.
 
+Facets contain exactly one entry per normalized `platform`. Its `count` is the number of launchable game records and therefore matches `GET /api/client/games?platform={platform}`; dependency files such as Dreamcast GDI tracks and Saturn CUE tracks never contribute to the count. When one platform contains multiple ROM-set names, formats, or emulator hints, the corresponding aggregate field is an empty string instead of producing duplicate platform rows.
+
+New Dreamcast scans use `platform: "dreamcast"`, `romSetName: "DC"`, and `emulatorHint: "dreamcast"`. Existing records with `platform: "disc"` remain queryable for backward compatibility, but are not emitted for newly recognized Dreamcast games.
+
+New Saturn CUE scans use `platform: "saturn"`, `romSetName: "SS"`, `emulatorHint: "saturn"`, and `format: "cue"`. A single-file Saturn ISO remains one standalone game.
+
+PC-FX scans use `platform: "pc-fx"`, `romSetName: "PC-FX"`, and `emulatorHint: "pcfx"`. CUE, CCD, TOC, CHD, and M3U files are launch entries; raw BIN/IMG/ISO tracks and `pcfx.rom` are never standalone catalog items. Adjacent `CD1`/`CD2` directories are exposed as one virtual M3U game, so facets count launchable titles rather than physical discs. Pegasus `metadata.pegasus.txt` files may provide title, description, developer, and `ignore-file` data.
+
 ### `GET /api/client/videos`
 
 Returns a paginated client-safe video catalog. FolioSpace keeps NAS paths hidden, probes codecs with `ffprobe` when available, and marks each video as direct-playable or HLS-transcode playback.
@@ -844,11 +852,22 @@ Returns client-safe game launch metadata. It does not expose the real NAS path.
     "coverUrl": "/api/games/12/cover",
     "manifestUrl": "/api/client/games/12/manifest"
   },
-  "fileUrl": "/api/client/games/12/file"
+  "fileUrl": "/api/client/games/12/file",
+  "entryFile": "Super Mario World.sfc",
+  "files": [
+    {
+      "name": "Super Mario World.sfc",
+      "size": 524288,
+      "role": "entry",
+      "url": "/api/client/games/12/files/0"
+    }
+  ]
 }
 ```
 
-`fileUrl` streams the local file through FolioSpace Library and still requires bearer auth when auth is enabled. Native clients should treat it as an opaque service URL, not as a file path.
+`fileUrl` streams the entry file through FolioSpace Library and remains available for older single-file clients. It still requires bearer auth when auth is enabled. Native clients should treat it as an opaque service URL, not as a file path.
+
+`files[]` is the complete ordered launch set. Single-file games contain one `entry` item. Dreamcast GDI games contain the `.gdi` descriptor as `entry` followed by every referenced track as `dependency`. Saturn and PC-FX CUE games contain the `.cue` descriptor followed by every file named by a CUE `FILE` directive, including `.bin`, `.wav`, and `.mp3` tracks. A PC-FX M3U package contains the M3U entry, every referenced disc descriptor, and all descriptor tracks. Dependency lookup is case-insensitive, while each returned `name` preserves the spelling expected by its descriptor. Clients must preserve each `name` when downloading so the emulator can resolve the package. Each `url` uses `GET /api/client/games/{gameId}/files/{position}` and requires the same authentication as `fileUrl`.
 `coverUrl` is optional. For supported retro platforms it streams a cached Libretro boxart image through FolioSpace Library; clients should fall back to their own placeholder when it is absent or returns 404.
 
 ### `GET /api/client/games/{gameId}/details`
@@ -1349,7 +1368,7 @@ These routes are operational surfaces for web UI, trusted native tools, and MCP 
 
 Returns configured library roots. This endpoint can expose configured mount paths and should be treated as an admin/diagnostic route, not a public client catalog.
 
-Each library includes `excludePatterns`, a list of directory names or library-relative paths skipped during scans. The scanner also always skips common generated directories such as `#recycle`, `@eaDir`, `.calnotes`, `__MACOSX`, `media`, `covers`, `cover`, `thumbnails`, `.thumbnails`, `thumbs`, and `.thumbs`.
+Each library includes `excludePatterns`, a list of directory names or library-relative paths skipped during scans. The scanner also always skips common generated directories such as `#recycle`, `@eaDir`, `.calnotes`, `__MACOSX`, `media`, `covers`, `cover`, `thumbnails`, `.thumbnails`, `thumbs`, and `.thumbs`. PC-FX archive-only directories named `出版物附属盘、非卖品` and `游戏镜像` are also skipped. Files named `.DS_Store` or beginning with `._` are globally ignored. For Dreamcast GDI, Saturn CUE, and PC-FX descriptor sets, referenced files are dependencies and are not indexed as separate games.
 
 ### `POST /api/libraries`
 

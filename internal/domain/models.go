@@ -184,6 +184,17 @@ type GameAsset struct {
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
 
+type GameFile struct {
+	ID       int64     `json:"id"`
+	GameID   int64     `json:"gameId"`
+	Name     string    `json:"name"`
+	FilePath string    `json:"filePath,omitempty"`
+	Size     int64     `json:"size"`
+	MTime    time.Time `json:"mtime"`
+	Role     string    `json:"role"`
+	Position int       `json:"position"`
+}
+
 type GameMetadata struct {
 	GameID        int64     `json:"gameId"`
 	DisplayTitle  string    `json:"displayTitle"`

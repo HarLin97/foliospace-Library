@@ -338,6 +338,53 @@ func TestOpenGameCoverFallsBackToDiscBaseMediaFolder(t *testing.T) {
 	}
 }
 
+func TestOpenGameCoverUsesCentralPCFXFrontCover(t *testing.T) {
+	root := t.TempDir()
+	gameDir := filepath.Join(root, "PC-FX官方日版游戏全集（61个）", "19960913 史莱姆汽泡姊妹(ACT)")
+	romPath := filepath.Join(gameDir, "Chip Chan Kick.cue")
+	coverPath := filepath.Join(root, "PC-FX官方日版游戏全集（61个）", "PC-FX Covers", "19960913 史莱姆汽泡姊妹 [正面].jpg")
+	if err := os.MkdirAll(filepath.Dir(coverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(gameDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(romPath, []byte("cue"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	coverBytes := []byte("pcfx-front")
+	if err := os.WriteFile(coverPath, coverBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{LibraryID: lib.ID, Title: "史莱姆汽泡姊妹", Platform: "pc-fx", ROMSetName: "PC-FX", Format: "cue", FilePath: romPath, RelPath: "PC-FX/Chip Chan Kick.cue", Size: 3, MTime: time.Unix(10, 0), CRC32: "crc", SHA1: "sha", EmulatorHint: "pcfx", Compatibility: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := NewWithConfig(st, t.TempDir()).OpenGameCover(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	data, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, coverBytes) {
+		t.Fatalf("cover = %q, want central PC-FX front cover", data)
+	}
+}
+
 func TestBookThumbnailQueuesAndWorkerGeneratesCachedImage(t *testing.T) {
 	root := t.TempDir()
 	bookPath := filepath.Join(root, "Series A", "book1.cbz")

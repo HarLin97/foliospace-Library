@@ -321,7 +321,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		ServiceName:      "FolioSpace Library",
 		ServiceVersion:   serviceVersion,
 		APIVersion:       "v1",
-		SupportedFormats: []string{"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"},
+		SupportedFormats: []string{"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "gdi", "cdi", "chd", "iso", "bin", "cue", "7z"},
 		Capabilities: clientCapabilities{
 			ClientHome:            true,
 			UnifiedManifest:       true,
@@ -606,7 +606,12 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 			writeJSONOrError(w, nil, err)
 			return
 		}
-		writeJSON(w, clientGameManifest(game))
+		files, err := s.service.GameFiles(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		writeJSON(w, clientGameManifest(game, files))
 		return
 	}
 	if tail == "details" && r.Method == http.MethodGet {
@@ -684,6 +689,24 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		}
 		defer stream.Body.Close()
 		w.Header().Set("Content-Type", stream.ContentType)
+		_, _ = io.Copy(w, stream.Body)
+		return
+	}
+	if strings.HasPrefix(tail, "files/") && r.Method == http.MethodGet {
+		position, err := strconv.Atoi(strings.TrimPrefix(tail, "files/"))
+		if err != nil || position < 0 {
+			writeError(w, http.StatusBadRequest, errors.New("invalid game file position"))
+			return
+		}
+		stream, file, err := s.service.OpenGameFilePart(id, position)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		defer stream.Body.Close()
+		w.Header().Set("Content-Type", stream.ContentType)
+		w.Header().Set("Content-Length", strconv.FormatInt(file.Size, 10))
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(filepathBase(file.Name), `"`, "")))
 		_, _ = io.Copy(w, stream.Body)
 		return
 	}
@@ -2124,8 +2147,17 @@ type clientGame struct {
 }
 
 type clientGameManifestResponse struct {
-	Game    clientGame `json:"game"`
-	FileURL string     `json:"fileUrl"`
+	Game      clientGame       `json:"game"`
+	FileURL   string           `json:"fileUrl"`
+	EntryFile string           `json:"entryFile,omitempty"`
+	Files     []clientGameFile `json:"files,omitempty"`
+}
+
+type clientGameFile struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+	Role string `json:"role"`
+	URL  string `json:"url"`
 }
 
 type clientGameMetadataResponse struct {
@@ -2369,14 +2401,31 @@ func clientGameItem(game domain.GameAsset) clientGame {
 }
 
 func gameCoverURL(gameID int64, platform string) string {
-	return fmt.Sprintf("/api/games/%d/cover", gameID)
+	return fmt.Sprintf("/api/games/%d/cover?v=game-cover-refresh-20260714", gameID)
 }
 
-func clientGameManifest(game domain.GameAsset) clientGameManifestResponse {
-	return clientGameManifestResponse{
+func clientGameManifest(game domain.GameAsset, files []domain.GameFile) clientGameManifestResponse {
+	manifest := clientGameManifestResponse{
 		Game:    clientGameItem(game),
 		FileURL: fmt.Sprintf("/api/client/games/%d/file", game.ID),
+		Files:   make([]clientGameFile, 0, len(files)),
 	}
+	for _, file := range files {
+		manifest.Files = append(manifest.Files, clientGameFile{
+			Name: file.Name, Size: file.Size, Role: file.Role,
+			URL: fmt.Sprintf("/api/client/games/%d/files/%d", game.ID, file.Position),
+		})
+		if file.Role == "entry" {
+			manifest.EntryFile = file.Name
+		}
+	}
+	return manifest
+}
+
+func filepathBase(path string) string {
+	path = strings.ReplaceAll(path, "\\", "/")
+	parts := strings.Split(path, "/")
+	return parts[len(parts)-1]
 }
 
 func clientGameDetails(details domain.GameDetails) clientGameDetailsResponse {

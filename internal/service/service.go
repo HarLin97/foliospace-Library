@@ -1223,7 +1223,51 @@ func localGameCoverCandidates(gamePath string) []string {
 			}
 		}
 	}
+	for _, path := range centralPCFXCoverCandidates(gamePath) {
+		if !seen[path] {
+			seen[path] = true
+			candidates = append(candidates, path)
+		}
+	}
 	return candidates
+}
+
+var pcfxCoverDiscSuffixPattern = regexp.MustCompile(`(?i)\s+CD\s*[0-9]+$`)
+
+func centralPCFXCoverCandidates(gamePath string) []string {
+	dir := filepath.Dir(gamePath)
+	gameDirName := pcfxCoverDiscSuffixPattern.ReplaceAllString(filepath.Base(dir), "")
+	gameDirName = regexp.MustCompile(`\([^)]*\)\s*$`).ReplaceAllString(gameDirName, "")
+	gameDirName = strings.TrimSpace(gameDirName)
+	if gameDirName == "" {
+		return nil
+	}
+	for current := dir; filepath.Dir(current) != current; current = filepath.Dir(current) {
+		coverDir := filepath.Join(current, "PC-FX Covers")
+		entries, err := os.ReadDir(coverDir)
+		if err != nil {
+			continue
+		}
+		exact := strings.ToLower(gameDirName + " [正面]")
+		fallback := ""
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			base := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+			lower := strings.ToLower(base)
+			if lower == exact {
+				return []string{filepath.Join(coverDir, entry.Name())}
+			}
+			if fallback == "" && strings.HasPrefix(lower, strings.ToLower(gameDirName)+" ") && strings.Contains(lower, "正面") && !strings.Contains(lower, "备选") {
+				fallback = filepath.Join(coverDir, entry.Name())
+			}
+		}
+		if fallback != "" {
+			return []string{fallback}
+		}
+	}
+	return nil
 }
 
 func gameCoverMediaBaseCandidates(base string) []string {
@@ -1270,11 +1314,111 @@ func (s *Service) OpenGameFile(id int64) (PageStream, error) {
 	if game.FilePath == "" {
 		return PageStream{}, fmt.Errorf("game has no indexed file")
 	}
+	if game.Format == "m3u" {
+		files, err := s.store.GameFiles(id)
+		if err != nil {
+			return PageStream{}, err
+		}
+		data := virtualM3UData(files)
+		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: "application/octet-stream"}, nil
+	}
 	body, err := os.Open(game.FilePath)
 	if err != nil {
 		return PageStream{}, err
 	}
 	return PageStream{Body: body, ContentType: "application/octet-stream"}, nil
+}
+
+func (s *Service) GameFiles(id int64) ([]domain.GameFile, error) {
+	game, err := s.store.GameByID(id)
+	if err != nil {
+		return nil, err
+	}
+	files, err := s.store.GameFiles(id)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) > 0 {
+		if game.Format == "cue" && files[0].Role == "entry" {
+			if data, readErr := os.ReadFile(files[0].FilePath); readErr == nil {
+				if normalized, normalizeErr := scanner.NormalizeCUEFileReferences(data); normalizeErr == nil {
+					files[0].Size = int64(len(normalized))
+				}
+			}
+		}
+		if game.Format == "m3u" && files[0].Role == "entry" {
+			files[0].Size = int64(len(virtualM3UData(files)))
+		}
+		return files, nil
+	}
+	info, err := os.Stat(game.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	return []domain.GameFile{{
+		GameID: id, Name: filepath.Base(game.FilePath), FilePath: game.FilePath,
+		Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0,
+	}}, nil
+}
+
+func (s *Service) OpenGameFilePart(id int64, position int) (PageStream, domain.GameFile, error) {
+	game, err := s.store.GameByID(id)
+	if err != nil {
+		return PageStream{}, domain.GameFile{}, err
+	}
+	file, err := s.store.GameFileByPosition(id, position)
+	if errors.Is(err, sql.ErrNoRows) && position == 0 {
+		info, statErr := os.Stat(game.FilePath)
+		if statErr != nil {
+			return PageStream{}, domain.GameFile{}, statErr
+		}
+		file = domain.GameFile{
+			GameID: id, Name: filepath.Base(game.FilePath), FilePath: game.FilePath,
+			Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0,
+		}
+	} else if err != nil {
+		return PageStream{}, domain.GameFile{}, err
+	}
+	if game.Format == "cue" && file.Role == "entry" {
+		data, err := os.ReadFile(file.FilePath)
+		if err != nil {
+			return PageStream{}, domain.GameFile{}, err
+		}
+		normalized, err := scanner.NormalizeCUEFileReferences(data)
+		if err != nil {
+			return PageStream{}, domain.GameFile{}, err
+		}
+		file.Size = int64(len(normalized))
+		return PageStream{Body: io.NopCloser(bytes.NewReader(normalized)), ContentType: "application/octet-stream"}, file, nil
+	}
+	if game.Format == "m3u" && file.Role == "entry" {
+		files, err := s.store.GameFiles(id)
+		if err != nil {
+			return PageStream{}, domain.GameFile{}, err
+		}
+		data := virtualM3UData(files)
+		file.Size = int64(len(data))
+		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: "application/octet-stream"}, file, nil
+	}
+	body, err := os.Open(file.FilePath)
+	if err != nil {
+		return PageStream{}, domain.GameFile{}, err
+	}
+	return PageStream{Body: body, ContentType: "application/octet-stream"}, file, nil
+}
+
+func virtualM3UData(files []domain.GameFile) []byte {
+	lines := make([]string, 0)
+	for _, file := range files {
+		if file.Role != "dependency" {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(file.Name)) {
+		case ".cue", ".ccd", ".toc", ".chd":
+			lines = append(lines, file.Name)
+		}
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
 }
 
 func (s *Service) SaveGameSaveSyncArchive(gameID int64, profileID int64, data []byte) error {

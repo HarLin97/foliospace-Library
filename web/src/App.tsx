@@ -4129,6 +4129,8 @@ function platformSortRank(platform: string) {
       return 65;
     case "saturn":
       return 70;
+    case "dreamcast":
+      return 75;
     case "neogeo":
       return 80;
     case "model3":
@@ -4137,6 +4139,8 @@ function platformSortRank(platform: string) {
       return 86;
     case "arcade":
       return 90;
+    case "mame":
+      return 91;
     default:
       return 999;
   }
@@ -4150,6 +4154,10 @@ function gamePlatformLabel(game: GameAsset) {
       return "NEO GEO";
     case "model3":
       return "MODEL 3";
+    case "dreamcast":
+      return "Dreamcast";
+    case "mame":
+      return "MAME";
     default:
       return (game.platform || game.format || "game").toUpperCase();
   }

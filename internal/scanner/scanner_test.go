@@ -1194,8 +1194,8 @@ func TestScanLibraryTreatsZipAsGameWhenLibraryIsGameTyped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(games) != 1 || games[0].Title != "mslug" || games[0].Format != "zip" || games[0].Platform != "arcade" {
-		t.Fatalf("games = %#v, want arcade zip ROM set", games)
+	if len(games) != 1 || games[0].Title != "mslug" || games[0].Format != "zip" || games[0].Platform != "mame" {
+		t.Fatalf("games = %#v, want MAME zip ROM set", games)
 	}
 
 	series, err := st.ListSeries()
@@ -1204,6 +1204,336 @@ func TestScanLibraryTreatsZipAsGameWhenLibraryIsGameTyped(t *testing.T) {
 	}
 	if len(series) != 0 {
 		t.Fatalf("series = %#v, want no comic series for game zip", series)
+	}
+}
+
+func TestScanLibraryIndexesDreamcastGDIAsOneLaunchableGame(t *testing.T) {
+	root := t.TempDir()
+	gameDir := filepath.Join(root, "DC", "Example Game")
+	if err := os.MkdirAll(filepath.Join(gameDir, "__MACOSX"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gdi := "3\n1 0 4 2352 track01.bin 0\n2 45000 0 2352 track03.bin 0\n3 45150 4 2352 track05.bin 0\n"
+	for name, data := range map[string]string{
+		"Example Game.gdi":       gdi,
+		"track01.bin":            "track-one",
+		"track03.bin":            "track-three",
+		"track05.bin":            "track-five",
+		"._track01.bin":          "apple-double",
+		"._Example Game.gdi":     gdi,
+		".DS_Store":              "finder",
+		"__MACOSX/._track03.bin": "apple-double",
+	} {
+		if err := os.WriteFile(filepath.Join(gameDir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trackInfo, err := os.Stat(filepath.Join(gameDir, "track01.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "track01", Platform: "disc", ROMSetName: "DC", Format: "bin",
+		FilePath: filepath.Join(gameDir, "track01.bin"), RelPath: "DC/Example Game/track01.bin",
+		Size: trackInfo.Size(), MTime: trackInfo.ModTime(), EmulatorHint: "disc", Compatibility: "unknown",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want no Dreamcast scan errors", job)
+	}
+	games, err := st.ListRecentGames(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("games = %#v, want one GDI game and no track records", games)
+	}
+	game := games[0]
+	if game.Platform != "dreamcast" || game.ROMSetName != "DC" || game.EmulatorHint != "dreamcast" || game.Format != "gdi" {
+		t.Fatalf("game = %#v, want canonical Dreamcast metadata", game)
+	}
+	files, err := st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 4 || files[0].Role != "entry" || files[0].Name != "Example Game.gdi" || files[3].Name != "track05.bin" {
+		t.Fatalf("game files = %#v, want entry plus three ordered tracks", files)
+	}
+
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.IndexedFiles != 0 || secondJob.SkippedFiles != 1 || secondJob.ErrorCount != 0 {
+		t.Fatalf("second job = %#v, want one unchanged launchable game skipped", secondJob)
+	}
+}
+
+func TestScanLibraryIndexesSaturnCUEAsOneLaunchableGame(t *testing.T) {
+	t.Setenv("FOLIOSPACE_SCAN_WORKERS", "2")
+	root := t.TempDir()
+	gameDir := filepath.Join(root, "Guardian Heroes")
+	if err := os.MkdirAll(gameDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cue := `FILE "C:\SATURN\Guardian Heroes (Track 01).BIN" BINARY
+  TRACK 01 MODE1/2352
+FILE "Guardian Heroes (Track 02).WAV" WAVE
+  TRACK 02 AUDIO
+`
+	for name, data := range map[string]string{
+		"Guardian Heroes.cue":            cue,
+		"Guardian Heroes (Track 01).bin": "data-track",
+		"Guardian Heroes (Track 02).wav": "audio-track",
+		"._Guardian Heroes.cue":          "apple-double",
+		".DS_Store":                      "finder",
+	} {
+		if err := os.WriteFile(filepath.Join(gameDir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Saturn", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trackPath := filepath.Join(gameDir, "Guardian Heroes (Track 01).bin")
+	trackInfo, err := os.Stat(trackPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isDiscTrackDependency(trackPath) {
+		t.Fatal("CUE data track was not recognized as a dependency")
+	}
+	if _, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Guardian Heroes Track 01", Platform: "disc", ROMSetName: "SS", Format: "bin",
+		FilePath: trackPath, RelPath: "Guardian Heroes/Guardian Heroes (Track 01).bin",
+		Size: trackInfo.Size(), MTime: trackInfo.ModTime(), EmulatorHint: "disc", Compatibility: "unknown",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 1 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want one Saturn disc indexed without track records", job)
+	}
+	games, err := st.ListRecentGames(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("games = %#v, want one CUE game and no independent tracks", games)
+	}
+	game := games[0]
+	if game.Platform != "saturn" || game.ROMSetName != "SS" || game.EmulatorHint != "saturn" || game.Format != "cue" {
+		t.Fatalf("game = %#v, want canonical Saturn metadata", game)
+	}
+	files, err := st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 3 || files[0].Name != "Guardian Heroes.cue" || files[0].Role != "entry" || files[1].Name != "Guardian Heroes (Track 01).BIN" || files[1].Role != "dependency" || files[2].Name != "Guardian Heroes (Track 02).WAV" {
+		t.Fatalf("game files = %#v, want cue plus two ordered dependencies", files)
+	}
+	normalized, err := NormalizeCUEFileReferences([]byte(cue))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(normalized), `C:\SATURN`) || !strings.Contains(string(normalized), `FILE "Guardian Heroes (Track 01).BIN" BINARY`) {
+		t.Fatalf("normalized CUE = %q, want safe relative FILE references", normalized)
+	}
+	facets, err := st.ListGameFacets(domain.GameListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facets.Total != 1 || len(facets.Platforms) != 1 || facets.Platforms[0].Platform != "saturn" || facets.Platforms[0].Count != 1 {
+		t.Fatalf("facets = %#v, want one launchable Saturn disc", facets)
+	}
+
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.IndexedFiles != 0 || secondJob.SkippedFiles != 1 || secondJob.ErrorCount != 0 {
+		t.Fatalf("second job = %#v, want one unchanged Saturn disc skipped", secondJob)
+	}
+}
+
+func TestSaturnCUERejectsDependencyPathEscape(t *testing.T) {
+	root := t.TempDir()
+	gameDir := filepath.Join(root, "Saturn")
+	if err := os.MkdirAll(gameDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(gameDir, "unsafe.cue")
+	if err := os.WriteFile(path, []byte(`FILE "../outside.bin" BINARY`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := indexedGameFiles(path, info, ".cue"); err == nil || !strings.Contains(err.Error(), "escapes game directory") {
+		t.Fatalf("indexedGameFiles escape error = %v, want rejected path", err)
+	}
+}
+
+func TestScanLibraryIndexesPCFXCueSetsAndMergesDiscDirectories(t *testing.T) {
+	t.Setenv("FOLIOSPACE_SCAN_WORKERS", "2")
+	root := t.TempDir()
+	collection := filepath.Join(root, "PC-FX官方日版游戏全集（61个）")
+	writeDisc := func(dirName string, cueName string, cueBIN string, diskBIN string) {
+		dir := filepath.Join(collection, dirName)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, cueName), []byte(`FILE "`+cueBIN+`" BINARY
+  TRACK 01 MODE1/2352
+`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, diskBIN), []byte("disc-data-"+dirName), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeDisc("19960913 史莱姆汽泡姊妹(ACT)", "Chip Chan Kick.cue", "chip chan kick.BIN", "Chip Chan Kick.bin")
+	writeDisc("19970314 王子最终传承(RPG) CD1", "Last Imperial Prince - Disc A.cue", "Last Imperial Prince - Disc A.bin", "Last Imperial Prince - Disc A.bin")
+	writeDisc("19970314 王子最终传承(RPG) CD2", "Last Imperial Prince - Disc B.cue", "Last Imperial Prince - Disc B.bin", "Last Imperial Prince - Disc B.bin")
+	writeDisc("游戏镜像", "duplicate.cue", "duplicate.bin", "duplicate.bin")
+	writeDisc("出版物附属盘、非卖品", "sample.cue", "sample.bin", "sample.bin")
+	if err := os.WriteFile(filepath.Join(collection, "pcfx.rom"), []byte("bios"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 2 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want two PC-FX games and no excluded entries", job)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "pc-fx", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Items) != 2 {
+		t.Fatalf("games = %#v, want two launchable PC-FX games", page)
+	}
+	var multi domain.GameAsset
+	for _, game := range page.Items {
+		if game.Platform != "pc-fx" || game.ROMSetName != "PC-FX" || game.EmulatorHint != "pcfx" {
+			t.Fatalf("game = %#v, want canonical PC-FX metadata", game)
+		}
+		if game.Title == "王子最终传承" {
+			multi = game
+		}
+	}
+	if multi.ID == 0 || multi.Format != "m3u" {
+		t.Fatalf("multi-disc game = %#v, want one virtual M3U", multi)
+	}
+	files, err := st.GameFiles(multi.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 5 || files[0].Role != "entry" || filepath.Ext(files[0].Name) != ".m3u" || files[1].Name != "Last Imperial Prince - Disc A.cue" || files[3].Name != "Last Imperial Prince - Disc B.cue" {
+		t.Fatalf("files = %#v, want M3U, two CUEs, and two BINs", files)
+	}
+	if multi.Size != files[0].Size+files[1].Size+files[2].Size+files[3].Size+files[4].Size {
+		t.Fatalf("multi size = %d, want complete package size", multi.Size)
+	}
+	facets, err := st.ListGameFacets(domain.GameListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facets.Platforms) != 1 || facets.Platforms[0].Platform != "pc-fx" || facets.Platforms[0].Count != 2 || facets.Platforms[0].ROMSetName != "PC-FX" || facets.Platforms[0].EmulatorHint != "pcfx" {
+		t.Fatalf("facets = %#v, want one canonical PC-FX facet", facets)
+	}
+
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.IndexedFiles != 0 || secondJob.SkippedFiles != 2 || secondJob.ErrorCount != 0 {
+		t.Fatalf("second job = %#v, want complete PC-FX sets skipped", secondJob)
+	}
+}
+
+func TestScanLibraryReadsBOMPegasusMetadataForPCFX(t *testing.T) {
+	root := t.TempDir()
+	cuePath := filepath.Join(root, "Chip Chan Kick.cue")
+	if err := os.WriteFile(cuePath, []byte(`FILE "chip chan kick.BIN" BINARY`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Chip Chan Kick.bin"), []byte("disc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	metadata := "\ufeffcollection: PC-FX\r\nignore-file: ignored.cue\r\n\r\ngame: 史莱姆汽泡姊妹\r\nfile: Chip Chan Kick.cue\r\ndescription: PC-FX description\r\ndeveloper: NEC\r\n"
+	if err := os.WriteFile(filepath.Join(root, "metadata.pegasus.txt"), []byte(metadata), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("PC-FX", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(st).ScanLibrary(lib); err != nil {
+		t.Fatal(err)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "pc-fx", Limit: 10})
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("page = %#v err=%v", page, err)
+	}
+	if page.Items[0].Title != "史莱姆汽泡姊妹" {
+		t.Fatalf("title = %q, want Pegasus title", page.Items[0].Title)
+	}
+	details, err := st.GameDetails(page.Items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.Metadata.Summary != "PC-FX description" || len(details.Metadata.Developers) != 1 || details.Metadata.Developers[0] != "NEC" {
+		t.Fatalf("metadata = %#v, want Pegasus description and developer", details.Metadata)
 	}
 }
 
@@ -1439,8 +1769,8 @@ func TestScanLibraryTreats7zAsGameWhenLibraryIsGameTyped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(games) != 1 || games[0].Title != "romset" || games[0].Format != "7z" || games[0].Platform != "arcade" {
-		t.Fatalf("games = %#v, want arcade 7z ROM set", games)
+	if len(games) != 1 || games[0].Title != "romset" || games[0].Format != "7z" || games[0].Platform != "mame" {
+		t.Fatalf("games = %#v, want MAME 7z ROM set", games)
 	}
 }
 
@@ -1456,16 +1786,40 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 		{relPath: "FBNeo/arcade/mslug.zip", want: "neogeo"},
 		{relPath: "FBNeo/arcade/shinobi3.zip", want: "md"},
 		{relPath: "FBNeo/arcade/wof.zip", want: "arcade"},
+		{relPath: "FBNeo/arcade/hypreact.zip", want: "mame"},
+		{relPath: "FBNeo/arcade/hypreac2.zip", want: "mame"},
+		{relPath: "Mahjong/hypreact.zip", want: "mame"},
 		{relPath: "Model3ROMs/spikeout.zip", want: "model3"},
 		{relPath: "SEGA 32X/doom32x.zip", want: "32x"},
 		{relPath: "PS/Alundra.pbp", want: "ps1"},
 		{relPath: "PS/xenogears.PBP", want: "ps1"},
 		{relPath: "PS/01-动作游戏/人猿泰山.img", want: "ps1"},
+		{relPath: "Dreamcast/Crazy Taxi.chd", want: "dreamcast"},
+		{relPath: "Crazy Taxi.cdi", want: "dreamcast"},
+		{relPath: "Crazy Taxi.gdi", want: "dreamcast"},
+		{relPath: "Saturn/Guardian Heroes.cue", want: "saturn"},
+		{relPath: "Saturn/Guardian Heroes.iso", want: "saturn"},
+		{relPath: "PS/Ridge Racer.cue", want: "ps1"},
 	}
 	for _, test := range tests {
 		if got := inferGamePlatform(filepath.Ext(test.relPath), test.relPath); got != test.want {
 			t.Fatalf("inferGamePlatform(%q) = %q, want %q", test.relPath, got, test.want)
 		}
+	}
+	dcLibrary := domain.Library{Name: "DC", RootPath: "/games/DC"}
+	if got := inferLibraryGamePlatform(dcLibrary, ".chd", "Crazy Taxi.chd"); got != "dreamcast" {
+		t.Fatalf("inferLibraryGamePlatform(DC root CHD) = %q, want dreamcast", got)
+	}
+	saturnLibrary := domain.Library{Name: "SS", RootPath: "/games/SS"}
+	if got := inferLibraryGamePlatform(saturnLibrary, ".cue", "Guardian Heroes.cue"); got != "saturn" {
+		t.Fatalf("inferLibraryGamePlatform(SS root CUE) = %q, want saturn", got)
+	}
+	if got := inferLibraryGamePlatform(saturnLibrary, ".iso", "Guardian Heroes.iso"); got != "saturn" {
+		t.Fatalf("inferLibraryGamePlatform(SS root ISO) = %q, want saturn", got)
+	}
+	arcadeLibrary := domain.Library{Name: "Arcade", RootPath: "/games/Arcade"}
+	if got := inferLibraryGamePlatform(arcadeLibrary, ".chd", "kinst.chd"); got != "disc" {
+		t.Fatalf("inferLibraryGamePlatform(Arcade root CHD) = %q, want disc", got)
 	}
 }
 
