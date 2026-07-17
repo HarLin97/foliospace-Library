@@ -195,6 +195,26 @@ type GameFile struct {
 	Position int       `json:"position"`
 }
 
+type GameSource struct {
+	ID                 int64     `json:"id"`
+	GameID             int64     `json:"gameId"`
+	LibraryID          int64     `json:"libraryId"`
+	Title              string    `json:"title"`
+	FilePath           string    `json:"filePath"`
+	RelPath            string    `json:"relPath"`
+	EntryName          string    `json:"entryName"`
+	Format             string    `json:"format"`
+	Size               int64     `json:"size"`
+	ContainerSize      int64     `json:"containerSize"`
+	MTime              time.Time `json:"mtime"`
+	CRC32              string    `json:"crc32"`
+	SHA1               string    `json:"sha1"`
+	GroupKey           string    `json:"groupKey"`
+	DiskOrder          int       `json:"diskOrder"`
+	Compatibility      string    `json:"compatibility"`
+	BootabilityChecked bool      `json:"bootabilityChecked"`
+}
+
 type GameMetadata struct {
 	GameID        int64     `json:"gameId"`
 	DisplayTitle  string    `json:"displayTitle"`

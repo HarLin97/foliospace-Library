@@ -3,7 +3,9 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -1550,13 +1552,43 @@ func (s *Store) GameByIDForProfile(id int64, profileID int64) (domain.GameAsset,
 }
 
 func (s *Store) GameByPath(filePath string) (domain.GameAsset, error) {
-	row := s.db.QueryRow(gameSelectSQL()+` WHERE file_path = ?`, filePath)
+	row := s.db.QueryRow(gameSelectSQL()+` WHERE file_path = ? OR id = (SELECT game_id FROM game_sources WHERE file_path = ?) ORDER BY id LIMIT 1`, filePath, filePath)
 	return scanGame(row)
 }
 
 func (s *Store) DeleteGameByPath(filePath string) error {
-	_, err := s.db.Exec(`DELETE FROM games WHERE file_path = ?`, filePath)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var gameID int64
+	err = tx.QueryRow(`SELECT game_id FROM game_sources WHERE file_path = ?`, filePath).Scan(&gameID)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.Exec(`DELETE FROM games WHERE file_path = ?`, filePath)
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM game_sources WHERE file_path = ?`, filePath); err != nil {
+		return err
+	}
+	var remaining int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM game_sources WHERE game_id = ?`, gameID).Scan(&remaining); err != nil {
+		return err
+	}
+	if remaining == 0 {
+		if _, err := tx.Exec(`DELETE FROM games WHERE id = ?`, gameID); err != nil {
+			return err
+		}
+	} else if err := rebuildPC98GameTx(tx, gameID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteGamesByPaths(filePaths []string, exceptGameID int64) error {
@@ -1596,6 +1628,484 @@ func (s *Store) ReplaceGameFiles(gameID int64, files []domain.GameFile) error {
 	return tx.Commit()
 }
 
+func (s *Store) CanSkipPC98Source(path string, containerSize int64, mtime time.Time) bool {
+	var platform string
+	var emulatorHint string
+	var title string
+	var format string
+	var storedSize int64
+	var storedMTime string
+	var sha1 string
+	var bootabilityChecked bool
+	var packageFiles int
+	err := s.db.QueryRow(`SELECT g.platform, g.emulator_hint, g.title, gs.format, gs.container_size, gs.mtime, gs.sha1, gs.bootability_checked,
+		(SELECT COUNT(*) FROM game_files gf WHERE gf.game_id = g.id)
+		FROM game_sources gs JOIN games g ON g.id = gs.game_id WHERE gs.file_path = ?`, path).
+		Scan(&platform, &emulatorHint, &title, &format, &storedSize, &storedMTime, &sha1, &bootabilityChecked, &packageFiles)
+	if err != nil || platform != "pc98" || emulatorHint != "np2kai" || storedSize != containerSize || !parseTime(storedMTime).Equal(mtime) || strings.TrimSpace(sha1) == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(format), "hdi") && !bootabilityChecked {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(title), "Dragon Knight 4 Special Disk") && packageFiles < 12 {
+		return false
+	}
+	return true
+}
+
+func (s *Store) PC98SourceSupportFiles(path string) ([]domain.GameFile, error) {
+	rows, err := s.db.Query(`SELECT gf.id, gf.game_id, gf.name, gf.file_path, gf.size, gf.mtime, gf.role, gf.position
+		FROM game_sources gs JOIN game_files gf ON gf.game_id = gs.game_id
+		WHERE gs.file_path = ? AND gf.role = 'font' ORDER BY gf.position, gf.id`, path)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	files := make([]domain.GameFile, 0)
+	for rows.Next() {
+		var file domain.GameFile
+		var mtime string
+		if err := rows.Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.Role, &file.Position); err != nil {
+			return nil, err
+		}
+		file.MTime = parseTime(mtime)
+		files = append(files, file)
+	}
+	return files, rows.Err()
+}
+
+func (s *Store) ReplacePC98SupportFiles(gameID int64, files []domain.GameFile) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM game_files WHERE game_id = ? AND role = 'font'`, gameID); err != nil {
+		return err
+	}
+	var position int
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(position) + 1, 0) FROM game_files WHERE game_id = ?`, gameID).Scan(&position); err != nil {
+		return err
+	}
+	for _, file := range files {
+		if _, err := tx.Exec(`INSERT INTO game_files(game_id, name, file_path, size, mtime, role, position) VALUES(?, ?, ?, ?, ?, 'font', ?)`,
+			gameID, file.Name, file.FilePath, file.Size, file.MTime.Format(time.RFC3339Nano), position); err != nil {
+			return err
+		}
+		position++
+	}
+	if _, err := tx.Exec(`UPDATE games SET size = COALESCE((SELECT SUM(size) FROM game_files WHERE game_id = ?), 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`, gameID, gameID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) UpsertPC98GameSource(game domain.GameAsset, source domain.GameSource) (domain.GameAsset, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return domain.GameAsset{}, err
+	}
+	defer tx.Rollback()
+	sourceCompatibility := source.Compatibility
+	if strings.TrimSpace(sourceCompatibility) == "" {
+		sourceCompatibility = game.Compatibility
+	}
+
+	var existingID int64
+	var oldSHA1 string
+	var oldGroupKey string
+	err = tx.QueryRow(`SELECT game_id, sha1, group_key FROM game_sources WHERE file_path = ?`, source.FilePath).Scan(&existingID, &oldSHA1, &oldGroupKey)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return domain.GameAsset{}, err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		err = tx.QueryRow(`SELECT id FROM games WHERE file_path = ?`, source.FilePath).Scan(&existingID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return domain.GameAsset{}, err
+		}
+	}
+	if existingID != 0 && oldSHA1 != "" && (oldSHA1 != source.SHA1 || oldGroupKey != source.GroupKey) {
+		if _, err := tx.Exec(`DELETE FROM game_sources WHERE file_path = ?`, source.FilePath); err != nil {
+			return domain.GameAsset{}, err
+		}
+		var remaining int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM game_sources WHERE game_id = ?`, existingID).Scan(&remaining); err != nil {
+			return domain.GameAsset{}, err
+		}
+		if remaining == 0 {
+			if _, err := tx.Exec(`DELETE FROM games WHERE id = ?`, existingID); err != nil {
+				return domain.GameAsset{}, err
+			}
+		} else if err := rebuildPC98GameTx(tx, existingID); err != nil {
+			return domain.GameAsset{}, err
+		}
+		existingID = 0
+	}
+
+	canonicalID, err := pc98CanonicalGameIDTx(tx, game.LibraryID, source.SHA1, source.GroupKey)
+	if err != nil {
+		return domain.GameAsset{}, err
+	}
+	matchedID := canonicalID
+	if existingID != 0 && (canonicalID == 0 || existingID < canonicalID) {
+		canonicalID = existingID
+	}
+	if canonicalID == 0 {
+		result, err := tx.Exec(`INSERT INTO games(library_id, title, platform, rom_set_name, region, format, file_path, rel_path, size, mtime, crc32, sha1, emulator_hint, compatibility)
+			VALUES(?, ?, 'pc98', 'PC-98', ?, ?, ?, ?, ?, ?, ?, ?, 'np2kai', ?)`,
+			game.LibraryID, source.Title, game.Region, source.Format, source.FilePath, source.RelPath, source.Size,
+			source.MTime.Format(time.RFC3339Nano), source.CRC32, source.SHA1, normalizedPC98Compatibility(game.Compatibility))
+		if err != nil {
+			return domain.GameAsset{}, err
+		}
+		canonicalID, err = result.LastInsertId()
+		if err != nil {
+			return domain.GameAsset{}, err
+		}
+	}
+
+	legacyIDs, err := pc98LegacyDuplicateIDsTx(tx, game.LibraryID, source.SHA1, canonicalID)
+	if err != nil {
+		return domain.GameAsset{}, err
+	}
+	if matchedID != 0 && matchedID != canonicalID {
+		legacyIDs = append(legacyIDs, matchedID)
+	}
+	if existingID != 0 && existingID != canonicalID {
+		legacyIDs = append(legacyIDs, existingID)
+	}
+	for _, duplicateID := range uniqueInt64s(legacyIDs) {
+		if duplicateID == canonicalID {
+			continue
+		}
+		if err := mergeGameTx(tx, canonicalID, duplicateID); err != nil {
+			return domain.GameAsset{}, err
+		}
+	}
+
+	_, err = tx.Exec(`INSERT INTO game_sources(game_id, library_id, title, file_path, rel_path, entry_name, format, size, container_size, mtime, crc32, sha1, group_key, disk_order, compatibility, bootability_checked)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(file_path) DO UPDATE SET game_id = excluded.game_id, library_id = excluded.library_id,
+			title = excluded.title, rel_path = excluded.rel_path, entry_name = excluded.entry_name,
+			format = excluded.format, size = excluded.size, container_size = excluded.container_size,
+			mtime = excluded.mtime, crc32 = excluded.crc32, sha1 = excluded.sha1,
+			group_key = excluded.group_key, disk_order = excluded.disk_order, compatibility = excluded.compatibility,
+			bootability_checked = excluded.bootability_checked, updated_at = CURRENT_TIMESTAMP`,
+		canonicalID, source.LibraryID, source.Title, source.FilePath, source.RelPath, source.EntryName, source.Format,
+		source.Size, source.ContainerSize, source.MTime.Format(time.RFC3339Nano), source.CRC32, source.SHA1, source.GroupKey, source.DiskOrder,
+		normalizedPC98Compatibility(sourceCompatibility), source.BootabilityChecked)
+	if err != nil {
+		return domain.GameAsset{}, err
+	}
+	if err := rebuildPC98GameTx(tx, canonicalID); err != nil {
+		return domain.GameAsset{}, err
+	}
+	if err := rebuildPC98LinkedSpecialDisksTx(tx, canonicalID); err != nil {
+		return domain.GameAsset{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.GameAsset{}, err
+	}
+	return s.GameByID(canonicalID)
+}
+
+func normalizedPC98Compatibility(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "playable", "issues", "broken":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "untested"
+	}
+}
+
+func pc98CanonicalGameIDTx(tx *sql.Tx, libraryID int64, sha1 string, groupKey string) (int64, error) {
+	var id int64
+	if strings.TrimSpace(sha1) != "" {
+		err := tx.QueryRow(`SELECT game_id FROM game_sources WHERE library_id = ? AND sha1 = ? ORDER BY game_id LIMIT 1`, libraryID, sha1).Scan(&id)
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
+	if strings.TrimSpace(groupKey) != "" {
+		err := tx.QueryRow(`SELECT game_id FROM game_sources WHERE library_id = ? AND group_key = ? ORDER BY game_id LIMIT 1`, libraryID, groupKey).Scan(&id)
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
+	if strings.TrimSpace(sha1) != "" {
+		err := tx.QueryRow(`SELECT id FROM games WHERE library_id = ? AND platform = 'pc98' AND sha1 = ? ORDER BY id LIMIT 1`, libraryID, sha1).Scan(&id)
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
+	return 0, nil
+}
+
+func pc98LegacyDuplicateIDsTx(tx *sql.Tx, libraryID int64, sha1 string, exceptID int64) ([]int64, error) {
+	if strings.TrimSpace(sha1) == "" {
+		return nil, nil
+	}
+	rows, err := tx.Query(`SELECT id FROM games WHERE library_id = ? AND platform = 'pc98' AND sha1 = ? AND id <> ? ORDER BY id`, libraryID, sha1, exceptID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func mergeGameTx(tx *sql.Tx, canonicalID int64, duplicateID int64) error {
+	if canonicalID == duplicateID {
+		return nil
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO game_sources(game_id, library_id, title, file_path, rel_path, entry_name, format, size, container_size, mtime, crc32, sha1, group_key, disk_order, compatibility, bootability_checked)
+		SELECT ?, library_id, title, file_path, rel_path, rel_path, format, size, size, mtime, crc32, sha1, '', 0,
+			CASE WHEN compatibility IN ('playable', 'issues', 'broken') THEN compatibility ELSE 'untested' END, 0
+		FROM games WHERE id = ?`, canonicalID, duplicateID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE game_sources SET game_id = ? WHERE game_id = ?`, canonicalID, duplicateID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO game_private_states(profile_id, game_id, favorite, liked)
+		SELECT profile_id, ?, favorite, liked FROM game_private_states WHERE game_id = ?
+		ON CONFLICT(profile_id, game_id) DO UPDATE SET favorite = MAX(favorite, excluded.favorite), liked = MAX(liked, excluded.liked), updated_at = CURRENT_TIMESTAMP`, canonicalID, duplicateID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO game_metadata(game_id, display_title, summary, release_date, genres, developers, publishers, players, rating, external_links)
+		SELECT ?, display_title, summary, release_date, genres, developers, publishers, players, rating, external_links FROM game_metadata WHERE game_id = ?`, canonicalID, duplicateID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO game_metadata_sources(game_id, source, source_id, matched_by, confidence, raw_json)
+		SELECT ?, source, source_id, matched_by, confidence, raw_json FROM game_metadata_sources WHERE game_id = ?`, canonicalID, duplicateID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO game_artwork(game_id, source, kind, url, cache_path, width, height, selected, confidence)
+		SELECT ?, source, kind, url, cache_path, width, height, selected, confidence FROM game_artwork WHERE game_id = ?`, canonicalID, duplicateID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM games WHERE id = ?`, duplicateID)
+	return err
+}
+
+func rebuildPC98GameTx(tx *sql.Tx, gameID int64) error {
+	rows, err := tx.Query(`SELECT id, game_id, library_id, title, file_path, rel_path, entry_name, format, size, container_size, mtime, crc32, sha1, group_key, disk_order, compatibility, bootability_checked
+		FROM game_sources WHERE game_id = ? ORDER BY disk_order, title COLLATE NOCASE, id`, gameID)
+	if err != nil {
+		return err
+	}
+	var sources []domain.GameSource
+	for rows.Next() {
+		var source domain.GameSource
+		var mtime string
+		if err := rows.Scan(&source.ID, &source.GameID, &source.LibraryID, &source.Title, &source.FilePath, &source.RelPath,
+			&source.EntryName, &source.Format, &source.Size, &source.ContainerSize, &mtime, &source.CRC32, &source.SHA1, &source.GroupKey,
+			&source.DiskOrder, &source.Compatibility, &source.BootabilityChecked); err != nil {
+			rows.Close()
+			return err
+		}
+		source.MTime = parseTime(mtime)
+		sources = append(sources, source)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(sources) == 0 {
+		return sql.ErrNoRows
+	}
+	var libraryID int64
+	var currentTitle string
+	if err := tx.QueryRow(`SELECT library_id, title FROM games WHERE id = ?`, gameID).Scan(&libraryID, &currentTitle); err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(currentTitle), "Dragon Knight 4 Special Disk") || strings.EqualFold(strings.TrimSpace(sources[0].Title), "Dragon Knight 4 Special Disk") {
+		linked, err := pc98DragonKnightMainSourcesTx(tx, libraryID)
+		if err != nil {
+			return err
+		}
+		sources = append(sources, linked...)
+	}
+	primary := sources[0]
+	title := primary.Title
+	compatibility := normalizedPC98Compatibility(primary.Compatibility)
+	for _, source := range sources[1:] {
+		compatibility = mergePC98Compatibility(compatibility, source.Compatibility)
+	}
+	for _, source := range sources[1:] {
+		if pc98TitleScore(source.Title) > pc98TitleScore(title) {
+			title = source.Title
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM game_files WHERE game_id = ?`, gameID); err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	usedNames := make(map[string]bool)
+	totalSize := int64(0)
+	position := 0
+	for _, source := range sources {
+		key := source.SHA1
+		if key == "" {
+			key = source.FilePath + "\x00" + source.EntryName
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		role := "dependency"
+		if position == 0 {
+			role = "entry"
+			primary = source
+		}
+		name := strings.TrimSpace(source.EntryName)
+		if name == "" {
+			name = strings.TrimSpace(source.Title) + source.Format
+		}
+		nameKey := strings.ToLower(name)
+		if usedNames[nameKey] {
+			ext := filepath.Ext(name)
+			base := strings.TrimSuffix(strings.TrimSpace(source.Title), ext)
+			if base == "" {
+				base = fmt.Sprintf("Disk %d", position+1)
+			}
+			name = fmt.Sprintf("%s Disk %d%s", base, position+1, ext)
+			nameKey = strings.ToLower(name)
+			for usedNames[nameKey] {
+				name = fmt.Sprintf("%s Disk %d-%d%s", base, position+1, source.ID, ext)
+				nameKey = strings.ToLower(name)
+			}
+		}
+		usedNames[nameKey] = true
+		if _, err := tx.Exec(`INSERT INTO game_files(game_id, name, file_path, size, mtime, role, position) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+			gameID, name, source.FilePath, source.Size, source.MTime.Format(time.RFC3339Nano), role, position); err != nil {
+			return err
+		}
+		totalSize += source.Size
+		position++
+	}
+	_, err = tx.Exec(`UPDATE games SET title = ?, platform = 'pc98', rom_set_name = 'PC-98', format = ?, file_path = ?, rel_path = ?,
+		size = ?, mtime = ?, crc32 = ?, sha1 = ?, emulator_hint = 'np2kai', compatibility = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		title, primary.Format, primary.FilePath, primary.RelPath, totalSize, primary.MTime.Format(time.RFC3339Nano), primary.CRC32, primary.SHA1,
+		compatibility, gameID)
+	return err
+}
+
+func mergePC98Compatibility(current string, next string) string {
+	priority := map[string]int{"playable": 0, "untested": 1, "issues": 2, "broken": 3}
+	current = normalizedPC98Compatibility(current)
+	next = normalizedPC98Compatibility(next)
+	if priority[next] > priority[current] {
+		return next
+	}
+	return current
+}
+
+func pc98DragonKnightMainSourcesTx(tx *sql.Tx, libraryID int64) ([]domain.GameSource, error) {
+	rows, err := tx.Query(`SELECT gs.id, gs.game_id, gs.library_id, gs.title, gs.file_path, gs.rel_path, gs.entry_name,
+		gs.format, gs.size, gs.container_size, gs.mtime, gs.crc32, gs.sha1, gs.group_key, gs.disk_order, gs.compatibility, gs.bootability_checked
+		FROM game_sources gs JOIN games g ON g.id = gs.game_id
+		WHERE g.library_id = ? AND lower(trim(g.title)) = lower('Dragon Knight 4') AND gs.disk_order >= 3
+		ORDER BY gs.disk_order, gs.id`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sources []domain.GameSource
+	for rows.Next() {
+		var source domain.GameSource
+		var mtime string
+		if err := rows.Scan(&source.ID, &source.GameID, &source.LibraryID, &source.Title, &source.FilePath, &source.RelPath,
+			&source.EntryName, &source.Format, &source.Size, &source.ContainerSize, &mtime, &source.CRC32, &source.SHA1,
+			&source.GroupKey, &source.DiskOrder, &source.Compatibility, &source.BootabilityChecked); err != nil {
+			return nil, err
+		}
+		source.MTime = parseTime(mtime)
+		sources = append(sources, source)
+	}
+	return sources, rows.Err()
+}
+
+func rebuildPC98LinkedSpecialDisksTx(tx *sql.Tx, gameID int64) error {
+	var libraryID int64
+	var title string
+	if err := tx.QueryRow(`SELECT library_id, title FROM games WHERE id = ?`, gameID).Scan(&libraryID, &title); err != nil {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(title), "Dragon Knight 4") {
+		return nil
+	}
+	rows, err := tx.Query(`SELECT id FROM games WHERE library_id = ? AND lower(trim(title)) = lower('Dragon Knight 4 Special Disk')`, libraryID)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := rebuildPC98GameTx(tx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func pc98TitleScore(title string) int {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return -10000
+	}
+	score := len([]rune(title))
+	if strings.ContainsRune(title, '\uFFFD') {
+		score -= 10000
+	}
+	if _, err := strconv.Atoi(title); err == nil {
+		score -= 1000
+	}
+	if title == strings.ToUpper(title) && len(title) <= 10 {
+		score -= 20
+	}
+	return score
+}
+
+func uniqueInt64s(values []int64) []int64 {
+	seen := make(map[int64]bool, len(values))
+	out := make([]int64, 0, len(values))
+	for _, value := range values {
+		if value == 0 || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 func (s *Store) GameFiles(gameID int64) ([]domain.GameFile, error) {
 	rows, err := s.db.Query(`SELECT id, game_id, name, file_path, size, mtime, role, position
 		FROM game_files WHERE game_id = ? ORDER BY position, id`, gameID)
@@ -1614,6 +2124,28 @@ func (s *Store) GameFiles(gameID int64) ([]domain.GameFile, error) {
 		files = append(files, file)
 	}
 	return files, rows.Err()
+}
+
+func (s *Store) GameSources(gameID int64) ([]domain.GameSource, error) {
+	rows, err := s.db.Query(`SELECT id, game_id, library_id, title, file_path, rel_path, entry_name, format, size, container_size, mtime, crc32, sha1, group_key, disk_order, compatibility, bootability_checked
+		FROM game_sources WHERE game_id = ? ORDER BY disk_order, id`, gameID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sources []domain.GameSource
+	for rows.Next() {
+		var source domain.GameSource
+		var mtime string
+		if err := rows.Scan(&source.ID, &source.GameID, &source.LibraryID, &source.Title, &source.FilePath, &source.RelPath,
+			&source.EntryName, &source.Format, &source.Size, &source.ContainerSize, &mtime, &source.CRC32, &source.SHA1,
+			&source.GroupKey, &source.DiskOrder, &source.Compatibility, &source.BootabilityChecked); err != nil {
+			return nil, err
+		}
+		source.MTime = parseTime(mtime)
+		sources = append(sources, source)
+	}
+	return sources, rows.Err()
 }
 
 func (s *Store) GameFileByPosition(gameID int64, position int) (domain.GameFile, error) {

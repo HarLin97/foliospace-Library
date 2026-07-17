@@ -1216,6 +1216,9 @@ func TestAPIClientPC98ZIPCatalogManifestAndDownload(t *testing.T) {
 			t.Fatalf("PC-98 manifest = %q, missing %s", manifest, want)
 		}
 	}
+	if strings.Contains(manifest, `"diskIndex"`) || strings.Contains(manifest, `"driveHint"`) || strings.Contains(manifest, `"label":"Disk`) {
+		t.Fatalf("PC-98 hard-disk manifest must not expose floppy metadata: %q", manifest)
+	}
 
 	for _, endpoint := range []string{"/file", "/files/0"} {
 		req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/client/games/"+itoa(game.ID)+endpoint, nil)
@@ -1238,6 +1241,75 @@ func TestAPIClientPC98ZIPCatalogManifestAndDownload(t *testing.T) {
 		if resp.ContentLength != int64(len(media)) || resp.Header.Get("Content-Disposition") != `attachment; filename="Love Escalator.hdi"` {
 			t.Fatalf("PC-98 download %s headers length=%d disposition=%q", endpoint, resp.ContentLength, resp.Header.Get("Content-Disposition"))
 		}
+	}
+}
+
+func TestAPIClientPC98ManifestPublishesOrderedDisksAndFont(t *testing.T) {
+	root := t.TempDir()
+	filesOnDisk := []struct {
+		name string
+		role string
+		body []byte
+	}{
+		{name: "Disk A.fdi", role: "entry", body: []byte("disk-a")},
+		{name: "Disk B.fdi", role: "dependency", body: []byte("disk-b")},
+		{name: "FONT.bmp", role: "font", body: []byte("font")},
+	}
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("PC-98", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Example Multi-Disk Game", Platform: "pc98", ROMSetName: "PC-98", Format: "fdi",
+		FilePath: filepath.Join(root, filesOnDisk[0].name), RelPath: filesOnDisk[0].name, Size: 18, MTime: time.Now(),
+		EmulatorHint: "np2kai", Compatibility: "untested",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gameFiles := make([]domain.GameFile, 0, len(filesOnDisk))
+	for position, fixture := range filesOnDisk {
+		path := filepath.Join(root, fixture.name)
+		if err := os.WriteFile(path, fixture.body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		gameFiles = append(gameFiles, domain.GameFile{
+			Name: fixture.name, FilePath: path, Size: int64(len(fixture.body)), MTime: time.Now(), Role: fixture.role, Position: position,
+		})
+	}
+	if err := st.ReplaceGameFiles(game.ID, gameFiles); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+	manifest := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/manifest", "secret")
+	for _, want := range []string{
+		`"entryFile":"Disk A.fdi"`,
+		`"name":"Disk A.fdi","size":6,"role":"entry","label":"Disk 1","diskIndex":0,"driveHint":"FDD1"`,
+		`"name":"Disk B.fdi","size":6,"role":"disk","label":"Disk 2","diskIndex":1`,
+		`"name":"FONT.bmp","size":4,"role":"font"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("manifest = %q, missing %s", manifest, want)
+		}
+	}
+	fontStart := strings.Index(manifest, `"name":"FONT.bmp"`)
+	if fontStart < 0 {
+		t.Fatal("font missing from manifest")
+	}
+	fontFragment := manifest[fontStart:]
+	if end := strings.Index(fontFragment, "}"); end >= 0 {
+		fontFragment = fontFragment[:end]
+	}
+	if strings.Contains(fontFragment, "diskIndex") || strings.Contains(fontFragment, "driveHint") {
+		t.Fatalf("font manifest entry must not expose disk metadata: %q", fontFragment)
 	}
 }
 

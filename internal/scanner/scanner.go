@@ -29,6 +29,7 @@ import (
 	"foliospace-reader/internal/archive"
 	"foliospace-reader/internal/domain"
 	"foliospace-reader/internal/store"
+	"golang.org/x/text/encoding/japanese"
 )
 
 type Scanner struct {
@@ -958,13 +959,16 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 		files, err := s.store.GameFiles(game.ID)
 		return err == nil && len(files) == 1 && files[0].Role == "entry" && files[0].Size == game.Size
 	}
-	if platform == "pc98" && ext == ".zip" {
-		game, err := s.store.GameByPath(path)
-		if err != nil || !game.MTime.Equal(info.ModTime()) || game.Platform != "pc98" || game.EmulatorHint != "np2kai" || game.CRC32 == "" || game.SHA1 == "" || !isPC98MediaExt("."+game.Format) {
+	if platform == "pc98" {
+		fonts, err := pc98PackageFontFiles(path)
+		if err != nil {
 			return false
 		}
-		files, err := s.store.GameFiles(game.ID)
-		return err == nil && len(files) == 1 && files[0].Role == "entry" && files[0].Size == game.Size
+		storedFonts, err := s.store.PC98SourceSupportFiles(path)
+		if err != nil {
+			return false
+		}
+		return s.store.CanSkipPC98Source(path, info.Size(), info.ModTime()) && samePC98SupportFiles(path, fonts, storedFonts)
 	}
 	if !isMultiFileGameDescriptor(ext) {
 		return s.store.CanSkipGame(path, info.Size(), info.ModTime(), platform)
@@ -1238,6 +1242,8 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	format := strings.TrimPrefix(ext, ".")
 	gameFiles := []domain.GameFile{{Name: filepath.Base(path), FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0}}
 	totalSize := info.Size()
+	compatibility := "unknown"
+	bootabilityChecked := false
 	if platform == "n64" {
 		rom, inspectErr := inspectN64ROM(path, info, ext)
 		if inspectErr != nil {
@@ -1250,6 +1256,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		format = rom.format
 		totalSize = rom.size
 		checksums = rom.checksums
+		compatibility = "untested"
 		gameFiles = []domain.GameFile{{Name: rom.name, FilePath: path, Size: rom.size, MTime: info.ModTime(), Role: "entry", Position: 0}}
 		if ext == ".zip" {
 			relPath = filepath.Join(filepath.Dir(relPath), rom.name)
@@ -1266,6 +1273,8 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		format = media.format
 		totalSize = media.size
 		checksums = media.checksums
+		compatibility = media.compatibility
+		bootabilityChecked = media.bootabilityChecked
 		gameFiles = []domain.GameFile{{Name: media.name, FilePath: path, Size: media.size, MTime: info.ModTime(), Role: "entry", Position: 0}}
 		if ext == ".zip" {
 			relPath = filepath.Join(filepath.Dir(relPath), media.name)
@@ -1306,32 +1315,51 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 			format = "m3u"
 		}
 	}
-	game, err := s.store.UpsertGame(domain.GameAsset{
-		LibraryID:    library.ID,
-		Title:        title,
-		Platform:     platform,
-		ROMSetName:   romSetName,
-		Region:       inferRegion(path),
-		Format:       format,
-		FilePath:     path,
-		RelPath:      filepath.ToSlash(relPath),
-		Size:         totalSize,
-		MTime:        info.ModTime(),
-		CRC32:        checksums.crc32,
-		SHA1:         checksums.sha1,
-		EmulatorHint: emulatorHint,
-		Compatibility: func() string {
-			if platform == "n64" || platform == "pc98" {
-				return "untested"
-			}
-			return "unknown"
-		}(),
-	})
+	gameAsset := domain.GameAsset{
+		LibraryID:     library.ID,
+		Title:         title,
+		Platform:      platform,
+		ROMSetName:    romSetName,
+		Region:        inferRegion(path),
+		Format:        format,
+		FilePath:      path,
+		RelPath:       filepath.ToSlash(relPath),
+		Size:          totalSize,
+		MTime:         info.ModTime(),
+		CRC32:         checksums.crc32,
+		SHA1:          checksums.sha1,
+		EmulatorHint:  emulatorHint,
+		Compatibility: compatibility,
+	}
+	var game domain.GameAsset
+	if platform == "pc98" {
+		sourceTitle, groupKey, diskOrder := pc98SourceIdentity(library.RootPath, path, mediaName(gameFiles, path))
+		if isBlockedPC98SpecialDiskTitle(sourceTitle) {
+			_ = s.store.DeleteGameByPath(path)
+			return fmt.Errorf("PC-98 add-on %q requires a bootable main-game installation and cannot be published independently", sourceTitle)
+		}
+		gameAsset.Title = sourceTitle
+		game, err = s.store.UpsertPC98GameSource(gameAsset, domain.GameSource{
+			LibraryID: library.ID, Title: sourceTitle, FilePath: path, RelPath: gameAsset.RelPath,
+			EntryName: mediaName(gameFiles, path), Format: gameAsset.Format, Size: totalSize, ContainerSize: info.Size(),
+			MTime: info.ModTime(), CRC32: checksums.crc32, SHA1: checksums.sha1, GroupKey: groupKey, DiskOrder: diskOrder,
+			Compatibility: compatibility, BootabilityChecked: bootabilityChecked,
+		})
+	} else {
+		game, err = s.store.UpsertGame(gameAsset)
+	}
 	if err != nil {
 		return err
 	}
-	if err := s.store.ReplaceGameFiles(game.ID, gameFiles); err != nil {
-		return err
+	if platform == "pc98" {
+		if err := s.syncPC98SupportFiles(game.ID); err != nil {
+			return err
+		}
+	}
+	if platform != "pc98" {
+		if err := s.store.ReplaceGameFiles(game.ID, gameFiles); err != nil {
+			return err
+		}
 	}
 	if len(gameFiles) > 1 {
 		dependencyPaths := make([]string, 0, len(gameFiles)-1)
@@ -1350,6 +1378,121 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	return s.applyGamelistMetadata(library, path, filepath.ToSlash(relPath), game.ID)
 }
 
+func (s *Scanner) syncPC98SupportFiles(gameID int64) error {
+	sources, err := s.store.GameSources(gameID)
+	if err != nil {
+		return err
+	}
+	fonts := make([]domain.GameFile, 0, 1)
+	seen := make(map[string]bool)
+	for _, source := range sources {
+		files, err := pc98PackageFontFiles(source.FilePath)
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			key := strings.ToLower(filepath.Clean(file.FilePath))
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			fonts = append(fonts, file)
+		}
+	}
+	sort.Slice(fonts, func(i, j int) bool {
+		return strings.ToLower(fonts[i].FilePath) < strings.ToLower(fonts[j].FilePath)
+	})
+	return s.store.ReplacePC98SupportFiles(gameID, fonts)
+}
+
+func samePC98SupportFiles(sourcePath string, local []domain.GameFile, stored []domain.GameFile) bool {
+	dir := filepath.Clean(filepath.Dir(sourcePath))
+	filtered := make([]domain.GameFile, 0, len(stored))
+	for _, file := range stored {
+		if filepath.Clean(filepath.Dir(file.FilePath)) == dir {
+			filtered = append(filtered, file)
+		}
+	}
+	if len(local) != len(filtered) {
+		return false
+	}
+	byPath := make(map[string]domain.GameFile, len(filtered))
+	for _, file := range filtered {
+		byPath[strings.ToLower(filepath.Clean(file.FilePath))] = file
+	}
+	for _, file := range local {
+		storedFile, ok := byPath[strings.ToLower(filepath.Clean(file.FilePath))]
+		if !ok || storedFile.Size != file.Size || !storedFile.MTime.Equal(file.MTime) {
+			return false
+		}
+	}
+	return true
+}
+
+func pc98PackageFontFiles(mediaPath string) ([]domain.GameFile, error) {
+	dir := filepath.Dir(mediaPath)
+	if hasPC98NegativePathSignal(filepath.ToSlash(dir)) {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]domain.GameFile, 0, 1)
+	for _, entry := range entries {
+		if entry.IsDir() || (!strings.EqualFold(entry.Name(), "FONT.bmp") && !strings.EqualFold(entry.Name(), "PC98_CN.bmp")) {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		if !validPC98FontBitmap(path, info.Size()) {
+			continue
+		}
+		files = append(files, domain.GameFile{
+			Name: entry.Name(), FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "font",
+		})
+	}
+	return files, nil
+}
+
+func validPC98FontBitmap(path string, size int64) bool {
+	if size < 62 {
+		return false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	header := make([]byte, 54)
+	if _, err := io.ReadFull(file, header); err != nil || !bytes.Equal(header[:2], []byte("BM")) {
+		return false
+	}
+	dibSize := binary.LittleEndian.Uint32(header[14:18])
+	width := int32(binary.LittleEndian.Uint32(header[18:22]))
+	height := int32(binary.LittleEndian.Uint32(header[22:26]))
+	planes := binary.LittleEndian.Uint16(header[26:28])
+	bitsPerPixel := binary.LittleEndian.Uint16(header[28:30])
+	compression := binary.LittleEndian.Uint32(header[30:34])
+	pixelOffset := int64(binary.LittleEndian.Uint32(header[10:14]))
+	if height < 0 {
+		height = -height
+	}
+	rowBytes := int64((2048 + 31) / 32 * 4)
+	return dibSize >= 40 && width == 2048 && height == 2048 && planes == 1 && bitsPerPixel == 1 && compression == 0 &&
+		pixelOffset >= 54 && size >= pixelOffset+rowBytes*2048
+}
+
+func mediaName(files []domain.GameFile, path string) string {
+	if len(files) > 0 && strings.TrimSpace(files[0].Name) != "" {
+		return files[0].Name
+	}
+	return filepath.Base(path)
+}
+
 const (
 	pc98ArchiveMaxEntries           = 4096
 	pc98ArchiveMaxUncompressedBytes = uint64(16 << 30)
@@ -1358,10 +1501,12 @@ const (
 )
 
 type pc98MediaInfo struct {
-	name      string
-	format    string
-	size      int64
-	checksums checksumPair
+	name               string
+	format             string
+	size               int64
+	checksums          checksumPair
+	compatibility      string
+	bootabilityChecked bool
 }
 
 func inspectPC98Media(path string, info fs.FileInfo, ext string) (pc98MediaInfo, error) {
@@ -1378,8 +1523,21 @@ func inspectPC98Media(path string, info fs.FileInfo, ext string) (pc98MediaInfo,
 		if err != nil {
 			return pc98MediaInfo{}, err
 		}
+		compatibility := "untested"
+		if ext == ".hdi" {
+			bootable, err := inspectPC98HDIBootability(func() (io.ReadCloser, error) {
+				return os.Open(path)
+			}, uint64(info.Size()))
+			if err != nil {
+				return pc98MediaInfo{}, fmt.Errorf("inspect PC-98 HDI bootability: %w", err)
+			}
+			if !bootable {
+				compatibility = "broken"
+			}
+		}
 		return pc98MediaInfo{
 			name: filepath.Base(path), format: strings.TrimPrefix(ext, "."), size: info.Size(), checksums: checksums,
+			compatibility: compatibility, bootabilityChecked: ext == ".hdi",
 		}, nil
 	}
 
@@ -1391,10 +1549,15 @@ func inspectPC98Media(path string, info fs.FileInfo, ext string) (pc98MediaInfo,
 	if len(reader.File) > pc98ArchiveMaxEntries {
 		return pc98MediaInfo{}, fmt.Errorf("PC-98 zip has %d entries, limit is %d", len(reader.File), pc98ArchiveMaxEntries)
 	}
+	type archiveCandidate struct {
+		file *stdzip.File
+		name string
+	}
 	var total uint64
-	candidates := make([]*stdzip.File, 0, 1)
+	candidates := make([]archiveCandidate, 0, 1)
 	for _, file := range reader.File {
-		if err := validateArchiveEntryName(file.Name); err != nil {
+		decodedName := DecodePC98ZIPEntryName(file.Name, file.NonUTF8)
+		if err := validateArchiveEntryName(decodedName); err != nil {
 			return pc98MediaInfo{}, err
 		}
 		if file.Mode()&os.ModeSymlink != 0 {
@@ -1410,31 +1573,167 @@ func inspectPC98Media(path string, info fs.FileInfo, ext string) (pc98MediaInfo,
 		if file.CompressedSize64 > 0 && file.UncompressedSize64/file.CompressedSize64 > pc98ArchiveMaxCompressionRatio {
 			return pc98MediaInfo{}, fmt.Errorf("PC-98 zip entry compression ratio is too high: %s", file.Name)
 		}
-		if !file.FileInfo().IsDir() && !isIgnoredArchiveEntry(file.Name) && isPC98MediaExt(strings.ToLower(filepath.Ext(file.Name))) {
-			candidates = append(candidates, file)
+		if !file.FileInfo().IsDir() && !isIgnoredArchiveEntry(decodedName) && isPC98MediaExt(strings.ToLower(filepath.Ext(decodedName))) {
+			candidates = append(candidates, archiveCandidate{file: file, name: decodedName})
 		}
 	}
 	if len(candidates) != 1 {
 		return pc98MediaInfo{}, fmt.Errorf("PC-98 zip requires exactly one media candidate, found %d; manual review required", len(candidates))
 	}
 	candidate := candidates[0]
-	if candidate.UncompressedSize64 == 0 || candidate.UncompressedSize64 > pc98MediaMaxBytes {
-		return pc98MediaInfo{}, fmt.Errorf("invalid PC-98 media size %d", candidate.UncompressedSize64)
+	if candidate.file.UncompressedSize64 == 0 || candidate.file.UncompressedSize64 > pc98MediaMaxBytes {
+		return pc98MediaInfo{}, fmt.Errorf("invalid PC-98 media size %d", candidate.file.UncompressedSize64)
 	}
-	body, err := candidate.Open()
+	body, err := candidate.file.Open()
 	if err != nil {
 		return pc98MediaInfo{}, fmt.Errorf("open PC-98 media entry: %w", err)
 	}
 	defer body.Close()
-	mediaExt := strings.ToLower(filepath.Ext(candidate.Name))
-	checksums, err := validateAndChecksumPC98Media(body, candidate.UncompressedSize64, mediaExt)
+	mediaExt := strings.ToLower(filepath.Ext(candidate.name))
+	checksums, err := validateAndChecksumPC98Media(body, candidate.file.UncompressedSize64, mediaExt)
 	if err != nil {
-		return pc98MediaInfo{}, fmt.Errorf("PC-98 media entry %s: %w", candidate.Name, err)
+		return pc98MediaInfo{}, fmt.Errorf("PC-98 media entry %s: %w", candidate.name, err)
 	}
-	name := filepath.Base(filepath.Clean(strings.ReplaceAll(candidate.Name, `\`, "/")))
+	compatibility := "untested"
+	if mediaExt == ".hdi" {
+		bootable, err := inspectPC98HDIBootability(candidate.file.Open, candidate.file.UncompressedSize64)
+		if err != nil {
+			return pc98MediaInfo{}, fmt.Errorf("inspect PC-98 HDI entry %s bootability: %w", candidate.name, err)
+		}
+		if !bootable {
+			compatibility = "broken"
+		}
+	}
+	name := filepath.Base(filepath.Clean(strings.ReplaceAll(candidate.name, `\`, "/")))
 	return pc98MediaInfo{
-		name: name, format: strings.TrimPrefix(mediaExt, "."), size: int64(candidate.UncompressedSize64), checksums: checksums,
+		name: name, format: strings.TrimPrefix(mediaExt, "."), size: int64(candidate.file.UncompressedSize64), checksums: checksums,
+		compatibility: compatibility, bootabilityChecked: mediaExt == ".hdi",
 	}, nil
+}
+
+func inspectPC98HDIBootability(open func() (io.ReadCloser, error), declaredSize uint64) (bool, error) {
+	header, err := readPC98MediaRange(open, 0, 32, declaredSize)
+	if err != nil {
+		return false, err
+	}
+	headerSize := uint64(binary.LittleEndian.Uint32(header[8:12]))
+	sectorSize := uint64(binary.LittleEndian.Uint32(header[16:20]))
+	sectorsPerTrack := uint64(binary.LittleEndian.Uint32(header[20:24]))
+	surfaces := uint64(binary.LittleEndian.Uint32(header[24:28]))
+	if headerSize < 512 || sectorSize < 128 || sectorSize > 4096 || sectorsPerTrack == 0 || surfaces == 0 {
+		return false, nil
+	}
+
+	tableOffset := headerSize + sectorSize
+	if tableOffset > declaredSize || sectorSize > declaredSize-tableOffset {
+		return false, nil
+	}
+	table, err := readPC98MediaRange(open, tableOffset, sectorSize, declaredSize)
+	if err != nil {
+		return false, err
+	}
+	startCylinder := uint64(0)
+	active := false
+	foundPartition := false
+	for offset := 0; offset+32 <= len(table); offset += 32 {
+		if !bytes.Contains(table[offset+16:offset+32], []byte("MS-DOS")) {
+			continue
+		}
+		startCylinder = uint64(binary.LittleEndian.Uint16(table[offset+6 : offset+8]))
+		active = table[offset]&0x80 != 0
+		foundPartition = true
+		break
+	}
+	if !foundPartition || !active {
+		return false, nil
+	}
+
+	bytesPerCylinder := sectorsPerTrack * surfaces * sectorSize
+	if bytesPerCylinder == 0 || startCylinder > (^uint64(0)-headerSize)/bytesPerCylinder {
+		return false, nil
+	}
+	bootOffset := headerSize + startCylinder*bytesPerCylinder
+	if bootOffset > declaredSize || 32 > declaredSize-bootOffset {
+		return false, nil
+	}
+	boot, err := readPC98MediaRange(open, bootOffset, 32, declaredSize)
+	if err != nil {
+		return false, err
+	}
+	logicalSectorSize := uint64(binary.LittleEndian.Uint16(boot[11:13]))
+	reservedSectors := uint64(binary.LittleEndian.Uint16(boot[14:16]))
+	fatCount := uint64(boot[16])
+	rootEntries := uint64(binary.LittleEndian.Uint16(boot[17:19]))
+	fatSectors := uint64(binary.LittleEndian.Uint16(boot[22:24]))
+	if logicalSectorSize < 128 || logicalSectorSize > 4096 || logicalSectorSize%128 != 0 || reservedSectors == 0 ||
+		fatCount < 1 || fatCount > 4 || rootEntries == 0 || rootEntries > 8192 || fatSectors == 0 {
+		return false, nil
+	}
+	fatRegionSectors := reservedSectors + fatCount*fatSectors
+	if fatRegionSectors > (^uint64(0)-bootOffset)/logicalSectorSize {
+		return false, nil
+	}
+	rootOffset := bootOffset + fatRegionSectors*logicalSectorSize
+	rootSize := rootEntries * 32
+	if rootOffset > declaredSize || rootSize > declaredSize-rootOffset {
+		return false, nil
+	}
+	root, err := readPC98MediaRange(open, rootOffset, rootSize, declaredSize)
+	if err != nil {
+		return false, err
+	}
+	required := [][]byte{[]byte("IO      SYS"), []byte("MSDOS   SYS"), []byte("COMMAND COM")}
+	for _, name := range required {
+		if !pc98FATRootContains(root, name) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func readPC98MediaRange(open func() (io.ReadCloser, error), offset, size, declaredSize uint64) ([]byte, error) {
+	if size == 0 || offset > declaredSize || size > declaredSize-offset || size > uint64(^uint(0)>>1) {
+		return nil, fmt.Errorf("PC-98 media range %d+%d exceeds %d bytes", offset, size, declaredSize)
+	}
+	body, err := open()
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	if _, err := io.CopyN(io.Discard, body, int64(offset)); err != nil {
+		return nil, err
+	}
+	data := make([]byte, int(size))
+	if _, err := io.ReadFull(body, data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func pc98FATRootContains(root []byte, expected []byte) bool {
+	if len(expected) != 11 {
+		return false
+	}
+	for offset := 0; offset+11 <= len(root); offset += 32 {
+		if root[offset] == 0 || root[offset] == 0xe5 {
+			continue
+		}
+		if bytes.Equal(root[offset:offset+11], expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func DecodePC98ZIPEntryName(name string, nonUTF8 bool) string {
+	if !nonUTF8 && utf8.ValidString(name) && !strings.ContainsRune(name, '\uFFFD') {
+		return name
+	}
+	decoded, err := japanese.ShiftJIS.NewDecoder().Bytes([]byte(name))
+	if err == nil && utf8.Valid(decoded) && !bytes.ContainsRune(decoded, '\uFFFD') {
+		return string(decoded)
+	}
+	return strings.ToValidUTF8(name, "")
 }
 
 func validateAndChecksumPC98Media(reader io.Reader, declaredSize uint64, ext string) (checksumPair, error) {
@@ -1468,8 +1767,16 @@ func validateAndChecksumPC98Media(reader io.Reader, declaredSize uint64, ext str
 func validatePC98MediaHeader(prefix []byte, declaredSize uint64, ext string) error {
 	ext = strings.ToLower(strings.TrimSpace(ext))
 	switch ext {
-	case ".hdi", ".fdi":
+	case ".hdi":
 		return validatePC98AnexImage(prefix, declaredSize)
+	case ".fdi":
+		if err := validatePC98AnexImage(prefix, declaredSize); err == nil {
+			return nil
+		}
+		if isKnownPC98RawFloppySize(declaredSize) {
+			return nil
+		}
+		return fmt.Errorf("PC-98 FDI image is neither Anex86 nor a known raw floppy geometry")
 	case ".nhd":
 		return validatePC98NHD(prefix, declaredSize)
 	case ".vhd":
@@ -3288,6 +3595,98 @@ func gameTitle(path string) string {
 	title = regexp.MustCompile(`\s*\([^)]*\)`).ReplaceAllString(title, "")
 	title = regexp.MustCompile(`\s*\[[^]]*]`).ReplaceAllString(title, "")
 	return strings.TrimSpace(title)
+}
+
+var (
+	pc98DiskSuffixPattern          = regexp.MustCompile(`(?i)[\s._-]*(?:disk|disc|data|fd|floppy|ディスク|データ|枚目|面)[\s._-]*([0-9０-９]+|[a-z])$`)
+	pc98BareAlphaDiskSuffixPattern = regexp.MustCompile(`(?i)[._-]([a-z])$`)
+)
+
+func pc98SourceIdentity(rootPath string, sourcePath string, entryName string) (string, string, int) {
+	mediaTitle := gameTitle(entryName)
+	_, mediaDiskOrder := splitPC98DiskSuffix(mediaTitle)
+	title := mediaTitle
+	if strings.EqualFold(filepath.Ext(sourcePath), ".zip") {
+		title = gameTitle(sourcePath)
+	} else {
+		parentTitle := gameTitle(filepath.Base(filepath.Dir(sourcePath)))
+		if (mediaDiskOrder > 0 || isGenericPC98MediaTitle(mediaTitle)) && !isGenericPC98DirectoryTitle(parentTitle) {
+			title = parentTitle
+		}
+	}
+	logicalTitle, diskOrder := splitPC98DiskSuffix(title)
+	if diskOrder == 0 {
+		diskOrder = mediaDiskOrder
+	}
+	if strings.TrimSpace(logicalTitle) == "" {
+		logicalTitle = title
+	}
+	relDir, err := filepath.Rel(rootPath, filepath.Dir(sourcePath))
+	if err != nil {
+		relDir = filepath.Dir(sourcePath)
+	}
+	groupKey := strings.ToLower(filepath.ToSlash(filepath.Clean(relDir))) + "\x1f" + normalizePC98GroupTitle(logicalTitle)
+	return strings.TrimSpace(logicalTitle), groupKey, diskOrder
+}
+
+func splitPC98DiskSuffix(title string) (string, int) {
+	match := pc98DiskSuffixPattern.FindStringSubmatchIndex(title)
+	if match == nil {
+		match = pc98BareAlphaDiskSuffixPattern.FindStringSubmatchIndex(title)
+		if match == nil {
+			return strings.TrimSpace(title), 0
+		}
+	}
+	order := 0
+	if len(match) >= 4 {
+		value := normalizeFullWidthDigits(title[match[2]:match[3]])
+		if parsed, err := strconv.Atoi(value); err == nil {
+			order = parsed
+		} else if len(value) == 1 {
+			order = int(strings.ToLower(value)[0]-'a') + 1
+		}
+	}
+	return strings.TrimSpace(title[:match[0]]), order
+}
+
+func normalizeFullWidthDigits(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= '０' && r <= '９' {
+			return '0' + (r - '０')
+		}
+		return r
+	}, value)
+}
+
+func normalizePC98GroupTitle(title string) string {
+	title = strings.ToLower(normalizeFullWidthDigits(strings.TrimSpace(title)))
+	title = regexp.MustCompile(`[\s._-]+`).ReplaceAllString(title, " ")
+	return strings.TrimSpace(title)
+}
+
+func isBlockedPC98SpecialDiskTitle(title string) bool {
+	normalized := normalizePC98GroupTitle(title)
+	return normalized == "yu no special disk" || normalized == "yuno special disk"
+}
+
+func isGenericPC98MediaTitle(title string) bool {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return true
+	}
+	if _, err := strconv.Atoi(normalizeFullWidthDigits(title)); err == nil {
+		return true
+	}
+	return title == strings.ToUpper(title) && len([]rune(title)) <= 12
+}
+
+func isGenericPC98DirectoryTitle(title string) bool {
+	switch strings.ToLower(strings.TrimSpace(title)) {
+	case "", ".", "pc98", "pc-98", "game.pc98", "games", "original", "原始数据":
+		return true
+	default:
+		return false
+	}
 }
 
 func mediaTitle(path string) string {

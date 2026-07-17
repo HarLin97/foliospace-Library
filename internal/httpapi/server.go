@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -700,8 +701,16 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		defer stream.Body.Close()
 		w.Header().Set("Content-Type", stream.ContentType)
 		if game.Platform == "n64" || game.Platform == "pc98" {
-			w.Header().Set("Content-Length", strconv.FormatInt(game.Size, 10))
-			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(clientGameFileName(game), `"`, "")))
+			size := game.Size
+			name := clientGameFileName(game)
+			if game.Platform == "pc98" {
+				if files, filesErr := s.service.GameFiles(id); filesErr == nil && len(files) > 0 {
+					size = files[0].Size
+					name = files[0].Name
+				}
+			}
+			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(name, `"`, "")))
 		}
 		_, _ = io.Copy(w, stream.Body)
 		return
@@ -2171,10 +2180,13 @@ type clientGameManifestResponse struct {
 }
 
 type clientGameFile struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	Role string `json:"role"`
-	URL  string `json:"url"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	Role      string `json:"role"`
+	Label     string `json:"label,omitempty"`
+	DiskIndex *int   `json:"diskIndex,omitempty"`
+	DriveHint string `json:"driveHint,omitempty"`
+	URL       string `json:"url"`
 }
 
 type clientGameMetadataResponse struct {
@@ -2461,16 +2473,42 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile) clientGa
 		FileURL: fmt.Sprintf("/api/client/games/%d/file", game.ID),
 		Files:   make([]clientGameFile, 0, len(files)),
 	}
+	diskIndex := 0
 	for _, file := range files {
-		manifest.Files = append(manifest.Files, clientGameFile{
+		clientFile := clientGameFile{
 			Name: file.Name, Size: file.Size, Role: file.Role,
 			URL: fmt.Sprintf("/api/client/games/%d/files/%d", game.ID, file.Position),
-		})
+		}
+		if game.Platform == "pc98" && file.Role != "font" && isPC98FloppyManifestFile(file.Name) {
+			clientFile.Role = "disk"
+			if file.Role == "entry" {
+				clientFile.Role = "entry"
+			}
+			if diskIndex == 0 {
+				clientFile.DriveHint = "FDD1"
+			}
+			index := diskIndex
+			clientFile.DiskIndex = &index
+			clientFile.Label = fmt.Sprintf("Disk %d", diskIndex+1)
+			diskIndex++
+		}
+		manifest.Files = append(manifest.Files, clientFile)
 		if file.Role == "entry" {
 			manifest.EntryFile = file.Name
 		}
 	}
 	return manifest
+}
+
+func isPC98FloppyManifestFile(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".d88", ".88d", ".d98", ".98d", ".fdi", ".xdf", ".hdm", ".dup", ".2hd", ".tfd", ".nfd",
+		".hd4", ".hd5", ".hd9", ".fdd", ".h01", ".hdb", ".ddb", ".dd6", ".dcp", ".dcu", ".flp", ".img",
+		".ima", ".bin", ".fim":
+		return true
+	default:
+		return false
+	}
 }
 
 func filepathBase(path string) string {

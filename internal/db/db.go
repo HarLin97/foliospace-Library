@@ -134,6 +134,29 @@ func Migrate(conn *sql.DB) error {
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(game_id, name)
 		)`,
+		`CREATE TABLE IF NOT EXISTS game_sources (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+			library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+			title TEXT NOT NULL DEFAULT '',
+			file_path TEXT NOT NULL UNIQUE,
+			rel_path TEXT NOT NULL DEFAULT '',
+			entry_name TEXT NOT NULL DEFAULT '',
+			format TEXT NOT NULL DEFAULT '',
+			size INTEGER NOT NULL DEFAULT 0,
+			container_size INTEGER NOT NULL DEFAULT 0,
+			mtime TEXT NOT NULL DEFAULT '',
+			crc32 TEXT NOT NULL DEFAULT '',
+			sha1 TEXT NOT NULL DEFAULT '',
+			group_key TEXT NOT NULL DEFAULT '',
+			disk_order INTEGER NOT NULL DEFAULT 0,
+			compatibility TEXT NOT NULL DEFAULT 'untested',
+			bootability_checked INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_game_sources_game ON game_sources(game_id, disk_order, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_game_sources_identity ON game_sources(library_id, sha1, group_key)`,
 		`CREATE TABLE IF NOT EXISTS game_metadata (
 			game_id INTEGER PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
 			display_title TEXT NOT NULL DEFAULT '',
@@ -431,6 +454,12 @@ func Migrate(conn *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "profiles", "color", "TEXT NOT NULL DEFAULT 'teal'"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "game_sources", "compatibility", "TEXT NOT NULL DEFAULT 'untested'"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "game_sources", "bootability_checked", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	if _, err := conn.Exec(`INSERT OR IGNORE INTO profile_read_progress(profile_id, book_id, page_index, locator, progress_fraction, updated_at)

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"foliospace-reader/internal/db"
 	"foliospace-reader/internal/domain"
 	"foliospace-reader/internal/store"
+	"golang.org/x/text/encoding/japanese"
 )
 
 func TestScanLibraryIndexesValidArchivesAndRecordsEmptyFile(t *testing.T) {
@@ -1127,6 +1129,289 @@ func TestScanLibraryIndexesValidatedPC98MediaAndExcludesSupportFiles(t *testing.
 	}
 }
 
+func TestScanLibraryPackagesValidatedPC98FontAndTracksSidecarChanges(t *testing.T) {
+	root := t.TempDir()
+	gameDir := filepath.Join(root, "PC98", "Love Escalator AI汉化版")
+	mediaPath := filepath.Join(gameDir, "Love Escalator_CN.hdi")
+	fontPath := filepath.Join(gameDir, "PC98_CN.bmp")
+	if err := os.MkdirAll(gameDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mediaPath, syntheticPC98AnexImage(512, 4, 2, 10), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	font := syntheticPC98FontBitmap(0x00)
+	if err := os.WriteFile(fontPath, font, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("PC-98", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ErrorCount != 0 || first.IndexedFiles != 1 {
+		t.Fatalf("first scan = %#v, want one indexed game", first)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "pc98", Limit: 10})
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("games = %#v err=%v", page.Items, err)
+	}
+	game := page.Items[0]
+	files, err := st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0].Role != "entry" || files[1].Role != "font" || files[1].Name != "PC98_CN.bmp" {
+		t.Fatalf("files = %#v, want entry plus validated font", files)
+	}
+	if game.Size != files[0].Size+files[1].Size {
+		t.Fatalf("game size = %d, want package size %d", game.Size, files[0].Size+files[1].Size)
+	}
+
+	second, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.IndexedFiles != 0 || second.SkippedFiles != 1 {
+		t.Fatalf("second scan = %#v, want unchanged package skipped", second)
+	}
+
+	font = syntheticPC98FontBitmap(0xff)
+	if err := os.WriteFile(fontPath, font, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(fontPath, future, future); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.IndexedFiles != 1 {
+		t.Fatalf("changed scan = %#v, want media package refreshed", changed)
+	}
+
+	if err := os.Remove(fontPath); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.IndexedFiles != 1 {
+		t.Fatalf("removed scan = %#v, want stale font removed", removed)
+	}
+	files, err = st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Role != "entry" {
+		t.Fatalf("files after removal = %#v, want entry only", files)
+	}
+}
+
+func TestScanLibraryMarksNonBootablePC98HDIBroken(t *testing.T) {
+	root := t.TempDir()
+	gameDir := filepath.Join(root, "PC98", "Install Target")
+	mediaPath := filepath.Join(gameDir, "Install Target.hdi")
+	if err := os.MkdirAll(gameDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	image := syntheticPC98AnexImage(512, 4, 2, 10)
+	headerSize := int(binary.LittleEndian.Uint32(image[8:12]))
+	sectorSize := int(binary.LittleEndian.Uint32(image[16:20]))
+	image[headerSize+sectorSize] = 0
+	if err := os.WriteFile(mediaPath, image, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("PC-98", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ErrorCount != 0 || job.IndexedFiles != 1 {
+		t.Fatalf("scan = %#v, want one retained non-bootable HDI", job)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "pc98", Limit: 10})
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("games = %#v err=%v", page.Items, err)
+	}
+	if page.Items[0].Compatibility != "broken" {
+		t.Fatalf("compatibility = %q, want broken", page.Items[0].Compatibility)
+	}
+	sources, err := st.GameSources(page.Items[0].ID)
+	if err != nil || len(sources) != 1 || !sources[0].BootabilityChecked || sources[0].Compatibility != "broken" {
+		t.Fatalf("sources = %#v err=%v, want checked broken source", sources, err)
+	}
+	second, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.IndexedFiles != 0 || second.SkippedFiles != 1 {
+		t.Fatalf("second scan = %#v, want checked HDI to use unchanged fast path", second)
+	}
+	if _, err := conn.Exec(`UPDATE game_sources SET bootability_checked = 0, compatibility = 'untested' WHERE file_path = ?`, mediaPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`UPDATE games SET compatibility = 'untested' WHERE id = ?`, page.Items[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.IndexedFiles != 1 || legacy.SkippedFiles != 0 {
+		t.Fatalf("legacy scan = %#v, want unchecked HDI to be reinspected once", legacy)
+	}
+	updated, err := st.GameByID(page.Items[0].ID)
+	if err != nil || updated.Compatibility != "broken" {
+		t.Fatalf("updated game = %#v err=%v, want broken compatibility restored", updated, err)
+	}
+}
+
+func TestScanLibraryBlocksYuNoSpecialDiskAsStandaloneGame(t *testing.T) {
+	root := t.TempDir()
+	gameDir := filepath.Join(root, "PC98", "Yu-No - Special Disk (Elf)")
+	mediaPath := filepath.Join(gameDir, "YU-NO_A.D88")
+	if err := os.MkdirAll(gameDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mediaPath, syntheticPC98D88Image(0x7a), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("PC-98", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ErrorCount != 1 || job.IndexedFiles != 0 {
+		t.Fatalf("scan = %#v, want standalone special disk blocked", job)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "pc98", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 0 {
+		t.Fatalf("games = %#v, want no published special-disk record", page.Items)
+	}
+}
+
+func TestScanLibraryBuildsDragonKnightSpecialDiskRuntimePackage(t *testing.T) {
+	root := t.TempDir()
+	mainDir := filepath.Join(root, "PC98", "Dragon Knight 4 (1991)(Elf)")
+	specialDir := filepath.Join(root, "PC98", "Dragon Knight 4 Special Disk (1991)(Elf)")
+	if err := os.MkdirAll(mainDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(specialDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := syntheticPC98AnexImage(512, 4, 2, 10)
+	for i := 0; i < 12; i++ {
+		image := append([]byte(nil), base...)
+		image[len(image)-1] = byte(i + 1)
+		name := fmt.Sprintf("DragonKnight4_%c.fdi", 'a'+rune(i))
+		if err := os.WriteFile(filepath.Join(mainDir, name), image, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		image := append([]byte(nil), base...)
+		image[len(image)-1] = byte(100 + i)
+		name := fmt.Sprintf("DragonKnight4SpecialDisk_%c.fdi", 'a'+rune(i))
+		if err := os.WriteFile(filepath.Join(specialDir, name), image, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("PC-98", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ErrorCount != 0 || job.IndexedFiles != 14 {
+		t.Fatalf("scan = %#v, want fourteen source files", job)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "pc98", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var special domain.GameAsset
+	for _, game := range page.Items {
+		if game.Title == "Dragon Knight 4 Special Disk" {
+			special = game
+		}
+	}
+	if special.ID == 0 {
+		t.Fatalf("games = %#v, missing special disk", page.Items)
+	}
+	sources, err := st.GameSources(special.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 2 {
+		t.Fatalf("special sources = %d, want only its own A/B sources", len(sources))
+	}
+	files, err := st.GameFiles(special.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 12 {
+		t.Fatalf("special files = %#v, want own A/B plus main C-L", files)
+	}
+	if !strings.Contains(strings.ToLower(files[0].Name), "specialdisk_a") || !strings.Contains(strings.ToLower(files[1].Name), "specialdisk_b") ||
+		!strings.Contains(strings.ToLower(files[2].Name), "_c.fdi") || !strings.Contains(strings.ToLower(files[11].Name), "_l.fdi") {
+		t.Fatalf("special file order = %#v", files)
+	}
+	second, err := New(st).ScanLibraryPath(lib, specialDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.IndexedFiles != 0 || second.SkippedFiles != 2 {
+		t.Fatalf("second special scan = %#v, want completed package skipped", second)
+	}
+}
+
 func TestScanLibraryRejectsAmbiguousPC98ZIP(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "PC-98", "Multiple.zip")
@@ -1158,6 +1443,172 @@ func TestScanLibraryRejectsAmbiguousPC98ZIP(t *testing.T) {
 	}
 }
 
+func TestScanLibraryNormalizesPC98NamesDeduplicatesSourcesAndGroupsDisks(t *testing.T) {
+	root := t.TempDir()
+	pc98Dir := filepath.Join(root, "PC98")
+	arcushuImage := syntheticPC98D88Image(0)
+	diskOneImage := append([]byte(nil), arcushuImage...)
+	diskOneImage[len(diskOneImage)-1] = 1
+	diskTwoImage := append([]byte(nil), arcushuImage...)
+	diskTwoImage[len(diskTwoImage)-1] = 2
+	prismImage := append([]byte(nil), arcushuImage...)
+	prismImage[len(prismImage)-1] = 3
+
+	cp932Name, err := japanese.ShiftJIS.NewEncoder().Bytes([]byte("アークシュ.D88"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	arcushuPath := filepath.Join(pc98Dir, "Wolf Team", "Arcushu.zip")
+	arcushuCopyPath := filepath.Join(pc98Dir, "Wolf Team Mirror", "Arcushu Copy.zip")
+	diskOnePath := filepath.Join(pc98Dir, "Space Quest", "Space Quest Disk 1.zip")
+	diskTwoPath := filepath.Join(pc98Dir, "Space Quest", "Space Quest Disk 2.zip")
+	makeRawNameZip(t, arcushuPath, string(cp932Name), arcushuImage)
+	makeRawNameZip(t, arcushuCopyPath, string(cp932Name), arcushuImage)
+	makeZip(t, diskOnePath, map[string]string{"1.D88": string(diskOneImage)})
+	makeZip(t, diskTwoPath, map[string]string{"2.D88": string(diskTwoImage)})
+	makeZip(t, filepath.Join(pc98Dir, "Telenet Japan", "プリズム98.zip"), map[string]string{"1.D88": string(prismImage)})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Seed the old one-file-per-record shape to verify migration consolidates
+	// existing IDs instead of only grouping a clean database correctly.
+	for _, legacy := range []struct {
+		path  string
+		title string
+		image []byte
+	}{
+		{arcushuPath, "Arcushu", arcushuImage},
+		{arcushuCopyPath, "Arcushu Copy", arcushuImage},
+		{diskOnePath, "Space Quest Disk 1", diskOneImage},
+		{diskTwoPath, "Space Quest Disk 2", diskTwoImage},
+	} {
+		info, statErr := os.Stat(legacy.path)
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		legacyChecksums, checksumErr := validateAndChecksumPC98Media(bytes.NewReader(legacy.image), uint64(len(legacy.image)), ".d88")
+		if checksumErr != nil {
+			t.Fatal(checksumErr)
+		}
+		if _, upsertErr := st.UpsertGame(domain.GameAsset{
+			LibraryID: lib.ID, Title: legacy.title, Platform: "pc98", ROMSetName: "PC-98", Format: "zip",
+			FilePath: legacy.path, RelPath: filepath.ToSlash(strings.TrimPrefix(legacy.path, root+string(filepath.Separator))),
+			Size: info.Size(), MTime: info.ModTime(), CRC32: legacyChecksums.crc32, SHA1: legacyChecksums.sha1,
+			EmulatorHint: "np2kai", Compatibility: "untested",
+		}); upsertErr != nil {
+			t.Fatal(upsertErr)
+		}
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ErrorCount != 0 {
+		errors, listErr := st.ListFileErrorsByJob(job.ID)
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		t.Fatalf("job = %#v, errors = %#v, want clean PC-98 scan", job, errors)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "pc98", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Arcushu's mirrored image is one record, the two Space Quest disks are one record,
+	// and Prism 98 keeps the container title instead of the generic internal name "1".
+	if page.Total != 3 {
+		t.Fatalf("games = %#v, want three content/group records", page.Items)
+	}
+	var arcushu domain.GameAsset
+	var spaceQuest domain.GameAsset
+	var prism domain.GameAsset
+	for _, game := range page.Items {
+		if strings.ContainsRune(game.Title, '\uFFFD') || game.Title == "1" {
+			t.Fatalf("game title = %q, want decoded container title", game.Title)
+		}
+		switch game.Title {
+		case "Arcushu Copy", "Arcushu":
+			arcushu = game
+		case "Space Quest":
+			spaceQuest = game
+		case "プリズム98":
+			prism = game
+		}
+	}
+	if arcushu.ID == 0 || spaceQuest.ID == 0 || prism.ID == 0 {
+		t.Fatalf("games = %#v, want Arcushu, Space Quest, and Prism 98", page.Items)
+	}
+	arcushuSources, err := st.GameSources(arcushu.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arcushuSources) != 2 {
+		t.Fatalf("Arcushu sources = %#v, want two retained source paths", arcushuSources)
+	}
+	arcushuFiles, err := st.GameFiles(arcushu.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arcushuFiles) != 1 || arcushuFiles[0].Name != "アークシュ.D88" {
+		t.Fatalf("Arcushu files = %#v, want decoded CP932 entry", arcushuFiles)
+	}
+	spaceFiles, err := st.GameFiles(spaceQuest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spaceFiles) != 2 || spaceFiles[0].Role != "entry" || spaceFiles[1].Role != "dependency" || spaceFiles[0].Name != "1.D88" || spaceFiles[1].Name != "2.D88" {
+		t.Fatalf("Space Quest files = %#v, want ordered two-disk manifest", spaceFiles)
+	}
+	spaceSources, err := st.GameSources(spaceQuest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spaceSources) != 2 || spaceSources[0].DiskOrder != 1 || spaceSources[1].DiskOrder != 2 {
+		t.Fatalf("Space Quest sources = %#v, want parsed disk order 1, 2", spaceSources)
+	}
+}
+
+func TestPC98SourceIdentityGroupsBareAlphaDisksByParentDirectory(t *testing.T) {
+	root := filepath.Join("games", "PC98")
+	mainDir := filepath.Join(root, "Dragon Knight 4 (1991)(Elf)")
+	specialDir := filepath.Join(root, "Dragon Knight 4 Special Disk (1991)(Elf)")
+
+	mainTitleA, mainKeyA, mainOrderA := pc98SourceIdentity(root, filepath.Join(mainDir, "DragonKnight4_a.fdi"), "DragonKnight4_a.fdi")
+	mainTitleL, mainKeyL, mainOrderL := pc98SourceIdentity(root, filepath.Join(mainDir, "DragonKnight4_l.fdi"), "DragonKnight4_l.fdi")
+	specialTitle, specialKey, specialOrder := pc98SourceIdentity(root, filepath.Join(specialDir, "DragonKnight4SpecialDisk_a.fdi"), "DragonKnight4SpecialDisk_a.fdi")
+
+	if mainTitleA != "Dragon Knight 4" || mainTitleL != "Dragon Knight 4" {
+		t.Fatalf("main titles = %q, %q, want parent directory title", mainTitleA, mainTitleL)
+	}
+	if mainKeyA != mainKeyL || mainOrderA != 1 || mainOrderL != 12 {
+		t.Fatalf("main keys/orders = %q/%d, %q/%d, want one 12-disk group", mainKeyA, mainOrderA, mainKeyL, mainOrderL)
+	}
+	if specialTitle != "Dragon Knight 4 Special Disk" || specialOrder != 1 {
+		t.Fatalf("special title/order = %q/%d", specialTitle, specialOrder)
+	}
+	if specialKey == mainKeyA {
+		t.Fatal("special disk must remain separate from the main game")
+	}
+}
+
+func TestValidatePC98MediaHeaderAcceptsRawSizedFDI(t *testing.T) {
+	prefix := []byte("\xeb\x10\x90 ELFDOS FORMAT")
+	if err := validatePC98MediaHeader(prefix, 1261568, ".fdi"); err != nil {
+		t.Fatalf("raw-sized FDI rejected: %v", err)
+	}
+	if err := validatePC98MediaHeader(prefix, 1234567, ".fdi"); err == nil {
+		t.Fatal("arbitrary-sized FDI should remain rejected")
+	}
+}
+
 func syntheticPC98AnexImage(sectorSize, sectors, surfaces, cylinders uint32) []byte {
 	const headerSize = uint32(4096)
 	dataSize := sectorSize * sectors * surfaces * cylinders
@@ -1171,7 +1622,49 @@ func syntheticPC98AnexImage(sectorSize, sectors, surfaces, cylinders uint32) []b
 	for index := int(headerSize); index < len(image); index++ {
 		image[index] = byte(index)
 	}
+	partitionOffset := int(headerSize + sectorSize)
+	image[partitionOffset] = 0x80
+	binary.LittleEndian.PutUint16(image[partitionOffset+6:partitionOffset+8], 1)
+	copy(image[partitionOffset+16:partitionOffset+32], []byte("MS-DOS"))
+	bootOffset := int(headerSize + sectorSize*sectors*surfaces)
+	binary.LittleEndian.PutUint16(image[bootOffset+11:bootOffset+13], uint16(sectorSize))
+	binary.LittleEndian.PutUint16(image[bootOffset+14:bootOffset+16], 1)
+	image[bootOffset+16] = 2
+	binary.LittleEndian.PutUint16(image[bootOffset+17:bootOffset+19], 16)
+	binary.LittleEndian.PutUint16(image[bootOffset+22:bootOffset+24], 1)
+	rootOffset := bootOffset + int(3*sectorSize)
+	copy(image[rootOffset:rootOffset+11], []byte("IO      SYS"))
+	copy(image[rootOffset+32:rootOffset+43], []byte("MSDOS   SYS"))
+	copy(image[rootOffset+64:rootOffset+75], []byte("COMMAND COM"))
 	return image
+}
+
+func syntheticPC98D88Image(marker byte) []byte {
+	const headerSize = 0x2b0
+	image := make([]byte, headerSize+512)
+	binary.LittleEndian.PutUint32(image[0x1c:0x20], uint32(len(image)))
+	binary.LittleEndian.PutUint32(image[0x20:0x24], headerSize)
+	image[len(image)-1] = marker
+	return image
+}
+
+func syntheticPC98FontBitmap(fill byte) []byte {
+	const pixelOffset = 62
+	const pixelBytes = 2048 * 2048 / 8
+	data := make([]byte, pixelOffset+pixelBytes)
+	copy(data[:2], []byte("BM"))
+	binary.LittleEndian.PutUint32(data[2:6], uint32(len(data)))
+	binary.LittleEndian.PutUint32(data[10:14], pixelOffset)
+	binary.LittleEndian.PutUint32(data[14:18], 40)
+	binary.LittleEndian.PutUint32(data[18:22], 2048)
+	binary.LittleEndian.PutUint32(data[22:26], 2048)
+	binary.LittleEndian.PutUint16(data[26:28], 1)
+	binary.LittleEndian.PutUint16(data[28:30], 1)
+	binary.LittleEndian.PutUint32(data[34:38], pixelBytes)
+	for i := pixelOffset; i < len(data); i++ {
+		data[i] = fill
+	}
+	return data
 }
 
 func TestScanLibraryImportsGamelistMetadata(t *testing.T) {
@@ -2150,6 +2643,32 @@ func makeZip(t *testing.T, path string, entries map[string]string) {
 		if _, err := entry.Write([]byte(body)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func makeRawNameZip(t *testing.T, path string, rawName string, body []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := zip.NewWriter(file)
+	header := &zip.FileHeader{Name: rawName, Method: zip.Deflate, NonUTF8: true}
+	entry, err := writer.CreateHeader(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write(body); err != nil {
+		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)

@@ -1437,8 +1437,8 @@ func (s *Service) OpenGameFilePart(id int64, position int) (PageStream, domain.G
 		}
 		return PageStream{Body: body, ContentType: "application/octet-stream"}, file, nil
 	}
-	if game.Platform == "pc98" && strings.EqualFold(filepath.Ext(game.FilePath), ".zip") && file.Role == "entry" {
-		body, err := openPC98MediaFromZIP(game.FilePath, file.Name, file.Size)
+	if game.Platform == "pc98" && strings.EqualFold(filepath.Ext(file.FilePath), ".zip") {
+		body, err := openPC98MediaFromZIP(file.FilePath, file.Name, file.Size)
 		if err != nil {
 			return PageStream{}, domain.GameFile{}, err
 		}
@@ -1527,10 +1527,11 @@ func openPC98MediaFromZIP(path string, expectedName string, expectedSize int64) 
 	}
 	var match *zip.File
 	for _, file := range reader.File {
-		if file.FileInfo().IsDir() || !isPC98MediaExtension(filepath.Ext(file.Name)) {
+		decodedName := scanner.DecodePC98ZIPEntryName(file.Name, file.NonUTF8)
+		if file.FileInfo().IsDir() || !isPC98MediaExtension(filepath.Ext(decodedName)) {
 			continue
 		}
-		if expectedName != "" && !strings.EqualFold(filepath.Base(file.Name), filepath.Base(expectedName)) {
+		if expectedName != "" && !strings.EqualFold(filepath.Base(decodedName), filepath.Base(expectedName)) {
 			continue
 		}
 		if match != nil {
