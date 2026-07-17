@@ -447,6 +447,18 @@ func Migrate(conn *sql.DB) error {
 		SELECT 1, locale, reader_page_mode, epub_page_mode, epub_theme, epub_font_size, updated_at FROM client_preferences WHERE id = 1`); err != nil {
 		return fmt.Errorf("migrate default profile preferences: %w", err)
 	}
+	if _, err := conn.Exec(`UPDATE games
+		SET platform = 'n64', rom_set_name = 'Nintendo 64', emulator_hint = 'mupen64plus', updated_at = CURRENT_TIMESTAMP
+		WHERE LOWER(TRIM(platform)) IN ('n64', 'nintendo64', 'nintendo 64')
+		  AND (platform <> 'n64' OR rom_set_name <> 'Nintendo 64' OR emulator_hint <> 'mupen64plus')`); err != nil {
+		return fmt.Errorf("normalize N64 game platform: %w", err)
+	}
+	if _, err := conn.Exec(`UPDATE games
+		SET platform = 'pc98', rom_set_name = 'PC-98', emulator_hint = 'np2kai', updated_at = CURRENT_TIMESTAMP
+		WHERE LOWER(TRIM(platform)) IN ('pc98', 'pc-98', 'pc 98', 'pc9801', 'pc-9801', 'pc9821', 'pc-9821', 'nec pc-98')
+		  AND (platform <> 'pc98' OR rom_set_name <> 'PC-98' OR emulator_hint <> 'np2kai')`); err != nil {
+		return fmt.Errorf("normalize PC-98 game platform: %w", err)
+	}
 	return nil
 }
 

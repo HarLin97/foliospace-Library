@@ -249,7 +249,7 @@ Response:
   "serviceName": "FolioSpace Library",
   "serviceVersion": "0.976",
   "apiVersion": "v1",
-  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z"],
+  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "chd", "iso", "bin", "cue", "7z", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
   "capabilities": {
     "clientHome": true,
     "unifiedManifest": true,
@@ -495,7 +495,7 @@ Query:
 - `limit`: optional, default `50`, max `200`. Values above max are clamped and the response returns the actual limit.
 - `offset`: optional, default `0`.
 - `q`: optional search against `title`, `romSetName`, `region`, `platform`, and `format`.
-- `platform`: optional exact platform filter, for example `nes`, `snes`, `gba`, `md`, `neogeo`, `arcade`, or `3ds`.
+- `platform`: optional exact platform filter, for example `nes`, `snes`, `n64`, `gba`, `md`, `neogeo`, `arcade`, or `3ds`.
 - `romSetName`: optional exact ROM set filter.
 - `format`: optional exact format filter, for example `nes`, `sfc`, `gba`, `zip`, or `3ds`.
 - `sort`: optional. Supported values are `recent`, `oldest`, `title`, and `platform`. Unknown values fall back to `recent`.
@@ -515,6 +515,7 @@ Response:
       "romSetName": "NES",
       "region": "Japan",
       "format": "nes",
+      "fileName": "Super Contra.nes",
       "size": 262160,
       "crc32": "9bb6059e",
       "sha1": "5de393e3ad83e6e185e6d338684d7a4475b7d2ce",
@@ -523,7 +524,8 @@ Response:
       "favorite": false,
       "liked": false,
       "coverUrl": "/api/games/18/cover",
-      "manifestUrl": "/api/client/games/18/manifest"
+      "manifestUrl": "/api/client/games/18/manifest",
+      "downloadUrl": "/api/client/games/18/file"
     }
   ],
   "total": 128,
@@ -579,6 +581,10 @@ New Dreamcast scans use `platform: "dreamcast"`, `romSetName: "DC"`, and `emulat
 New Saturn CUE scans use `platform: "saturn"`, `romSetName: "SS"`, `emulatorHint: "saturn"`, and `format: "cue"`. A single-file Saturn ISO remains one standalone game.
 
 PC-FX scans use `platform: "pc-fx"`, `romSetName: "PC-FX"`, and `emulatorHint: "pcfx"`. CUE, CCD, TOC, CHD, and M3U files are launch entries; raw BIN/IMG/ISO tracks and `pcfx.rom` are never standalone catalog items. Adjacent `CD1`/`CD2` directories are exposed as one virtual M3U game, so facets count launchable titles rather than physical discs. Pegasus `metadata.pegasus.txt` files may provide title, description, developer, and `ignore-file` data.
+
+Nintendo 64 scans use `platform: "n64"`, `romSetName: "Nintendo 64"`, `emulatorHint: "mupen64plus"`, and `inputProfile: "standard"`. Raw `.z64`, `.v64`, and `.n64` files are validated by their byte-order header. If a legacy ROM has the wrong extension, the header remains authoritative and the catalog/download filename is normalized to the matching extension without changing the source file. A ZIP is treated as N64 only when its library/path identifies N64 and it contains exactly one valid raw ROM candidate; the catalog and download endpoint expose that raw entry's normalized filename, format, size, CRC32, SHA-1, and bytes rather than the ZIP container. ZIPs with zero or multiple candidates, unsafe paths, invalid ROM headers, or size-limit violations are reported as scan errors. Historical `nintendo64` and `nintendo 64` records are normalized to the canonical `n64` facet.
+
+PC-98 scans use `platform: "pc98"`, `romSetName: "PC-98"`, `emulatorHint: "np2kai"`, and `inputProfile: "standard"`. Supported floppy and hard-disk images are validated by known geometry/header rules before indexing. A ZIP is accepted only when it contains exactly one validated PC-98 media candidate; catalog `size`, CRC32, SHA-1, manifest filename, and downloads describe that raw image rather than the ZIP container. ZIPs with multiple media candidates require manual review. Firmware, fonts, emulator binaries, DOS support roots, unsafe archive paths, symlinks, encrypted entries, and archive-bomb patterns are rejected or excluded. RAR, `.7z`, TAR, and multi-floppy package playback are intentionally outside this first PC-98 contract.
 
 ### `GET /api/client/videos`
 
@@ -842,6 +848,7 @@ Returns client-safe game launch metadata. It does not expose the real NAS path.
     "romSetName": "SNES",
     "region": "USA",
     "format": "sfc",
+    "fileName": "Super Mario World.sfc",
     "size": 524288,
     "crc32": "b19ed489",
     "sha1": "0123456789abcdef0123456789abcdef01234567",
@@ -850,7 +857,8 @@ Returns client-safe game launch metadata. It does not expose the real NAS path.
     "favorite": false,
     "liked": false,
     "coverUrl": "/api/games/12/cover",
-    "manifestUrl": "/api/client/games/12/manifest"
+    "manifestUrl": "/api/client/games/12/manifest",
+    "downloadUrl": "/api/client/games/12/file"
   },
   "fileUrl": "/api/client/games/12/file",
   "entryFile": "Super Mario World.sfc",
@@ -866,6 +874,10 @@ Returns client-safe game launch metadata. It does not expose the real NAS path.
 ```
 
 `fileUrl` streams the entry file through FolioSpace Library and remains available for older single-file clients. It still requires bearer auth when auth is enabled. Native clients should treat it as an opaque service URL, not as a file path.
+
+For Nintendo 64, `fileUrl` and `downloadUrl` return the byte-exact raw `.z64`, `.v64`, or `.n64` payload. If storage uses a single-ROM ZIP, FolioSpace opens the validated raw entry without exposing or downloading the ZIP container. `Content-Length` matches the catalog `size`, and the response filename preserves the raw ROM byte-order extension.
+
+For PC-98, `fileUrl`, `downloadUrl`, and `files[0].url` return the byte-exact validated disk image. If storage uses a single-media ZIP, FolioSpace streams the raw entry and preserves its media filename and extension. `Content-Length` matches the raw image size. Clients route canonical `platform: "pc98"` records to NP2kai and must not attempt to launch the ZIP container.
 
 `files[]` is the complete ordered launch set. Single-file games contain one `entry` item. Dreamcast GDI games contain the `.gdi` descriptor as `entry` followed by every referenced track as `dependency`. Saturn and PC-FX CUE games contain the `.cue` descriptor followed by every file named by a CUE `FILE` directive, including `.bin`, `.wav`, and `.mp3` tracks. A PC-FX M3U package contains the M3U entry, every referenced disc descriptor, and all descriptor tracks. Dependency lookup is case-insensitive, while each returned `name` preserves the spelling expected by its descriptor. Clients must preserve each `name` when downloading so the emulator can resolve the package. Each `url` uses `GET /api/client/games/{gameId}/files/{position}` and requires the same authentication as `fileUrl`.
 `coverUrl` is optional. For supported retro platforms it streams a cached Libretro boxart image through FolioSpace Library; clients should fall back to their own placeholder when it is absent or returns 404.

@@ -3,6 +3,7 @@ package scanner
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -927,6 +928,252 @@ func TestScanLibraryIndexesGameROMMetadata(t *testing.T) {
 	}
 }
 
+func TestScanLibraryIndexesN64RawAndZIPROMs(t *testing.T) {
+	tests := []struct {
+		name       string
+		fileName   string
+		entries    map[string]string
+		body       string
+		wantFormat string
+		wantTitle  string
+		wantError  bool
+	}{
+		{
+			name:       "raw z64",
+			fileName:   "Super Mario 64.z64",
+			body:       string([]byte{0x80, 0x37, 0x12, 0x40}) + "raw-z64",
+			wantFormat: "z64",
+			wantTitle:  "Super Mario 64",
+		},
+		{
+			name:       "extension header mismatch uses detected format",
+			fileName:   "Mismatch.v64",
+			body:       string([]byte{0x80, 0x37, 0x12, 0x40}) + "valid-z64",
+			wantFormat: "z64",
+			wantTitle:  "Mismatch",
+		},
+		{
+			name:      "invalid header",
+			fileName:  "Invalid.n64",
+			body:      "not-an-n64-rom",
+			wantError: true,
+		},
+		{
+			name:     "zip with one raw entry",
+			fileName: "Mario Kart 64.zip",
+			entries: map[string]string{
+				"README.txt":                "notes",
+				"__MACOSX/._Mario Kart.v64": "ignored",
+				"ROM/Mario Kart 64.v64":     string([]byte{0x37, 0x80, 0x40, 0x12}) + "raw-v64",
+			},
+			wantFormat: "v64",
+			wantTitle:  "Mario Kart 64",
+		},
+		{
+			name:     "zip with multiple raw entries",
+			fileName: "Multiple.zip",
+			entries: map[string]string{
+				"One.z64": string([]byte{0x80, 0x37, 0x12, 0x40}) + "one",
+				"Two.n64": string([]byte{0x40, 0x12, 0x37, 0x80}) + "two",
+			},
+			wantError: true,
+		},
+		{
+			name:     "zip path traversal",
+			fileName: "Traversal.zip",
+			entries: map[string]string{
+				"../Escape.z64": string([]byte{0x80, 0x37, 0x12, 0x40}) + "escape",
+			},
+			wantError: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "N64", test.fileName)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if test.entries != nil {
+				makeZip(t, path, test.entries)
+			} else if err := os.WriteFile(path, []byte(test.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			conn, err := db.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			st := store.New(conn)
+			lib, err := st.CreateLibraryWithType("Games", root, "game")
+			if err != nil {
+				t.Fatal(err)
+			}
+			job, err := New(st).ScanLibrary(lib)
+			if err != nil {
+				t.Fatal(err)
+			}
+			games, err := st.ListRecentGames(10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.wantError {
+				if job.ErrorCount != 1 || len(games) != 0 {
+					t.Fatalf("job = %#v, games = %#v, want one scan error and no game", job, games)
+				}
+				return
+			}
+			if job.ErrorCount != 0 || job.IndexedFiles != 1 || len(games) != 1 {
+				t.Fatalf("job = %#v, games = %#v, want one indexed N64 game", job, games)
+			}
+			game := games[0]
+			if game.Title != test.wantTitle || game.Platform != "n64" || game.ROMSetName != "Nintendo 64" || game.EmulatorHint != "mupen64plus" || game.Format != test.wantFormat || game.Compatibility != "untested" {
+				t.Fatalf("game = %#v, want canonical N64 metadata", game)
+			}
+			if game.CRC32 == "" || game.SHA1 == "" {
+				t.Fatalf("game checksums = %q/%q, want raw ROM checksums", game.CRC32, game.SHA1)
+			}
+			files, err := st.GameFiles(game.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(files) != 1 || files[0].Role != "entry" || files[0].Name != test.wantTitle+"."+test.wantFormat || files[0].Size != game.Size {
+				t.Fatalf("game files = %#v, want one raw ROM entry", files)
+			}
+		})
+	}
+}
+
+func TestScanLibraryIndexesValidatedPC98MediaAndExcludesSupportFiles(t *testing.T) {
+	root := t.TempDir()
+	pc98Dir := filepath.Join(root, "PC98")
+	rawPath := filepath.Join(pc98Dir, "Love Escalator AI汉化版", "Love Escalator_CN.hdi")
+	zipPath := filepath.Join(pc98Dir, "GAME.PC98", "Archive Game.zip")
+	if err := os.MkdirAll(filepath.Dir(rawPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(zipPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := syntheticPC98AnexImage(512, 4, 2, 10)
+	if err := os.WriteFile(rawPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string][]byte{
+		"FONT.bmp":     []byte("font"),
+		"np21x64w.exe": []byte("emulator"),
+		"BIOS.ROM":     []byte("firmware"),
+	} {
+		if err := os.WriteFile(filepath.Join(filepath.Dir(rawPath), name), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	zipMedia := syntheticPC98AnexImage(1024, 2, 2, 4)
+	makeZip(t, zipPath, map[string]string{
+		"Archive Game.fdi": string(zipMedia),
+		"README.txt":       "notes",
+		"__MACOSX/._Game":  "ignored",
+	})
+	dosPath := filepath.Join(pc98Dir, "GAME.DOS", "DOS Game.zip")
+	if err := os.MkdirAll(filepath.Dir(dosPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeZip(t, dosPath, map[string]string{"Not PC98.hdi": string(raw)})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ErrorCount != 0 || job.IndexedFiles != 2 {
+		t.Fatalf("job = %#v, want two validated PC-98 games", job)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "pc98", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Items) != 2 {
+		t.Fatalf("PC-98 page = %#v, want two games", page)
+	}
+	for _, game := range page.Items {
+		if game.Platform != "pc98" || game.ROMSetName != "PC-98" || game.EmulatorHint != "np2kai" || game.Compatibility != "untested" || game.CRC32 == "" || game.SHA1 == "" {
+			t.Fatalf("game = %#v, want canonical PC-98 metadata", game)
+		}
+		files, err := st.GameFiles(game.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) != 1 || files[0].Role != "entry" || files[0].Size != game.Size {
+			t.Fatalf("files = %#v, want one raw PC-98 entry", files)
+		}
+	}
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.IndexedFiles != 0 || secondJob.SkippedFiles != 2 {
+		t.Fatalf("second job = %#v, want unchanged PC-98 media skipped", secondJob)
+	}
+}
+
+func TestScanLibraryRejectsAmbiguousPC98ZIP(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "PC-98", "Multiple.zip")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	image := syntheticPC98AnexImage(512, 4, 2, 4)
+	makeZip(t, path, map[string]string{"Disk A.hdi": string(image), "Disk B.hdi": string(image)})
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	games, err := st.ListRecentGames(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ErrorCount != 1 || len(games) != 0 {
+		t.Fatalf("job = %#v, games = %#v, want manual-review error and no game", job, games)
+	}
+}
+
+func syntheticPC98AnexImage(sectorSize, sectors, surfaces, cylinders uint32) []byte {
+	const headerSize = uint32(4096)
+	dataSize := sectorSize * sectors * surfaces * cylinders
+	image := make([]byte, int(headerSize+dataSize))
+	binary.LittleEndian.PutUint32(image[8:12], headerSize)
+	binary.LittleEndian.PutUint32(image[12:16], dataSize)
+	binary.LittleEndian.PutUint32(image[16:20], sectorSize)
+	binary.LittleEndian.PutUint32(image[20:24], sectors)
+	binary.LittleEndian.PutUint32(image[24:28], surfaces)
+	binary.LittleEndian.PutUint32(image[28:32], cylinders)
+	for index := int(headerSize); index < len(image); index++ {
+		image[index] = byte(index)
+	}
+	return image
+}
+
 func TestScanLibraryImportsGamelistMetadata(t *testing.T) {
 	root := t.TempDir()
 	platformDir := filepath.Join(root, "SNES")
@@ -1194,8 +1441,8 @@ func TestScanLibraryTreatsZipAsGameWhenLibraryIsGameTyped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(games) != 1 || games[0].Title != "mslug" || games[0].Format != "zip" || games[0].Platform != "mame" {
-		t.Fatalf("games = %#v, want MAME zip ROM set", games)
+	if len(games) != 1 || games[0].Title != "mslug" || games[0].Format != "zip" || games[0].Platform != "arcade" || games[0].ROMSetName != "Arcade" {
+		t.Fatalf("games = %#v, want canonical Arcade zip ROM set", games)
 	}
 
 	series, err := st.ListSeries()
@@ -1769,8 +2016,8 @@ func TestScanLibraryTreats7zAsGameWhenLibraryIsGameTyped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(games) != 1 || games[0].Title != "romset" || games[0].Format != "7z" || games[0].Platform != "mame" {
-		t.Fatalf("games = %#v, want MAME 7z ROM set", games)
+	if len(games) != 1 || games[0].Title != "romset" || games[0].Format != "7z" || games[0].Platform != "arcade" || games[0].ROMSetName != "Arcade" {
+		t.Fatalf("games = %#v, want canonical Arcade 7z ROM set", games)
 	}
 }
 

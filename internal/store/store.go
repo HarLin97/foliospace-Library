@@ -1714,6 +1714,7 @@ func (s *Store) ListGameFacets(options domain.GameListOptions) (domain.GameListF
 		if err := rows.Scan(&facet.Platform, &facet.ROMSetName, &facet.Format, &facet.EmulatorHint, &facet.Count); err != nil {
 			return domain.GameListFacets{}, err
 		}
+		facet.Title = GamePlatformLabel(facet.Platform)
 		facets = append(facets, facet)
 	}
 	if err := rows.Err(); err != nil {
@@ -2191,10 +2192,14 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "naomi"
 	case GamePlatformCollectionID("saturn"):
 		return "saturn"
+	case GamePlatformCollectionID("n64"):
+		return "n64"
 	case GamePlatformCollectionID("dreamcast"):
 		return "dreamcast"
 	case GamePlatformCollectionID("pc-fx"):
 		return "pc-fx"
+	case GamePlatformCollectionID("pc98"):
+		return "pc98"
 	case GamePlatformCollectionID("arcade"):
 		return "arcade"
 	case GamePlatformCollectionID("mame"):
@@ -2222,10 +2227,14 @@ func GamePlatformSortRank(platform string) int {
 		return 65
 	case "saturn":
 		return 70
+	case "n64":
+		return 72
 	case "dreamcast":
 		return 75
 	case "pc-fx":
 		return 76
+	case "pc98":
+		return 77
 	case "neogeo":
 		return 80
 	case "model3":
@@ -2264,6 +2273,10 @@ func GamePlatformLabel(platform string) string {
 		return "Dreamcast"
 	case "pc-fx":
 		return "PC-FX"
+	case "pc98":
+		return "NEC PC-98"
+	case "n64":
+		return "Nintendo 64"
 	case "arcade":
 		return "Arcade"
 	case "mame":
@@ -2311,8 +2324,13 @@ func (s *Store) CanSkipGameSet(path string, size int64, mtime time.Time, platfor
 }
 
 func expectedGameEmulatorHint(platform string) string {
-	if strings.EqualFold(strings.TrimSpace(platform), "pc-fx") {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "pc-fx":
 		return "pcfx"
+	case "n64":
+		return "mupen64plus"
+	case "pc98":
+		return "np2kai"
 	}
 	return platform
 }

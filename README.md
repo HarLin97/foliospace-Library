@@ -89,7 +89,7 @@ Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/clien
 - `GET /api/collections?primaryType=comic&limit=60&offset=0`: paginated collection catalog for native Home / collection overview screens.
 - `GET /api/client/books/:id/manifest`: a client-safe open manifest with `readerModes` and `defaultReaderMode`. CBZ/ZIP books include page URLs; EPUB books include spine, TOC, `resourceBaseUrl`, `coverUrl`, and progress; PDF books expose an opaque Range-capable stream URL for single-page, double-page, or webtoon/vertical-scroll client layouts.
 - `GET /api/books/:id/reading-position` and `PUT /api/books/:id/reading-position/webtoon`: structured webtoon progress using a stable page key plus normalized page Y offset, with automatic legacy `/progress` fallback compatibility.
-- `GET /api/client/games/:id/manifest`: a client-safe game launch manifest with platform, checksums, emulator hint, and opaque file URLs. Dreamcast GDI, Saturn CUE, and PC-FX CUE/M3U manifests include the descriptor plus every required track in `files[]`.
+- `GET /api/client/games/:id/manifest`: a client-safe game launch manifest with platform, checksums, emulator hint, and opaque file URLs. Nintendo 64 `.z64`, `.v64`, and `.n64` games and PC-98 disk images are validated before indexing and downloaded as raw media bytes even when stored in a single-media ZIP. Dreamcast GDI, Saturn CUE, and PC-FX CUE/M3U manifests include the descriptor plus every required track in `files[]`.
 - `GET/PUT /api/client/books/:id/private-state`: client-safe private status, favorite, rating, tags, and note sync.
 - `GET/PUT /api/client/preferences`: client UI language and reader preference sync.
 - `GET/PUT /api/settings/scan`: scan worker settings for NAS devices with different CPU and memory budgets.
@@ -308,10 +308,10 @@ The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland
 ## Current MVP Support
 
 - P0 reading formats: `.cbz`, `.zip`, `.epub`.
-- P0 game formats: `.nes`, `.sfc`, `.smc`, `.gba`, `.gb`, `.gbc`, `.nds`, `.3ds`, `.cia`, `.gdi`, `.cdi`, `.chd`, `.iso`, `.bin`, `.cue`; `.zip` and `.7z` are treated as ROM sets only when the library type is `game`.
+- P0 game formats: `.nes`, `.sfc`, `.smc`, `.gba`, `.gb`, `.gbc`, `.nds`, `.3ds`, `.cia`, `.gdi`, `.cdi`, `.chd`, `.iso`, `.bin`, `.cue`, plus validated PC-98 floppy and hard-disk image formats. `.zip` and `.7z` are treated as ROM sets only when the library type is `game`; PC-98 ZIP ingestion is limited to one validated media image and does not accept `.7z`, RAR, or TAR containers.
 - Series derivation: immediate parent directory, with root-level files grouped under `Unsorted`.
 - Reading: backend streams one ZIP image entry or EPUB resource at a time.
-- Games: backend indexes local ROM metadata and checksums, exposes client-safe launch manifests without NAS paths, and lazily caches supported Libretro boxart under `/config/cache/game-covers`. Dreamcast `.gdi`, Saturn `.cue`, and PC-FX `.cue`/`.m3u` sets are indexed as one launchable game; referenced track files remain dependencies instead of separate catalog records. PC-FX multi-disc folders are merged into one virtual M3U package, and Pegasus metadata plus local `media/.../boxFront.*` or `PC-FX Covers/* [正面].jpg` artwork is used when available.
+- Games: backend indexes local ROM metadata and checksums, exposes client-safe launch manifests without NAS paths, and lazily caches supported Libretro boxart under `/config/cache/game-covers`. Dreamcast `.gdi`, Saturn `.cue`, and PC-FX `.cue`/`.m3u` sets are indexed as one launchable game; referenced track files remain dependencies instead of separate catalog records. PC-FX multi-disc folders are merged into one virtual M3U package, and Pegasus metadata plus local `media/.../boxFront.*` or `PC-FX Covers/* [正面].jpg` artwork is used when available. PC-98 media uses canonical `pc98` / `PC-98` / `np2kai` metadata, rejects firmware/tool/DOS support files, and exposes one byte-exact launch image per catalog record.
 - Errors: empty files, archive open failures, walk errors, and unsupported future categories are recorded as structured rows.
 
 Near-term expansion priority:

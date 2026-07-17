@@ -1322,6 +1322,36 @@ func (s *Service) OpenGameFile(id int64) (PageStream, error) {
 		data := virtualM3UData(files)
 		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: "application/octet-stream"}, nil
 	}
+	if game.Platform == "n64" && strings.EqualFold(filepath.Ext(game.FilePath), ".zip") {
+		files, err := s.store.GameFiles(id)
+		if err != nil {
+			return PageStream{}, err
+		}
+		expectedName := ""
+		if len(files) == 1 {
+			expectedName = files[0].Name
+		}
+		body, err := openN64ROMFromZIP(game.FilePath, expectedName, game.Size)
+		if err != nil {
+			return PageStream{}, err
+		}
+		return PageStream{Body: body, ContentType: "application/octet-stream"}, nil
+	}
+	if game.Platform == "pc98" && strings.EqualFold(filepath.Ext(game.FilePath), ".zip") {
+		files, err := s.store.GameFiles(id)
+		if err != nil {
+			return PageStream{}, err
+		}
+		expectedName := ""
+		if len(files) == 1 {
+			expectedName = files[0].Name
+		}
+		body, err := openPC98MediaFromZIP(game.FilePath, expectedName, game.Size)
+		if err != nil {
+			return PageStream{}, err
+		}
+		return PageStream{Body: body, ContentType: "application/octet-stream"}, nil
+	}
 	body, err := os.Open(game.FilePath)
 	if err != nil {
 		return PageStream{}, err
@@ -1400,11 +1430,141 @@ func (s *Service) OpenGameFilePart(id int64, position int) (PageStream, domain.G
 		file.Size = int64(len(data))
 		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: "application/octet-stream"}, file, nil
 	}
+	if game.Platform == "n64" && strings.EqualFold(filepath.Ext(game.FilePath), ".zip") && file.Role == "entry" {
+		body, err := openN64ROMFromZIP(game.FilePath, file.Name, file.Size)
+		if err != nil {
+			return PageStream{}, domain.GameFile{}, err
+		}
+		return PageStream{Body: body, ContentType: "application/octet-stream"}, file, nil
+	}
+	if game.Platform == "pc98" && strings.EqualFold(filepath.Ext(game.FilePath), ".zip") && file.Role == "entry" {
+		body, err := openPC98MediaFromZIP(game.FilePath, file.Name, file.Size)
+		if err != nil {
+			return PageStream{}, domain.GameFile{}, err
+		}
+		return PageStream{Body: body, ContentType: "application/octet-stream"}, file, nil
+	}
 	body, err := os.Open(file.FilePath)
 	if err != nil {
 		return PageStream{}, domain.GameFile{}, err
 	}
 	return PageStream{Body: body, ContentType: "application/octet-stream"}, file, nil
+}
+
+func openN64ROMFromZIP(path string, expectedName string, expectedSize int64) (io.ReadCloser, error) {
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		return nil, err
+	}
+	var match *zip.File
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() || !isN64ROMExtension(filepath.Ext(file.Name)) {
+			continue
+		}
+		if expectedName != "" && !strings.EqualFold(filepath.Base(file.Name), filepath.Base(expectedName)) {
+			continue
+		}
+		if match != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("N64 zip contains multiple matching ROM entries")
+		}
+		match = file
+	}
+	if match == nil {
+		_ = reader.Close()
+		return nil, fmt.Errorf("N64 ROM entry %q not found", expectedName)
+	}
+	if expectedSize <= 0 || int64(match.UncompressedSize64) != expectedSize {
+		_ = reader.Close()
+		return nil, fmt.Errorf("N64 ROM entry size is %d, expected %d", match.UncompressedSize64, expectedSize)
+	}
+	body, err := match.Open()
+	if err != nil {
+		_ = reader.Close()
+		return nil, err
+	}
+	var header [4]byte
+	if _, err := io.ReadFull(body, header[:]); err != nil {
+		_ = body.Close()
+		_ = reader.Close()
+		return nil, fmt.Errorf("read N64 ROM header: %w", err)
+	}
+	if !matchesN64DownloadHeader(filepath.Ext(match.Name), header) {
+		_ = body.Close()
+		_ = reader.Close()
+		return nil, fmt.Errorf("N64 ROM entry extension does not match its header")
+	}
+	stream := io.NopCloser(io.MultiReader(bytes.NewReader(header[:]), body))
+	return cleanupReadCloser{ReadCloser: stream, cleanup: func() {
+		_ = body.Close()
+		_ = reader.Close()
+	}}, nil
+}
+
+func isN64ROMExtension(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".z64", ".v64", ".n64":
+		return true
+	default:
+		return false
+	}
+}
+
+func matchesN64DownloadHeader(ext string, header [4]byte) bool {
+	expected := map[string][4]byte{
+		".z64": {0x80, 0x37, 0x12, 0x40},
+		".v64": {0x37, 0x80, 0x40, 0x12},
+		".n64": {0x40, 0x12, 0x37, 0x80},
+	}
+	want, ok := expected[strings.ToLower(strings.TrimSpace(ext))]
+	return ok && header == want
+}
+
+func openPC98MediaFromZIP(path string, expectedName string, expectedSize int64) (io.ReadCloser, error) {
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		return nil, err
+	}
+	var match *zip.File
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() || !isPC98MediaExtension(filepath.Ext(file.Name)) {
+			continue
+		}
+		if expectedName != "" && !strings.EqualFold(filepath.Base(file.Name), filepath.Base(expectedName)) {
+			continue
+		}
+		if match != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("PC-98 zip contains multiple matching media entries")
+		}
+		match = file
+	}
+	if match == nil {
+		_ = reader.Close()
+		return nil, fmt.Errorf("PC-98 media entry %q not found", expectedName)
+	}
+	if expectedSize <= 0 || int64(match.UncompressedSize64) != expectedSize {
+		_ = reader.Close()
+		return nil, fmt.Errorf("PC-98 media entry size is %d, expected %d", match.UncompressedSize64, expectedSize)
+	}
+	body, err := match.Open()
+	if err != nil {
+		_ = reader.Close()
+		return nil, err
+	}
+	return cleanupReadCloser{ReadCloser: body, cleanup: func() {
+		_ = body.Close()
+		_ = reader.Close()
+	}}, nil
+}
+
+func isPC98MediaExtension(ext string) bool {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".d88", ".88d", ".d98", ".98d", ".fdi", ".xdf", ".hdm", ".dup", ".2hd", ".tfd", ".nfd", ".hd4", ".hd5", ".hd9", ".fdd", ".h01", ".hdb", ".ddb", ".dd6", ".dcp", ".dcu", ".flp", ".img", ".ima", ".bin", ".fim", ".thd", ".nhd", ".hdi", ".vhd", ".slh", ".hdn", ".cmd":
+		return true
+	default:
+		return false
+	}
 }
 
 func virtualM3UData(files []domain.GameFile) []byte {
@@ -1830,9 +1990,16 @@ func libretroBoxartCandidates(game domain.GameAsset) []string {
 	if title == "" {
 		return nil
 	}
-	listing, err := cachedLibretroListing(playlist, "Named_Boxarts")
-	if err == nil && len(listing) > 0 {
-		if out := libretroBoxartCandidatesFromListing(game, listing); len(out) > 0 {
+	folders := []string{"Named_Boxarts"}
+	if strings.EqualFold(strings.TrimSpace(game.Platform), "pc98") || strings.EqualFold(strings.TrimSpace(game.Platform), "pc-98") {
+		folders = append(folders, "Named_Titles", "Named_Snaps")
+	}
+	for _, folder := range folders {
+		listing, err := cachedLibretroListing(playlist, folder)
+		if err != nil || len(listing) == 0 {
+			continue
+		}
+		if out := libretroArtworkCandidatesFromListing(game, folder, listing); len(out) > 0 {
 			return out
 		}
 	}
@@ -1886,6 +2053,8 @@ func libretroPlaylist(platform string) (string, bool) {
 		return "Nintendo - Nintendo Entertainment System", true
 	case "snes":
 		return "Nintendo - Super Nintendo Entertainment System", true
+	case "n64", "nintendo64", "nintendo 64":
+		return "Nintendo - Nintendo 64", true
 	case "gb":
 		return "Nintendo - Game Boy", true
 	case "gbc":
@@ -1900,6 +2069,8 @@ func libretroPlaylist(platform string) (string, bool) {
 		return "Sony - PlayStation", true
 	case "psp":
 		return "Sony - PlayStation Portable", true
+	case "pc98", "pc-98", "nec-pc98", "nec pc-98":
+		return "NEC - PC-98", true
 	default:
 		return "", false
 	}
@@ -1922,6 +2093,9 @@ func libretroArtworkSearchNames(game domain.GameAsset) []string {
 		return nil
 	}
 	names := []string{}
+	if strings.EqualFold(strings.TrimSpace(game.Platform), "pc98") || strings.EqualFold(strings.TrimSpace(game.Platform), "pc-98") {
+		names = append(names, libretroPC98SearchNames(game)...)
+	}
 	names = append(names, libretroArchiveSearchNames(game)...)
 	if game.Region != "" {
 		names = append(names, fmt.Sprintf("%s (%s)", title, strings.TrimSpace(game.Region)))
@@ -1943,6 +2117,33 @@ func libretroArtworkSearchNames(game domain.GameAsset) []string {
 	return out
 }
 
+func libretroPC98SearchNames(game domain.GameAsset) []string {
+	path := strings.TrimSpace(game.FilePath)
+	if path == "" {
+		return nil
+	}
+
+	base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	if !strings.EqualFold(filepath.Ext(path), ".zip") {
+		parent := strings.TrimSpace(filepath.Base(filepath.Dir(path)))
+		switch strings.ToLower(parent) {
+		case "", ".", "pc98", "pc-98", "game.pc98", "原始数据":
+		default:
+			base = parent
+		}
+	}
+	if base == "" {
+		return nil
+	}
+
+	names := []string{base}
+	translationSuffix := regexp.MustCompile(`(?i)(?:[_ -](?:cn|chs|cht)|\s+(?:ai)?(?:汉化版|中文版|中文))$`)
+	if clean := strings.TrimSpace(translationSuffix.ReplaceAllString(base, "")); clean != "" && !strings.EqualFold(clean, base) {
+		names = append(names, clean)
+	}
+	return names
+}
+
 func libretroArchiveSearchNames(game domain.GameAsset) []string {
 	if strings.ToLower(strings.TrimSpace(game.Format)) != "zip" || strings.TrimSpace(game.FilePath) == "" {
 		return nil
@@ -1961,7 +2162,7 @@ func libretroArchiveSearchNames(game domain.GameAsset) []string {
 		}
 		ext := strings.ToLower(filepath.Ext(name))
 		switch ext {
-		case ".sfc", ".smc", ".fig", ".swc", ".nes", ".gb", ".gbc", ".gba", ".md", ".gen", ".bin":
+		case ".sfc", ".smc", ".fig", ".swc", ".nes", ".gb", ".gbc", ".gba", ".md", ".gen", ".bin", ".z64", ".v64", ".n64":
 			base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
 			out = append(out, libretroExpandedRegionNames(base)...)
 		}
@@ -2082,7 +2283,7 @@ func findLibretroArtworkMatch(targets []string, listing []string) string {
 	}
 	for _, target := range targets {
 		targetTokens := libretroMatchTokens(target)
-		if len(targetTokens) == 0 {
+		if len(targetTokens) < 2 {
 			continue
 		}
 		best := ""

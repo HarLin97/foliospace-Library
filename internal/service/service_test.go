@@ -76,6 +76,68 @@ func TestListDirectoriesRestrictsToConfiguredRoots(t *testing.T) {
 	}
 }
 
+func TestOpenN64ZIPGameStreamsRawROMEntry(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "Mario Kart 64.zip")
+	rom := append([]byte{0x80, 0x37, 0x12, 0x40}, []byte("n64-rom-body")...)
+	if err := makeZipBytesAt(zipPath, map[string][]byte{
+		"README.txt":            []byte("notes"),
+		"ROM/Mario Kart 64.z64": rom,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("N64", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Mario Kart 64", Platform: "n64", ROMSetName: "Nintendo 64", Format: "z64",
+		FilePath: zipPath, RelPath: "Mario Kart 64.z64", Size: int64(len(rom)), MTime: time.Now(),
+		EmulatorHint: "mupen64plus", Compatibility: "untested",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{{
+		Name: "Mario Kart 64.z64", FilePath: zipPath, Size: int64(len(rom)), MTime: time.Now(), Role: "entry", Position: 0,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := New(st).OpenGameFile(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	got, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, rom) {
+		t.Fatalf("OpenGameFile returned %x, want raw ROM %x", got, rom)
+	}
+
+	part, file, err := New(st).OpenGameFilePart(game.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer part.Body.Close()
+	gotPart, err := io.ReadAll(part.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Name != "Mario Kart 64.z64" || !bytes.Equal(gotPart, rom) {
+		t.Fatalf("OpenGameFilePart file=%#v data=%x, want raw entry", file, gotPart)
+	}
+}
+
 func TestBookShelvesSkipMissingOrModifiedFiles(t *testing.T) {
 	root := t.TempDir()
 	validPath := filepath.Join(root, "valid.cbz")

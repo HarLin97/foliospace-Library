@@ -334,6 +334,7 @@ type GameListFacets struct {
 
 type GamePlatformFacet struct {
 	Platform     string `json:"platform"`
+	Title        string `json:"title,omitempty"`
 	ROMSetName   string `json:"romSetName,omitempty"`
 	Format       string `json:"format,omitempty"`
 	EmulatorHint string `json:"emulatorHint,omitempty"`

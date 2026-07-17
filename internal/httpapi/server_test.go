@@ -3,6 +3,7 @@ package httpapi
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -787,7 +788,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	if !strings.Contains(homeBody, `"favorite":true`) || !strings.Contains(homeBody, `"liked":true`) {
 		t.Fatalf("client home response %q is missing collection private state", homeBody)
 	}
-	if !strings.Contains(homeBody, `"gameShelf"`) || !strings.Contains(homeBody, `"Super Mario World"`) || strings.Contains(homeBody, "Super Mario World (USA).sfc") {
+	if !strings.Contains(homeBody, `"gameShelf"`) || !strings.Contains(homeBody, `"Super Mario World"`) || strings.Contains(homeBody, filepath.Join(root, "Games")) {
 		t.Fatalf("client home response %q is missing safe game shelf", homeBody)
 	}
 	if !strings.Contains(homeBody, `"videoShelf"`) || !strings.Contains(homeBody, `"Demo Movie"`) || strings.Contains(homeBody, "Movies/Demo Movie.mp4") {
@@ -1063,6 +1064,207 @@ func TestAPIClientGameFacetsUseFullCatalog(t *testing.T) {
 	legacyDisc := authGet(t, ts.URL+"/api/client/games?platform=disc", "secret")
 	if !strings.Contains(legacyDisc, `"total":1`) || !strings.Contains(legacyDisc, `"title":"Legacy Disc E"`) {
 		t.Fatalf("legacy disc page = %q, want old platform query compatibility", legacyDisc)
+	}
+}
+
+func TestAPIClientN64ZIPCatalogManifestAndDownload(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "F-Zero X.zip")
+	rom := append([]byte{0x40, 0x12, 0x37, 0x80}, []byte("n64-rom-body")...)
+	makeZip(t, zipPath, map[string]string{
+		"README.txt":       "notes",
+		"ROM/F-Zero X.n64": string(rom),
+	})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("N64", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "F-Zero X", Platform: "n64", ROMSetName: "Nintendo 64", Format: "n64",
+		FilePath: zipPath, RelPath: "F-Zero X.n64", Size: int64(len(rom)), MTime: time.Now(),
+		CRC32: "12345678", SHA1: "1234567890123456789012345678901234567890", EmulatorHint: "mupen64plus", Compatibility: "untested",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{{
+		Name: "F-Zero X.n64", FilePath: zipPath, Size: int64(len(rom)), MTime: time.Now(), Role: "entry", Position: 0,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	catalog := authGet(t, ts.URL+"/api/client/games?platform=n64", "secret")
+	for _, want := range []string{
+		`"total":1`, `"platform":"n64"`, `"romSetName":"Nintendo 64"`, `"format":"n64"`,
+		`"fileName":"F-Zero X.n64"`, `"emulatorHint":"mupen64plus"`, `"inputProfile":"standard"`,
+		`"compatibility":"untested"`, `"downloadUrl":"/api/client/games/`,
+	} {
+		if !strings.Contains(catalog, want) {
+			t.Fatalf("N64 catalog = %q, missing %s", catalog, want)
+		}
+	}
+	if strings.Contains(catalog, root) || strings.Contains(catalog, "filePath") || strings.Contains(catalog, "relPath") {
+		t.Fatalf("N64 catalog leaked internal path: %q", catalog)
+	}
+
+	facets := authGet(t, ts.URL+"/api/client/games/facets?platform=n64", "secret")
+	for _, want := range []string{`"total":1`, `"platform":"n64"`, `"title":"Nintendo 64"`, `"count":1`} {
+		if !strings.Contains(facets, want) {
+			t.Fatalf("N64 facets = %q, missing %s", facets, want)
+		}
+	}
+
+	manifest := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/manifest", "secret")
+	for _, want := range []string{`"entryFile":"F-Zero X.n64"`, `"name":"F-Zero X.n64"`, `"role":"entry"`} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("N64 manifest = %q, missing %s", manifest, want)
+		}
+	}
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/client/games/"+itoa(game.ID)+"/file", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || !bytes.Equal(got, rom) {
+		t.Fatalf("N64 download status=%d data=%x, want raw ROM", resp.StatusCode, got)
+	}
+	if resp.ContentLength != int64(len(rom)) || resp.Header.Get("Content-Disposition") != `attachment; filename="F-Zero X.n64"` {
+		t.Fatalf("N64 download headers length=%d disposition=%q", resp.ContentLength, resp.Header.Get("Content-Disposition"))
+	}
+}
+
+func TestAPIClientPC98ZIPCatalogManifestAndDownload(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "Love Escalator.zip")
+	media := syntheticPC98AnexImageForAPI(512, 4, 2, 10)
+	makeZip(t, zipPath, map[string]string{
+		"README.txt":                   "notes",
+		"GAME.PC98/Love Escalator.hdi": string(media),
+	})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("PC-98", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Love Escalator", Platform: "pc98", ROMSetName: "PC-98", Format: "hdi",
+		FilePath: zipPath, RelPath: "Love Escalator.hdi", Size: int64(len(media)), MTime: time.Now(),
+		CRC32: "12345678", SHA1: "1234567890123456789012345678901234567890", EmulatorHint: "np2kai", Compatibility: "untested",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{{
+		Name: "Love Escalator.hdi", FilePath: zipPath, Size: int64(len(media)), MTime: time.Now(), Role: "entry", Position: 0,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	catalog := authGet(t, ts.URL+"/api/client/games?platform=pc98", "secret")
+	for _, want := range []string{
+		`"total":1`, `"platform":"pc98"`, `"romSetName":"PC-98"`, `"format":"hdi"`,
+		`"fileName":"Love Escalator.hdi"`, `"emulatorHint":"np2kai"`, `"inputProfile":"standard"`,
+		`"compatibility":"untested"`, `"downloadUrl":"/api/client/games/`,
+	} {
+		if !strings.Contains(catalog, want) {
+			t.Fatalf("PC-98 catalog = %q, missing %s", catalog, want)
+		}
+	}
+	if strings.Contains(catalog, root) || strings.Contains(catalog, "filePath") || strings.Contains(catalog, "relPath") {
+		t.Fatalf("PC-98 catalog leaked internal path: %q", catalog)
+	}
+
+	facets := authGet(t, ts.URL+"/api/client/games/facets?platform=pc98", "secret")
+	for _, want := range []string{`"total":1`, `"platform":"pc98"`, `"title":"NEC PC-98"`, `"romSetName":"PC-98"`, `"emulatorHint":"np2kai"`, `"count":1`} {
+		if !strings.Contains(facets, want) {
+			t.Fatalf("PC-98 facets = %q, missing %s", facets, want)
+		}
+	}
+
+	manifest := authGet(t, ts.URL+"/api/client/games/"+itoa(game.ID)+"/manifest", "secret")
+	for _, want := range []string{`"entryFile":"Love Escalator.hdi"`, `"name":"Love Escalator.hdi"`, `"role":"entry"`} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("PC-98 manifest = %q, missing %s", manifest, want)
+		}
+	}
+
+	for _, endpoint := range []string{"/file", "/files/0"} {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/client/games/"+itoa(game.ID)+endpoint, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if resp.StatusCode != http.StatusOK || !bytes.Equal(got, media) {
+			t.Fatalf("PC-98 download %s status=%d size=%d, want raw media", endpoint, resp.StatusCode, len(got))
+		}
+		if resp.ContentLength != int64(len(media)) || resp.Header.Get("Content-Disposition") != `attachment; filename="Love Escalator.hdi"` {
+			t.Fatalf("PC-98 download %s headers length=%d disposition=%q", endpoint, resp.ContentLength, resp.Header.Get("Content-Disposition"))
+		}
+	}
+}
+
+func syntheticPC98AnexImageForAPI(sectorSize, sectors, surfaces, cylinders uint32) []byte {
+	const headerSize = uint32(4096)
+	dataSize := sectorSize * sectors * surfaces * cylinders
+	image := make([]byte, int(headerSize+dataSize))
+	binary.LittleEndian.PutUint32(image[8:12], headerSize)
+	binary.LittleEndian.PutUint32(image[12:16], dataSize)
+	binary.LittleEndian.PutUint32(image[16:20], sectorSize)
+	binary.LittleEndian.PutUint32(image[20:24], sectors)
+	binary.LittleEndian.PutUint32(image[24:28], surfaces)
+	binary.LittleEndian.PutUint32(image[28:32], cylinders)
+	for index := int(headerSize); index < len(image); index++ {
+		image[index] = byte(index)
+	}
+	return image
+}
+
+func TestClientGameItemNormalizesN64FileNameFromDetectedFormat(t *testing.T) {
+	item := clientGameItem(domain.GameAsset{
+		Platform: "n64",
+		Format:   "v64",
+		RelPath:  "N64/Yoshi Story.n64",
+	})
+	if item.FileName != "Yoshi Story.v64" {
+		t.Fatalf("fileName = %q, want header-detected extension", item.FileName)
 	}
 }
 

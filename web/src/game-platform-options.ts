@@ -41,6 +41,11 @@ function gamePlatformValueFromLabel(label: string) {
       return "naomi";
     case "mame":
       return "mame";
+    case "nintendo 64":
+      return "n64";
+    case "nec pc-98":
+    case "pc-98":
+      return "pc98";
     case "32x":
       return "32x";
     default:

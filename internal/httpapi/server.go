@@ -318,10 +318,15 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, clientInfoResponse{
-		ServiceName:      "FolioSpace Library",
-		ServiceVersion:   serviceVersion,
-		APIVersion:       "v1",
-		SupportedFormats: []string{"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "gdi", "cdi", "chd", "iso", "bin", "cue", "7z"},
+		ServiceName:    "FolioSpace Library",
+		ServiceVersion: serviceVersion,
+		APIVersion:     "v1",
+		SupportedFormats: []string{
+			"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm",
+			"nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "gdi", "cdi", "chd", "iso", "bin", "cue", "7z",
+			"d88", "88d", "d98", "98d", "fdi", "xdf", "hdm", "dup", "2hd", "tfd", "nfd", "hd4", "hd5", "hd9", "fdd",
+			"h01", "hdb", "ddb", "dd6", "dcp", "dcu", "flp", "img", "ima", "fim", "thd", "nhd", "hdi", "vhd", "slh", "hdn", "cmd",
+		},
 		Capabilities: clientCapabilities{
 			ClientHome:            true,
 			UnifiedManifest:       true,
@@ -682,6 +687,11 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if tail == "file" && r.Method == http.MethodGet {
+		game, err := s.service.Game(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
 		stream, err := s.service.OpenGameFile(id)
 		if err != nil {
 			writeJSONOrError(w, nil, err)
@@ -689,6 +699,10 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		}
 		defer stream.Body.Close()
 		w.Header().Set("Content-Type", stream.ContentType)
+		if game.Platform == "n64" || game.Platform == "pc98" {
+			w.Header().Set("Content-Length", strconv.FormatInt(game.Size, 10))
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(clientGameFileName(game), `"`, "")))
+		}
 		_, _ = io.Copy(w, stream.Body)
 		return
 	}
@@ -2135,13 +2149,16 @@ type clientGame struct {
 	ROMSetName    string `json:"romSetName,omitempty"`
 	Region        string `json:"region,omitempty"`
 	Format        string `json:"format"`
+	FileName      string `json:"fileName,omitempty"`
 	Size          int64  `json:"size"`
 	CRC32         string `json:"crc32"`
 	SHA1          string `json:"sha1"`
 	EmulatorHint  string `json:"emulatorHint"`
+	InputProfile  string `json:"inputProfile,omitempty"`
 	Compatibility string `json:"compatibility"`
 	CoverURL      string `json:"coverUrl,omitempty"`
 	ManifestURL   string `json:"manifestUrl"`
+	DownloadURL   string `json:"downloadUrl,omitempty"`
 	Favorite      bool   `json:"favorite"`
 	Liked         bool   `json:"liked"`
 }
@@ -2380,6 +2397,12 @@ func clientGames(items []domain.GameAsset) []clientGame {
 }
 
 func clientGameItem(game domain.GameAsset) clientGame {
+	inputProfile := ""
+	if strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") {
+		inputProfile = "standard"
+	} else if strings.EqualFold(strings.TrimSpace(game.Title), "srmp7") || pathHasSegment(game.RelPath, "mahjong") {
+		inputProfile = "mahjong"
+	}
 	return clientGame{
 		ID:            game.ID,
 		AssetType:     "game",
@@ -2388,16 +2411,44 @@ func clientGameItem(game domain.GameAsset) clientGame {
 		ROMSetName:    game.ROMSetName,
 		Region:        game.Region,
 		Format:        game.Format,
+		FileName:      clientGameFileName(game),
 		Size:          game.Size,
 		CRC32:         game.CRC32,
 		SHA1:          game.SHA1,
 		EmulatorHint:  game.EmulatorHint,
+		InputProfile:  inputProfile,
 		Compatibility: game.Compatibility,
 		CoverURL:      gameCoverURL(game.ID, game.Platform),
 		ManifestURL:   fmt.Sprintf("/api/client/games/%d/manifest", game.ID),
+		DownloadURL:   fmt.Sprintf("/api/client/games/%d/file", game.ID),
 		Favorite:      game.Favorite,
 		Liked:         game.Liked,
 	}
+}
+
+func clientGameFileName(game domain.GameAsset) string {
+	name := filepathBase(game.RelPath)
+	if !strings.EqualFold(game.Platform, "n64") {
+		return name
+	}
+	format := strings.ToLower(strings.TrimSpace(game.Format))
+	if format != "z64" && format != "v64" && format != "n64" {
+		return name
+	}
+	ext := ""
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		ext = name[dot:]
+	}
+	return strings.TrimSuffix(name, ext) + "." + format
+}
+
+func pathHasSegment(path string, segment string) bool {
+	for _, part := range strings.Split(strings.ReplaceAll(path, `\`, "/"), "/") {
+		if strings.EqualFold(strings.TrimSpace(part), segment) {
+			return true
+		}
+	}
+	return false
 }
 
 func gameCoverURL(gameID int64, platform string) string {

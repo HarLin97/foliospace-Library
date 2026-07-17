@@ -4129,8 +4129,14 @@ function platformSortRank(platform: string) {
       return 65;
     case "saturn":
       return 70;
+    case "n64":
+      return 72;
     case "dreamcast":
       return 75;
+    case "pc-fx":
+      return 76;
+    case "pc98":
+      return 77;
     case "neogeo":
       return 80;
     case "model3":
@@ -4156,6 +4162,12 @@ function gamePlatformLabel(game: GameAsset) {
       return "MODEL 3";
     case "dreamcast":
       return "Dreamcast";
+    case "n64":
+      return "Nintendo 64";
+    case "pc-fx":
+      return "PC-FX";
+    case "pc98":
+      return "NEC PC-98";
     case "mame":
       return "MAME";
     default:

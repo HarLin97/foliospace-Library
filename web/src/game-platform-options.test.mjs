@@ -25,6 +25,7 @@ test("game platform filter options come from game platform collections", async (
     { id: -1010, title: "Games / NES", collectionType: "game_platform", primaryType: "game", bookCount: 10 },
     { id: -1060, title: "Games / Mega Drive", collectionType: "game_platform", primaryType: "game", bookCount: 12 },
     { id: -1080, title: "Games / Neo Geo", collectionType: "game_platform", primaryType: "game", bookCount: 7 },
+    { id: -1077, title: "Games / NEC PC-98", collectionType: "game_platform", primaryType: "game", bookCount: 42 },
     { id: 1, title: "Books / Guides", collectionType: "directory", primaryType: "book", bookCount: 3 },
   ]);
 
@@ -32,5 +33,6 @@ test("game platform filter options come from game platform collections", async (
     { value: "nes", label: "NES", count: 10 },
     { value: "md", label: "Mega Drive", count: 12 },
     { value: "neogeo", label: "Neo Geo", count: 7 },
+    { value: "pc98", label: "NEC PC-98", count: 42 },
   ]);
 });

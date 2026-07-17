@@ -95,6 +95,44 @@ func TestLibretroBoxartCandidatesSupportMDPlatformAlias(t *testing.T) {
 	}
 }
 
+func TestLibretroBoxartCandidatesSupportPC98ParentFolderName(t *testing.T) {
+	withLibretroListingFetcher(t, func(playlist string, folder string) ([]string, error) {
+		if playlist != "NEC - PC-98" {
+			t.Fatalf("playlist = %q, want PC-98", playlist)
+		}
+		switch folder {
+		case "Named_Boxarts":
+			return nil, nil
+		case "Named_Titles":
+			return []string{
+				"Doukyuusei 2 (Japan).png",
+				"Love Escalator (Japan).png",
+			}, nil
+		default:
+			t.Fatalf("unexpected folder %q", folder)
+			return nil, nil
+		}
+	})
+
+	urls := libretroBoxartCandidates(domain.GameAsset{
+		Title:    "NANPA2",
+		Platform: "pc98",
+		FilePath: filepath.Join("games", "PC98", "Doukyuusei 2 (1995)(elf)(JP)[tr zh waxixixi]", "NANPA2.hdi"),
+	})
+	if len(urls) != 1 || !strings.Contains(urls[0], "Named_Titles/Doukyuusei%202%20%28Japan%29.png") {
+		t.Fatalf("urls = %#v, want parent-folder PC-98 match", urls)
+	}
+
+	urls = libretroBoxartCandidates(domain.GameAsset{
+		Title:    "Love Escalator_CN",
+		Platform: "pc98",
+		FilePath: filepath.Join("games", "PC98", "Love Escalator AI汉化版", "Love Escalator_CN.hdi"),
+	})
+	if len(urls) != 1 || !strings.Contains(urls[0], "Named_Titles/Love%20Escalator%20%28Japan%29.png") {
+		t.Fatalf("urls = %#v, want translated-folder PC-98 match", urls)
+	}
+}
+
 func TestLibretroArtworkCandidatesPreferListingExactMatch(t *testing.T) {
 	urls := libretroBoxartCandidatesFromListing(domain.GameAsset{
 		Title:    "Super Mario World",
@@ -126,6 +164,15 @@ func TestLibretroArtworkCandidatesUseFuzzyTagStrippedMatch(t *testing.T) {
 	}
 	if !strings.Contains(urls[0], "Legend%20of%20Zelda%2C%20The%20-%20The%20Minish%20Cap%20%28USA%29.png") {
 		t.Fatalf("url = %q, want fuzzy tag-stripped listing match", urls[0])
+	}
+}
+
+func TestFindLibretroArtworkMatchDoesNotFuzzyMatchSingleTokenTitle(t *testing.T) {
+	match := findLibretroArtworkMatch([]string{"1"}, []string{
+		"Cats Part 1 (1993)(Cat's Pro.)(Disk 1 of 3)(Disk A).png",
+	})
+	if match != "" {
+		t.Fatalf("match = %q, want no fuzzy match for a single numeric token", match)
 	}
 }
 
