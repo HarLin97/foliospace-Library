@@ -4,6 +4,19 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.977 Release: Expanded Console and Arcade ROM Support
+
+Release `0.977` adds canonical scanning, filtering, artwork, and complete launch manifests for six additional platforms.
+
+- Dreamcast GDI/CDI/CHD packages retain every required track under one launchable game.
+- Sega Saturn CUE/BIN and ISO games are counted by disc rather than by physical track file.
+- NEC PC-FX supports CUE, CCD, TOC, CHD, M3U, multi-disc grouping, Pegasus metadata, and local cover folders.
+- Nintendo 64 validates `.z64`, `.v64`, and `.n64` byte order and can stream the raw ROM from a supported single-ROM ZIP.
+- NEC PC-98 adds validated floppy/hard-disk formats, CP932 title decoding, duplicate merging, multi-disk manifests, and artwork sidecars.
+- Sega Model 2 preserves MAME ZIP shortnames and bytes, adds friendly titles and compatibility states, and keeps BIOS dependencies outside ordinary platform counts.
+- Client API facets, manifests, MCP tools, web filters, and authenticated downloads use stable canonical platform metadata.
+- Service and MCP metadata now report version `0.977`.
+
 ## 0.976 Release: Bounded Memory and Reader Layouts
 
 Release `0.976` addresses a T0 memory-exhaustion risk on large NAS libraries and expands comic reader display controls.
@@ -107,7 +120,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.976
+docker pull funland/foliospace-library:0.977
 ```
 
 ```bash
@@ -117,7 +130,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.976
+  funland/foliospace-library:0.977
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

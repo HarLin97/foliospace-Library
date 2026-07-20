@@ -32,7 +32,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.976"
+const serviceVersion = "0.977"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -324,7 +324,8 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		APIVersion:     "v1",
 		SupportedFormats: []string{
 			"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm",
-			"nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "gdi", "cdi", "chd", "iso", "bin", "cue", "7z",
+			"nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64",
+			"gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "7z",
 			"d88", "88d", "d98", "98d", "fdi", "xdf", "hdm", "dup", "2hd", "tfd", "nfd", "hd4", "hd5", "hd9", "fdd",
 			"h01", "hdb", "ddb", "dd6", "dcp", "dcu", "flp", "img", "ima", "fim", "thd", "nhd", "hdi", "vhd", "slh", "hdn", "cmd",
 		},

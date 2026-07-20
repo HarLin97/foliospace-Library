@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.976`.
+Current release branch: `0.977`.
 
 ## Screenshots
 
@@ -218,6 +218,19 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.977
+
+Release `0.977` expands FolioSpace Library's ROM ingestion and launch-manifest support across six additional console and arcade platforms:
+
+- Dreamcast GDI/CDI/CHD games are classified as `dreamcast`; GDI descriptors and every referenced track are delivered as one launchable package.
+- Sega Saturn CUE/BIN and single-file ISO games are classified as `saturn`; referenced audio/data tracks no longer appear as separate catalog entries.
+- NEC PC-FX CUE/CCD/TOC/CHD/M3U libraries support multi-disc grouping, Pegasus metadata, case-insensitive dependency lookup, and local cover directories.
+- Nintendo 64 `.z64`, `.v64`, and `.n64` ROMs are validated by byte-order headers; supported single-ROM ZIPs expose the original ROM payload to clients.
+- NEC PC-98 floppy and hard-disk images gain format validation, CP932 title decoding, multi-disk grouping, duplicate-image merging, artwork sidecars, and ordered launch manifests.
+- Sega Model 2 MAME ZIP sets are classified as `model2`, receive friendly titles and compatibility states, use the operator-arcade input profile, and keep runtime BIOS packages searchable without inflating platform counts.
+- Client API facets, game manifests, MCP metadata, web platform filters, and authenticated downloads expose the canonical platform identifiers and complete package files without leaking NAS paths.
+- Service, Client API, and MCP metadata report version `0.977`.
+
 ## Release 0.976
 
 Release `0.976` is a T0 memory-safety and reader ergonomics release:
@@ -242,7 +255,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.976 ./scripts/build-mcp-release.sh
+VERSION=0.977 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -262,10 +275,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.976` image tag:
+Release `0.977` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.976
+docker pull funland/foliospace-library:0.977
 ```
 
 For local verification:
@@ -284,7 +297,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.976
+  funland/foliospace-library:0.977
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -299,11 +312,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.976
-git push github v0.976
+git tag v0.977
+git push github v0.977
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.976` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.977` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

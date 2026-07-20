@@ -755,10 +755,14 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 
 	infoBody := get(t, ts.URL+"/api/client/info")
-	if !strings.Contains(infoBody, `"apiVersion":"v1"`) ||
+	if !strings.Contains(infoBody, `"serviceVersion":"0.977"`) ||
+		!strings.Contains(infoBody, `"apiVersion":"v1"`) ||
 		!strings.Contains(infoBody, `"epub"`) ||
 		!strings.Contains(infoBody, `"pdf"`) ||
 		!strings.Contains(infoBody, `"mp4"`) ||
+		!strings.Contains(infoBody, `"z64"`) ||
+		!strings.Contains(infoBody, `"gdi"`) ||
+		!strings.Contains(infoBody, `"m3u"`) ||
 		!strings.Contains(infoBody, `"videoCatalog":true`) ||
 		!strings.Contains(infoBody, `"pdfPageLayout":true`) ||
 		!strings.Contains(infoBody, `"pdfWebtoonLayout":true`) ||
