@@ -176,6 +176,7 @@ type GameAsset struct {
 	SHA1          string    `json:"sha1"`
 	EmulatorHint  string    `json:"emulatorHint"`
 	Compatibility string    `json:"compatibility"`
+	CatalogRole   string    `json:"catalogRole,omitempty"`
 	CoverURL      string    `json:"coverUrl,omitempty"`
 	Favorite      bool      `json:"favorite"`
 	Liked         bool      `json:"liked"`

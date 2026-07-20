@@ -35,6 +35,8 @@ function gamePlatformValueFromLabel(label: string) {
       return "md";
     case "neo geo":
       return "neogeo";
+    case "model 2":
+      return "model2";
     case "model 3":
       return "model3";
     case "naomi":

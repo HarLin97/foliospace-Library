@@ -2165,6 +2165,7 @@ type clientGame struct {
 	EmulatorHint  string `json:"emulatorHint"`
 	InputProfile  string `json:"inputProfile,omitempty"`
 	Compatibility string `json:"compatibility"`
+	CatalogRole   string `json:"catalogRole,omitempty"`
 	CoverURL      string `json:"coverUrl,omitempty"`
 	ManifestURL   string `json:"manifestUrl"`
 	DownloadURL   string `json:"downloadUrl,omitempty"`
@@ -2412,6 +2413,8 @@ func clientGameItem(game domain.GameAsset) clientGame {
 	inputProfile := ""
 	if strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") {
 		inputProfile = "standard"
+	} else if strings.EqualFold(game.Platform, "model2") && !strings.EqualFold(game.CatalogRole, "dependency") {
+		inputProfile = "operatorArcade"
 	} else if strings.EqualFold(strings.TrimSpace(game.Title), "srmp7") || pathHasSegment(game.RelPath, "mahjong") {
 		inputProfile = "mahjong"
 	}
@@ -2430,6 +2433,7 @@ func clientGameItem(game domain.GameAsset) clientGame {
 		EmulatorHint:  game.EmulatorHint,
 		InputProfile:  inputProfile,
 		Compatibility: game.Compatibility,
+		CatalogRole:   game.CatalogRole,
 		CoverURL:      gameCoverURL(game.ID, game.Platform),
 		ManifestURL:   fmt.Sprintf("/api/client/games/%d/manifest", game.ID),
 		DownloadURL:   fmt.Sprintf("/api/client/games/%d/file", game.ID),

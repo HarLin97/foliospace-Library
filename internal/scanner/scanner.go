@@ -1243,6 +1243,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	gameFiles := []domain.GameFile{{Name: filepath.Base(path), FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0}}
 	totalSize := info.Size()
 	compatibility := "unknown"
+	catalogRole := "game"
 	bootabilityChecked := false
 	if platform == "n64" {
 		rom, inspectErr := inspectN64ROM(path, info, ext)
@@ -1289,7 +1290,19 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	if hasPegasus && strings.TrimSpace(pegasus.Name) != "" {
 		title = strings.TrimSpace(pegasus.Name)
 	}
-	if platform == "dreamcast" {
+	if platform == "model2" {
+		shortName := strings.ToLower(strings.TrimSuffix(filepath.Base(path), ext))
+		romSetName = "Model2ROMs"
+		emulatorHint = "model2"
+		compatibility = model2Compatibility(shortName)
+		if friendlyTitle := model2FriendlyTitle(shortName); friendlyTitle != "" {
+			title = friendlyTitle
+		}
+		if shortName == "segabill" {
+			catalogRole = "dependency"
+			compatibility = "unknown"
+		}
+	} else if platform == "dreamcast" {
 		romSetName = "DC"
 	} else if platform == "saturn" {
 		romSetName = "SS"
@@ -1330,6 +1343,10 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		SHA1:          checksums.sha1,
 		EmulatorHint:  emulatorHint,
 		Compatibility: compatibility,
+		CatalogRole:   catalogRole,
+	}
+	if platform == "model2" {
+		gameAsset.Region = model2Region(strings.ToLower(strings.TrimSuffix(filepath.Base(path), ext)))
 	}
 	var game domain.GameAsset
 	if platform == "pc98" {
@@ -3773,6 +3790,8 @@ func inferGamePlatform(ext string, relPath string) string {
 			return "neogeo"
 		case "naomi":
 			return "naomi"
+		case "model2", "model2roms", "model 2", "sega model 2":
+			return "model2"
 		case "model3", "model3roms", "model 3", "sega model 3":
 			return "model3"
 		case "32x", "sega 32x":
@@ -3831,6 +3850,10 @@ func inferLibraryGamePlatform(library domain.Library, ext string, relPath string
 	}
 	for _, value := range []string{library.Name, filepath.Base(filepath.Clean(library.RootPath))} {
 		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "model2", "model2roms", "model 2", "sega model 2":
+			if ext == ".zip" {
+				return "model2"
+			}
 		case "n64", "nintendo64", "nintendo 64":
 			if ext == ".zip" || isN64RawExt(ext) {
 				return "n64"
@@ -3874,6 +3897,8 @@ func inferFBNeoPlatform(path string) string {
 			return "neogeo"
 		case "naomi":
 			return "naomi"
+		case "model2", "model 2", "sega model 2":
+			return "model2"
 		case "model3", "model 3", "sega model 3":
 			return "model3"
 		case "32x", "sega 32x":
@@ -3950,6 +3975,8 @@ func inferROMSetName(relPath string) string {
 		switch strings.ToLower(strings.TrimSpace(parts[0])) {
 		case "mahjong", "mame":
 			return "MAME"
+		case "model2", "model2roms", "model 2", "sega model 2":
+			return "Model2ROMs"
 		case "fbneo":
 			if len(parts) > 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "arcade") {
 				shortName := strings.TrimSuffix(parts[2], filepath.Ext(parts[2]))
@@ -3961,6 +3988,68 @@ func inferROMSetName(relPath string) string {
 		return parts[0]
 	}
 	return ""
+}
+
+func model2FriendlyTitle(shortName string) string {
+	titles := map[string]string{
+		"bel":      "Behind Enemy Lines",
+		"daytona":  "Daytona USA",
+		"desert":   "Desert Tank",
+		"doa":      "Dead or Alive",
+		"dynabb97": "Dynamite Baseball 97",
+		"dynamcop": "Dynamite Cop",
+		"fvipers":  "Fighting Vipers",
+		"gunblade": "Gunblade NY",
+		"hotd":     "The House of the Dead",
+		"indy500":  "INDY 500",
+		"lastbrnx": "Last Bronx",
+		"manxtt":   "Manx TT Superbike",
+		"manxttc":  "Manx TT Superbike (Revision C)",
+		"motoraid": "Motor Raid",
+		"overrev":  "Over Rev",
+		"pltkids":  "Pilot Kids",
+		"rchase2":  "Rail Chase 2",
+		"schamp":   "Sonic Championship",
+		"segawski": "Sega Water Ski",
+		"sgt24h":   "Super GT 24h",
+		"skisuprg": "Sega Ski Super G",
+		"skytargt": "Sky Target",
+		"srallyc":  "Sega Rally Championship",
+		"stcc":     "Sega Touring Car Championship",
+		"topskatr": "Top Skater",
+		"vcop":     "Virtua Cop",
+		"vcop2":    "Virtua Cop 2",
+		"vf2":      "Virtua Fighter 2",
+		"von":      "Cyber Troopers Virtual-On",
+		"vstriker": "Virtua Striker",
+		"waverunr": "Wave Runner",
+		"zerogun":  "Zero Gunner",
+	}
+	return titles[strings.ToLower(strings.TrimSpace(shortName))]
+}
+
+func model2Compatibility(shortName string) string {
+	broken := map[string]struct{}{
+		"daytona": {}, "desert": {}, "doa": {}, "hotd": {}, "manxtt": {}, "manxttc": {},
+		"overrev": {}, "rchase2": {}, "srallyc": {}, "stcc": {}, "vcop": {}, "von": {},
+	}
+	if _, ok := broken[strings.ToLower(strings.TrimSpace(shortName))]; ok {
+		return "broken"
+	}
+	return "untested"
+}
+
+func model2Region(shortName string) string {
+	switch strings.ToLower(strings.TrimSpace(shortName)) {
+	case "segawski", "waverunr":
+		return "Japan"
+	case "schamp":
+		return "USA"
+	case "segabill":
+		return ""
+	default:
+		return "World"
+	}
 }
 
 func inferRegion(path string) string {

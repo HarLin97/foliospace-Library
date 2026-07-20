@@ -486,7 +486,7 @@ func collectionListOrderBy(sort string, direction string) string {
 }
 
 func (s *Store) ListGamePlatformCollections() ([]domain.Series, error) {
-	rows, err := s.db.Query(`SELECT platform, COUNT(*) FROM games GROUP BY platform`)
+	rows, err := s.db.Query(`SELECT platform, COUNT(*) FROM games WHERE LOWER(TRIM(catalog_role)) <> 'dependency' GROUP BY platform`)
 	if err != nil {
 		return nil, err
 	}
@@ -1508,11 +1508,15 @@ func (s *Store) UpsertGame(game domain.GameAsset) (domain.GameAsset, error) {
 	game.Region = strings.TrimSpace(game.Region)
 	game.Format = strings.TrimSpace(game.Format)
 	game.EmulatorHint = strings.TrimSpace(game.EmulatorHint)
+	game.CatalogRole = strings.ToLower(strings.TrimSpace(game.CatalogRole))
+	if game.CatalogRole == "" {
+		game.CatalogRole = "game"
+	}
 	if strings.TrimSpace(game.Compatibility) == "" {
 		game.Compatibility = "unknown"
 	}
-	_, err := s.db.Exec(`INSERT INTO games(library_id, title, platform, rom_set_name, region, format, file_path, rel_path, size, mtime, crc32, sha1, emulator_hint, compatibility)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO games(library_id, title, platform, rom_set_name, region, format, file_path, rel_path, size, mtime, crc32, sha1, emulator_hint, compatibility, catalog_role)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(file_path) DO UPDATE SET library_id = excluded.library_id,
 			title = excluded.title,
 			platform = excluded.platform,
@@ -1526,8 +1530,9 @@ func (s *Store) UpsertGame(game domain.GameAsset) (domain.GameAsset, error) {
 			sha1 = excluded.sha1,
 			emulator_hint = excluded.emulator_hint,
 			compatibility = excluded.compatibility,
+			catalog_role = excluded.catalog_role,
 			updated_at = CURRENT_TIMESTAMP`,
-		game.LibraryID, game.Title, game.Platform, game.ROMSetName, game.Region, game.Format, game.FilePath, game.RelPath, game.Size, game.MTime.Format(time.RFC3339Nano), game.CRC32, game.SHA1, game.EmulatorHint, game.Compatibility)
+		game.LibraryID, game.Title, game.Platform, game.ROMSetName, game.Region, game.Format, game.FilePath, game.RelPath, game.Size, game.MTime.Format(time.RFC3339Nano), game.CRC32, game.SHA1, game.EmulatorHint, game.Compatibility, game.CatalogRole)
 	if err != nil {
 		return domain.GameAsset{}, err
 	}
@@ -2163,7 +2168,7 @@ func (s *Store) GameFileByPosition(gameID int64, position int) (domain.GameFile,
 
 func (s *Store) ListRecentGames(limit int) ([]domain.GameAsset, error) {
 	limit = normalizeShelfLimit(limit)
-	rows, err := s.db.Query(gameSelectSQL()+` ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
+	rows, err := s.db.Query(gameSelectSQL()+` WHERE LOWER(TRIM(catalog_role)) <> 'dependency' ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2188,7 +2193,7 @@ func (s *Store) ListGamesPageForProfile(options domain.GameListOptions, profileI
 		offset = 0
 	}
 
-	where, args := gameListWhere(options)
+	where, args := gameListWhere(options, strings.TrimSpace(options.Query) != "")
 	var total int64
 	countQuery := `SELECT COUNT(*) FROM games` + where
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
@@ -2220,7 +2225,7 @@ func (s *Store) ListGamesPageForProfile(options domain.GameListOptions, profileI
 }
 
 func (s *Store) ListGameFacets(options domain.GameListOptions) (domain.GameListFacets, error) {
-	where, args := gameListWhere(options)
+	where, args := gameListWhere(options, false)
 	var total int64
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM games`+where, args...).Scan(&total); err != nil {
 		return domain.GameListFacets{}, err
@@ -2343,7 +2348,7 @@ func (s *Store) applyGamePrivateStates(profileID int64, items []domain.GameAsset
 }
 
 func (s *Store) ListGamesByROMSet(romSetName string) ([]domain.GameAsset, error) {
-	rows, err := s.db.Query(gameSelectSQL()+` WHERE rom_set_name = ? ORDER BY platform, title`, strings.TrimSpace(romSetName))
+	rows, err := s.db.Query(gameSelectSQL()+` WHERE rom_set_name = ? AND LOWER(TRIM(catalog_role)) <> 'dependency' ORDER BY platform, title`, strings.TrimSpace(romSetName))
 	if err != nil {
 		return nil, err
 	}
@@ -2352,7 +2357,7 @@ func (s *Store) ListGamesByROMSet(romSetName string) ([]domain.GameAsset, error)
 }
 
 func (s *Store) ListGamesByPlatform(platform string) ([]domain.GameAsset, error) {
-	rows, err := s.db.Query(gameSelectSQL()+` WHERE platform = ? ORDER BY title`, strings.TrimSpace(platform))
+	rows, err := s.db.Query(gameSelectSQL()+` WHERE platform = ? AND LOWER(TRIM(catalog_role)) <> 'dependency' ORDER BY title`, strings.TrimSpace(platform))
 	if err != nil {
 		return nil, err
 	}
@@ -2609,13 +2614,16 @@ func (s *Store) ListVideosPage(options domain.VideoListOptions) (domain.VideoLis
 	}, nil
 }
 
-func gameListWhere(options domain.GameListOptions) (string, []any) {
+func gameListWhere(options domain.GameListOptions, includeDependencies bool) (string, []any) {
 	clauses := make([]string, 0, 3)
 	args := make([]any, 0, 8)
+	if !includeDependencies {
+		clauses = append(clauses, `LOWER(TRIM(catalog_role)) <> 'dependency'`)
+	}
 	if query := strings.TrimSpace(options.Query); query != "" {
 		like := "%" + strings.ToLower(query) + "%"
-		clauses = append(clauses, `(LOWER(title) LIKE ? OR LOWER(rom_set_name) LIKE ? OR LOWER(region) LIKE ? OR LOWER(platform) LIKE ? OR LOWER(format) LIKE ?)`)
-		args = append(args, like, like, like, like, like)
+		clauses = append(clauses, `(LOWER(title) LIKE ? OR LOWER(rel_path) LIKE ? OR LOWER(rom_set_name) LIKE ? OR LOWER(region) LIKE ? OR LOWER(platform) LIKE ? OR LOWER(format) LIKE ?)`)
+		args = append(args, like, like, like, like, like, like)
 	}
 	if platform := strings.TrimSpace(options.Platform); platform != "" {
 		platforms := splitFilterValues(platform)
@@ -2718,6 +2726,8 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "neogeo"
 	case GamePlatformCollectionID("32x"):
 		return "32x"
+	case GamePlatformCollectionID("model2"):
+		return "model2"
 	case GamePlatformCollectionID("model3"):
 		return "model3"
 	case GamePlatformCollectionID("naomi"):
@@ -2769,6 +2779,8 @@ func GamePlatformSortRank(platform string) int {
 		return 77
 	case "neogeo":
 		return 80
+	case "model2":
+		return 84
 	case "model3":
 		return 85
 	case "naomi":
@@ -2795,6 +2807,8 @@ func GamePlatformLabel(platform string) string {
 		return "32X"
 	case "neogeo":
 		return "Neo Geo"
+	case "model2":
+		return "Model 2"
 	case "model3":
 		return "Model 3"
 	case "naomi":
@@ -3965,7 +3979,7 @@ func scanFile(row scanner) (domain.File, error) {
 }
 
 func gameSelectSQL() string {
-	return `SELECT id, library_id, title, platform, rom_set_name, region, format, file_path, rel_path, size, mtime, crc32, sha1, emulator_hint, compatibility, last_played_at, created_at, updated_at FROM games`
+	return `SELECT id, library_id, title, platform, rom_set_name, region, format, file_path, rel_path, size, mtime, crc32, sha1, emulator_hint, compatibility, catalog_role, last_played_at, created_at, updated_at FROM games`
 }
 
 func scanGames(rows *sql.Rows) ([]domain.GameAsset, error) {
@@ -4002,6 +4016,7 @@ func scanGame(row scanner) (domain.GameAsset, error) {
 		&game.SHA1,
 		&game.EmulatorHint,
 		&game.Compatibility,
+		&game.CatalogRole,
 		&lastPlayedAt,
 		&createdAt,
 		&updatedAt,

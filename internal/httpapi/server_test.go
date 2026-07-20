@@ -1067,6 +1067,23 @@ func TestAPIClientGameFacetsUseFullCatalog(t *testing.T) {
 	}
 }
 
+func TestClientModel2GameUsesOperatorProfileAndDependencyRole(t *testing.T) {
+	game := clientGameItem(domain.GameAsset{
+		ID: 42, Title: "Virtua Fighter 2", Platform: "model2", ROMSetName: "Model2ROMs",
+		Format: "zip", EmulatorHint: "model2", Compatibility: "untested", CatalogRole: "game",
+	})
+	if game.InputProfile != "operatorArcade" || game.CatalogRole != "game" {
+		t.Fatalf("game = %#v, want Model 2 operator profile", game)
+	}
+	dependency := clientGameItem(domain.GameAsset{
+		ID: 43, Title: "segabill", Platform: "model2", ROMSetName: "Model2ROMs",
+		Format: "zip", EmulatorHint: "model2", Compatibility: "unknown", CatalogRole: "dependency",
+	})
+	if dependency.InputProfile != "" || dependency.CatalogRole != "dependency" {
+		t.Fatalf("dependency = %#v, want hidden dependency without launch input profile", dependency)
+	}
+}
+
 func TestAPIClientN64ZIPCatalogManifestAndDownload(t *testing.T) {
 	root := t.TempDir()
 	zipPath := filepath.Join(root, "F-Zero X.zip")

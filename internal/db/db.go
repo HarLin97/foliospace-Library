@@ -117,6 +117,7 @@ func Migrate(conn *sql.DB) error {
 			sha1 TEXT NOT NULL DEFAULT '',
 			emulator_hint TEXT NOT NULL DEFAULT '',
 			compatibility TEXT NOT NULL DEFAULT 'unknown',
+			catalog_role TEXT NOT NULL DEFAULT 'game',
 			last_played_at TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -460,6 +461,9 @@ func Migrate(conn *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "game_sources", "bootability_checked", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "games", "catalog_role", "TEXT NOT NULL DEFAULT 'game'"); err != nil {
 		return err
 	}
 	if _, err := conn.Exec(`INSERT OR IGNORE INTO profile_read_progress(profile_id, book_id, page_index, locator, progress_fraction, updated_at)

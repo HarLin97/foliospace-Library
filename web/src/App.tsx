@@ -4139,6 +4139,8 @@ function platformSortRank(platform: string) {
       return 77;
     case "neogeo":
       return 80;
+    case "model2":
+      return 84;
     case "model3":
       return 85;
     case "naomi":
@@ -4158,6 +4160,8 @@ function gamePlatformLabel(game: GameAsset) {
       return "MEGA DRIVE";
     case "neogeo":
       return "NEO GEO";
+    case "model2":
+      return "MODEL 2";
     case "model3":
       return "MODEL 3";
     case "dreamcast":

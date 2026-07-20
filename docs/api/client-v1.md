@@ -494,8 +494,8 @@ Query:
 
 - `limit`: optional, default `50`, max `200`. Values above max are clamped and the response returns the actual limit.
 - `offset`: optional, default `0`.
-- `q`: optional search against `title`, `romSetName`, `region`, `platform`, and `format`.
-- `platform`: optional exact platform filter, for example `nes`, `snes`, `n64`, `gba`, `md`, `neogeo`, `arcade`, or `3ds`.
+- `q`: optional search against `title`, archive filename/path, `romSetName`, `region`, `platform`, and `format`. A matching dependency-only package may be returned so a native client can resolve runtime files by shortname.
+- `platform`: optional exact platform filter, for example `nes`, `snes`, `n64`, `gba`, `md`, `neogeo`, `model2`, `arcade`, or `3ds`.
 - `romSetName`: optional exact ROM set filter.
 - `format`: optional exact format filter, for example `nes`, `sfc`, `gba`, `zip`, or `3ds`.
 - `sort`: optional. Supported values are `recent`, `oldest`, `title`, and `platform`. Unknown values fall back to `recent`.
@@ -537,6 +537,8 @@ Response:
 
 Empty results return `items: []` with `total: 0`; the endpoint does not return 404 for an empty catalog. The `items` DTO is the same client-safe game DTO used by `gameShelf`, and never includes NAS paths, local file paths, or Docker volume paths.
 
+Dependency-only packages use additive `catalogRole: "dependency"`. They are excluded from unfiltered catalog pages, recent-game shelves, logical platform collections, and facets, but remain searchable by `q` and downloadable through their normal authenticated file URL. Clients that do not know this field continue to see only launchable games during ordinary browsing.
+
 ### `GET /api/client/games/facets`
 
 Returns full-catalog facets for native ROM browsers. Use this endpoint to build system filters before or alongside paged `/api/client/games` loading; do not derive filter options from a single page of results.
@@ -575,6 +577,8 @@ Response:
 The response is aggregate-only and never includes NAS paths, local file paths, or Docker volume paths.
 
 Facets contain exactly one entry per normalized `platform`. Its `count` is the number of launchable game records and therefore matches `GET /api/client/games?platform={platform}`; dependency files such as Dreamcast GDI tracks and Saturn CUE tracks never contribute to the count. When one platform contains multiple ROM-set names, formats, or emulator hints, the corresponding aggregate field is an empty string instead of producing duplicate platform rows.
+
+Sega Model 2 scans use `platform: "model2"`, `romSetName: "Model2ROMs"`, `format: "zip"`, `emulatorHint: "model2"`, and `inputProfile: "operatorArcade"`. The ZIP shortname is preserved in `fileName`, while known sets receive their MAME display title. Archive size, CRC32, SHA-1, and download bytes describe the original ZIP container. The `segabill.zip` firmware package is searchable with `q=segabill` and returned as `catalogRole: "dependency"`, but is not counted in the visible Model 2 catalog or facet.
 
 New Dreamcast scans use `platform: "dreamcast"`, `romSetName: "DC"`, and `emulatorHint: "dreamcast"`. Existing records with `platform: "disc"` remain queryable for backward compatibility, but are not emitted for newly recognized Dreamcast games.
 

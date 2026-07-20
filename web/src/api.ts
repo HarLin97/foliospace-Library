@@ -126,7 +126,9 @@ export type GameAsset = {
   crc32: string;
   sha1: string;
   emulatorHint: string;
+  inputProfile?: string;
   compatibility: string;
+  catalogRole?: string;
   coverUrl?: string;
   manifestUrl?: string;
   favorite: boolean;

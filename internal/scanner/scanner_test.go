@@ -2125,6 +2125,74 @@ FILE "Guardian Heroes (Track 02).WAV" WAVE
 	}
 }
 
+func TestScanLibraryIndexesModel2CatalogAndHidesDependency(t *testing.T) {
+	root := t.TempDir()
+	model2Dir := filepath.Join(root, "Model2")
+	makeZip(t, filepath.Join(model2Dir, "vf2.zip"), map[string]string{"vf2.bin": "virtua-fighter"})
+	makeZip(t, filepath.Join(model2Dir, "daytona.zip"), map[string]string{"daytona.bin": "daytona"})
+	makeZip(t, filepath.Join(model2Dir, "segabill.zip"), map[string]string{"epr-18022.ic2": "firmware"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 3 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want two games and one dependency indexed", job)
+	}
+
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "model2", Limit: 20, Sort: "title"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Items) != 2 {
+		t.Fatalf("page = %#v, want two visible Model 2 games", page)
+	}
+	byTitle := map[string]domain.GameAsset{}
+	for _, game := range page.Items {
+		byTitle[game.Title] = game
+		if game.Platform != "model2" || game.ROMSetName != "Model2ROMs" || game.EmulatorHint != "model2" || game.Format != "zip" || game.CatalogRole != "game" {
+			t.Fatalf("game = %#v, want canonical Model 2 metadata", game)
+		}
+	}
+	if byTitle["Virtua Fighter 2"].Compatibility != "untested" || byTitle["Daytona USA"].Compatibility != "broken" {
+		t.Fatalf("games = %#v, want contract compatibility states", page.Items)
+	}
+	for _, query := range []string{"vf2", "Virtua Fighter 2"} {
+		search, err := st.ListGamesPage(domain.GameListOptions{Query: query, Platform: "model2", Limit: 20})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if search.Total != 1 || len(search.Items) != 1 || search.Items[0].Title != "Virtua Fighter 2" {
+			t.Fatalf("search %q = %#v, want vf2", query, search)
+		}
+	}
+
+	dependency, err := st.ListGamesPage(domain.GameListOptions{Query: "segabill", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dependency.Total != 1 || len(dependency.Items) != 1 || dependency.Items[0].CatalogRole != "dependency" || dependency.Items[0].Compatibility != "unknown" {
+		t.Fatalf("dependency = %#v, want searchable hidden segabill package", dependency)
+	}
+	facets, err := st.ListGameFacets(domain.GameListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facets.Total != 2 || len(facets.Platforms) != 1 || facets.Platforms[0].Platform != "model2" || facets.Platforms[0].Count != 2 {
+		t.Fatalf("facets = %#v, want dependencies excluded from Model 2 count", facets)
+	}
+}
+
 func TestSaturnCUERejectsDependencyPathEscape(t *testing.T) {
 	root := t.TempDir()
 	gameDir := filepath.Join(root, "Saturn")
@@ -2529,6 +2597,8 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 		{relPath: "FBNeo/arcade/hypreact.zip", want: "mame"},
 		{relPath: "FBNeo/arcade/hypreac2.zip", want: "mame"},
 		{relPath: "Mahjong/hypreact.zip", want: "mame"},
+		{relPath: "Model2/vf2.zip", want: "model2"},
+		{relPath: "Model2ROMs/daytona.zip", want: "model2"},
 		{relPath: "Model3ROMs/spikeout.zip", want: "model3"},
 		{relPath: "SEGA 32X/doom32x.zip", want: "32x"},
 		{relPath: "PS/Alundra.pbp", want: "ps1"},
@@ -2556,6 +2626,10 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 	}
 	if got := inferLibraryGamePlatform(saturnLibrary, ".iso", "Guardian Heroes.iso"); got != "saturn" {
 		t.Fatalf("inferLibraryGamePlatform(SS root ISO) = %q, want saturn", got)
+	}
+	model2Library := domain.Library{Name: "Model2", RootPath: "/games/Model2"}
+	if got := inferLibraryGamePlatform(model2Library, ".zip", "vf2.zip"); got != "model2" {
+		t.Fatalf("inferLibraryGamePlatform(Model2 root ZIP) = %q, want model2", got)
 	}
 	arcadeLibrary := domain.Library{Name: "Arcade", RootPath: "/games/Arcade"}
 	if got := inferLibraryGamePlatform(arcadeLibrary, ".chd", "kinst.chd"); got != "disc" {
