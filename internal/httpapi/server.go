@@ -32,7 +32,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.977"
+const serviceVersion = "0.978"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -359,6 +359,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			ScanSettings:          true,
 			RecentScan:            true,
 			GameSaveSync:          true,
+			GamePlayStats:         true,
 			GameMetadataProviders: true,
 		},
 	})
@@ -651,6 +652,28 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		}
 		game, err := s.service.UpdateGamePrivateStateForProfile(id, s.requestProfileID(r), req)
 		writeJSONOrError(w, clientGameItem(game), err)
+		return
+	}
+	if tail == "play-stats" {
+		switch r.Method {
+		case http.MethodGet:
+			stats, err := s.service.GamePlayStatsForProfile(id, s.requestProfileID(r))
+			writeJSONOrError(w, stats, err)
+		case http.MethodPut:
+			var req domain.GamePlaySessionReport
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			if strings.TrimSpace(req.SessionID) == "" || len(strings.TrimSpace(req.SessionID)) > 128 || req.ElapsedSeconds < 0 || req.ElapsedSeconds > 365*24*60*60 {
+				writeError(w, http.StatusBadRequest, errors.New("invalid game play session report"))
+				return
+			}
+			result, err := s.service.ReportGamePlaySessionForProfile(id, s.requestProfileID(r), req)
+			writeJSONOrError(w, result, err)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
 		return
 	}
 	if tail == "save-sync/archive" {
@@ -2056,6 +2079,7 @@ type clientCapabilities struct {
 	ScanSettings          bool `json:"scanSettings"`
 	RecentScan            bool `json:"recentScan"`
 	GameSaveSync          bool `json:"gameSaveSync"`
+	GamePlayStats         bool `json:"gamePlayStats"`
 	GameMetadataProviders bool `json:"gameMetadataProviders"`
 }
 

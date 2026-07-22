@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.977`.
+Current release branch: `0.978`.
 
 ## Screenshots
 
@@ -90,6 +90,7 @@ Detailed client integration docs are in [`docs/api/client-v1.md`](docs/api/clien
 - `GET /api/client/books/:id/manifest`: a client-safe open manifest with `readerModes` and `defaultReaderMode`. CBZ/ZIP books include page URLs; EPUB books include spine, TOC, `resourceBaseUrl`, `coverUrl`, and progress; PDF books expose an opaque Range-capable stream URL for single-page, double-page, or webtoon/vertical-scroll client layouts.
 - `GET /api/books/:id/reading-position` and `PUT /api/books/:id/reading-position/webtoon`: structured webtoon progress using a stable page key plus normalized page Y offset, with automatic legacy `/progress` fallback compatibility.
 - `GET /api/client/games/:id/manifest`: a client-safe game launch manifest with platform, checksums, emulator hint, and opaque file URLs. Sega Model 2 keeps original MAME ZIP names and bytes, exposes operator-arcade input metadata, and resolves hidden runtime dependencies without inflating facets. Nintendo 64 `.z64`, `.v64`, and `.n64` games and PC-98 disk images are validated before indexing and downloaded as raw media bytes even when stored in a single-media ZIP. PC-98 multi-disk sets expose one ordered entry/dependency list, while byte-identical mirrors are collapsed into one catalog record. Dreamcast GDI, Saturn CUE, and PC-FX CUE/M3U manifests include the descriptor plus every required track in `files[]`.
+- `GET/PUT /api/client/games/:id/play-stats`: profile-scoped first/last played time, cumulative play seconds, and launch count. Clients report cumulative seconds per stable session id, so heartbeat retries are idempotent.
 - `GET/PUT /api/client/books/:id/private-state`: client-safe private status, favorite, rating, tags, and note sync.
 - `GET/PUT /api/client/preferences`: client UI language and reader preference sync.
 - `GET/PUT /api/settings/scan`: scan worker settings for NAS devices with different CPU and memory budgets.
@@ -218,6 +219,16 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.978
+
+Release `0.978` adds profile-scoped game play-time synchronization for native emulators and agents:
+
+- Clients report cumulative active play seconds for a stable launch session through idempotent heartbeats, so retries and out-of-order reports do not double-count time.
+- `GET` and `PUT /api/client/games/{gameId}/play-stats` expose first/last played time, total play seconds, and launch count without exposing NAS paths.
+- MCP exposes `foliospace.get_game_play_stats` and `foliospace.report_game_play_session` for agents using the same profile-scoped data.
+- `/api/client/info` advertises `gamePlayStats: true` for capability detection.
+- Service, Client API, and MCP metadata report version `0.978`.
+
 ## Release 0.977
 
 Release `0.977` expands FolioSpace Library's ROM ingestion and launch-manifest support across six additional console and arcade platforms:
@@ -255,7 +266,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.977 ./scripts/build-mcp-release.sh
+VERSION=0.978 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -275,10 +286,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.977` image tag:
+Release `0.978` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.977
+docker pull funland/foliospace-library:0.978
 ```
 
 For local verification:
@@ -297,7 +308,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.977
+  funland/foliospace-library:0.978
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -312,11 +323,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.977
-git push github v0.977
+git tag v0.978
+git push github v0.978
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.977` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.978` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

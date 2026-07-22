@@ -57,6 +57,7 @@ var errVideoTranscodeBusy = errors.New("another video transcode is running")
 
 const SaveSyncArchiveContentType = "application/vnd.gameemu.save-sync+json"
 const maxSaveSyncArchiveBytes = 64 << 20
+const maxGamePlaySessionSeconds = 365 * 24 * 60 * 60
 
 var videoTranscodeState = struct {
 	sync.Mutex
@@ -960,6 +961,21 @@ func (s *Service) UpdateGamePrivateStateForProfile(gameID int64, profileID int64
 		return domain.GameAsset{}, err
 	}
 	return s.store.GameByIDForProfile(gameID, profileID)
+}
+
+func (s *Service) GamePlayStatsForProfile(gameID int64, profileID int64) (domain.GamePlayStats, error) {
+	return s.store.GamePlayStatsForProfile(gameID, profileID)
+}
+
+func (s *Service) ReportGamePlaySessionForProfile(gameID int64, profileID int64, report domain.GamePlaySessionReport) (domain.GamePlayReportResult, error) {
+	report.SessionID = strings.TrimSpace(report.SessionID)
+	if report.SessionID == "" || len(report.SessionID) > 128 {
+		return domain.GamePlayReportResult{}, errors.New("sessionId must contain 1 to 128 characters")
+	}
+	if report.ElapsedSeconds < 0 || report.ElapsedSeconds > maxGamePlaySessionSeconds {
+		return domain.GamePlayReportResult{}, fmt.Errorf("elapsedSeconds must be between 0 and %d", maxGamePlaySessionSeconds)
+	}
+	return s.store.ReportGamePlaySessionForProfile(gameID, profileID, report)
 }
 
 func (s *Service) GameDetails(id int64) (domain.GameDetails, error) {

@@ -21,10 +21,10 @@ This installs `foliospace-mcp` to:
 Release packages are expected at:
 
 ```text
-https://foliospace.app/releases/foliospace-mcp_0.977_darwin_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.977_darwin_amd64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.977_linux_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.977_linux_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.978_darwin_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.978_darwin_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.978_linux_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.978_linux_amd64.tar.gz
 https://foliospace.app/releases/checksums.txt
 ```
 
@@ -129,6 +129,8 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.get_game_metadata_providers`: list game metadata provider status and local artwork import capabilities.
 - `foliospace.export_game_gamelist`: export indexed games as `gamelist.xml` with optional catalog filters.
 - `foliospace.save_game_private_state`: save profile-scoped game `favorite` and `liked` flags.
+- `foliospace.get_game_play_stats`: read profile-scoped first/last played timestamps, cumulative play seconds, and launch count.
+- `foliospace.report_game_play_session`: report cumulative elapsed seconds for a stable client-generated session id; repeated heartbeat payloads do not double-count time.
 - `foliospace.list_videos`: list paginated client-safe video assets with `limit`, `offset`, `q`, `format`, and `sort`.
 - `foliospace.open_video_manifest`: open a video client manifest by `videoId`; the returned `fileUrl` is an opaque Range-capable service URL, while `hlsUrl` is used when `playbackMode` is `hls`.
 - `foliospace.get_video_transcode_status`: read HLS transcode/cache status for a video; returns `idle`, `starting`, `running`, `queued`, `ready`, or `failed`.

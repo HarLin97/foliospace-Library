@@ -755,7 +755,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 
 	infoBody := get(t, ts.URL+"/api/client/info")
-	if !strings.Contains(infoBody, `"serviceVersion":"0.977"`) ||
+	if !strings.Contains(infoBody, `"serviceVersion":"0.978"`) ||
 		!strings.Contains(infoBody, `"apiVersion":"v1"`) ||
 		!strings.Contains(infoBody, `"epub"`) ||
 		!strings.Contains(infoBody, `"pdf"`) ||
@@ -1680,6 +1680,85 @@ func TestAPIClientGameSaveSyncArchiveUploadDownload(t *testing.T) {
 	_ = missingResp.Body.Close()
 	if missingResp.StatusCode != http.StatusNotFound {
 		t.Fatalf("missing game save archive status = %d, want 404", missingResp.StatusCode)
+	}
+}
+
+func TestAPIClientGamePlayStatsAreProfileScopedAndIdempotent(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Metal Slug", Platform: "neogeo", ROMSetName: "FBNeo",
+		Format: "zip", FilePath: "/library/mslug.zip", RelPath: "mslug.zip", Size: 1024,
+		MTime: time.Unix(30, 0), EmulatorHint: "neogeo", Compatibility: "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest, err := st.CreateProfile("Guest", "game", "violet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+	path := ts.URL + "/api/client/games/" + itoa(game.ID) + "/play-stats"
+
+	initial := authGet(t, path, "secret")
+	if !strings.Contains(initial, `"totalPlaySeconds":0`) || !strings.Contains(initial, `"launchCount":0`) {
+		t.Fatalf("initial play stats = %q, want zero values", initial)
+	}
+
+	first := authPut(t, path, "secret", `{"sessionId":"launch-1","startedAt":"2026-07-22T10:00:00Z","elapsedSeconds":10}`)
+	if !strings.Contains(first, `"totalPlaySeconds":10`) || !strings.Contains(first, `"launchCount":1`) || !strings.Contains(first, `"sessionPlaySeconds":10`) {
+		t.Fatalf("first play report = %q, want 10 seconds and one launch", first)
+	}
+	duplicate := authPut(t, path, "secret", `{"sessionId":"launch-1","elapsedSeconds":10}`)
+	if !strings.Contains(duplicate, `"totalPlaySeconds":10`) || !strings.Contains(duplicate, `"launchCount":1`) {
+		t.Fatalf("duplicate play report = %q, want unchanged totals", duplicate)
+	}
+	heartbeat := authPut(t, path, "secret", `{"sessionId":"launch-1","elapsedSeconds":25}`)
+	if !strings.Contains(heartbeat, `"totalPlaySeconds":25`) || !strings.Contains(heartbeat, `"launchCount":1`) {
+		t.Fatalf("heartbeat play report = %q, want cumulative delta", heartbeat)
+	}
+	second := authPut(t, path, "secret", `{"sessionId":"launch-2","elapsedSeconds":5,"endedAt":"2026-07-22T11:00:05Z"}`)
+	if !strings.Contains(second, `"totalPlaySeconds":30`) || !strings.Contains(second, `"launchCount":2`) || !strings.Contains(second, `"ended":true`) {
+		t.Fatalf("second play report = %q, want 30 seconds and two launches", second)
+	}
+
+	guestPath := path + "?profileId=" + itoa(guest.ID)
+	guestInitial := authGet(t, guestPath, "secret")
+	if !strings.Contains(guestInitial, `"totalPlaySeconds":0`) || !strings.Contains(guestInitial, `"launchCount":0`) {
+		t.Fatalf("guest initial play stats = %q, want isolated zero values", guestInitial)
+	}
+	guestReport := authPut(t, guestPath, "secret", `{"sessionId":"guest-1","elapsedSeconds":7}`)
+	if !strings.Contains(guestReport, `"totalPlaySeconds":7`) || !strings.Contains(guestReport, `"launchCount":1`) {
+		t.Fatalf("guest play report = %q, want isolated values", guestReport)
+	}
+	defaultStats := authGet(t, path, "secret")
+	if !strings.Contains(defaultStats, `"totalPlaySeconds":30`) || !strings.Contains(defaultStats, `"launchCount":2`) {
+		t.Fatalf("default stats after guest report = %q, want unchanged values", defaultStats)
+	}
+
+	invalidReq, err := http.NewRequest(http.MethodPut, path, strings.NewReader(`{"sessionId":"","elapsedSeconds":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidReq.Header.Set("Authorization", "Bearer secret")
+	invalidReq.Header.Set("Content-Type", "application/json")
+	invalidResp, err := http.DefaultClient.Do(invalidReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = invalidResp.Body.Close()
+	if invalidResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid report status = %d, want 400", invalidResp.StatusCode)
 	}
 }
 

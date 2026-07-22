@@ -51,7 +51,7 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-const serviceVersion = "0.977"
+const serviceVersion = "0.978"
 
 func New(baseURL string, token string) *Server {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -119,6 +119,8 @@ func tools() []Tool {
 		{Name: "foliospace.get_game_metadata_providers", Description: "List configured game metadata providers and local artwork import capabilities.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.export_game_gamelist", Description: "Export indexed games as gamelist.xml. Filters mirror the game catalog.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact platform filter."), "romSetName": stringSchema("Optional exact ROM set filter."), "format": stringSchema("Optional exact format filter."), "basePath": stringSchema("Optional path prefix used in exported game paths.")}, nil)},
 		{Name: "foliospace.save_game_private_state", Description: "Save profile-scoped favorite and liked flags for a game asset.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id."), "profileId": integerSchema("Optional profile id."), "favorite": booleanSchema("Whether the game is a favorite."), "liked": booleanSchema("Whether the game is liked.")}, []string{"gameId"})},
+		{Name: "foliospace.get_game_play_stats", Description: "Read profile-scoped first/last played timestamps, cumulative play seconds, and launch count for a game.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id."), "profileId": integerSchema("Optional profile id.")}, []string{"gameId"})},
+		{Name: "foliospace.report_game_play_session", Description: "Report cumulative elapsed seconds for one client-generated game session. Repeating the same session report is idempotent.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id."), "profileId": integerSchema("Optional profile id."), "sessionId": stringSchema("Stable unique id for this launch session."), "elapsedSeconds": integerSchema("Cumulative elapsed seconds for this session."), "startedAt": stringSchema("Optional RFC3339 session start time."), "endedAt": stringSchema("Optional RFC3339 session end time.")}, []string{"gameId", "sessionId", "elapsedSeconds"})},
 		{Name: "foliospace.list_videos", Description: "List paginated client-safe video assets.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "format": stringSchema("Optional exact format filter."), "sort": stringSchema("recent or title.")}, nil)},
 		{Name: "foliospace.open_video_manifest", Description: "Open a video manifest with metadata, thumbnail URL, and opaque range-stream file URL.", InputSchema: objectSchema(map[string]any{"videoId": integerSchema("Video asset id.")}, []string{"videoId"})},
 		{Name: "foliospace.get_video_transcode_status", Description: "Read HLS transcode state for a video asset, including queued, running, ready, or failed.", InputSchema: objectSchema(map[string]any{"videoId": integerSchema("Video asset id.")}, []string{"videoId"})},
@@ -261,6 +263,12 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		gameID := intArg(params.Arguments, "gameId")
 		body := withoutKeys(params.Arguments, "gameId", "profileId")
 		data, err = s.put(ctx, withProfileQuery(fmt.Sprintf("/api/client/games/%d/private-state", gameID), params.Arguments), body)
+	case "foliospace.get_game_play_stats":
+		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/client/games/%d/play-stats", intArg(params.Arguments, "gameId")), params.Arguments))
+	case "foliospace.report_game_play_session":
+		gameID := intArg(params.Arguments, "gameId")
+		body := withoutKeys(params.Arguments, "gameId", "profileId")
+		data, err = s.put(ctx, withProfileQuery(fmt.Sprintf("/api/client/games/%d/play-stats", gameID), params.Arguments), body)
 	case "foliospace.list_videos":
 		data, err = s.get(ctx, "/api/client/videos?"+videoListQuery(params.Arguments))
 	case "foliospace.open_video_manifest":

@@ -152,6 +152,31 @@ type GamePrivateState struct {
 	Liked    bool `json:"liked"`
 }
 
+type GamePlayStats struct {
+	GameID           int64      `json:"gameId"`
+	ProfileID        int64      `json:"profileId"`
+	FirstPlayedAt    *time.Time `json:"firstPlayedAt"`
+	LastPlayedAt     *time.Time `json:"lastPlayedAt"`
+	TotalPlaySeconds int64      `json:"totalPlaySeconds"`
+	LaunchCount      int64      `json:"launchCount"`
+}
+
+// GamePlaySessionReport carries the cumulative elapsed time for one client-generated session id.
+// Repeating a report is safe because the store only adds the increase since the previous report.
+type GamePlaySessionReport struct {
+	SessionID      string     `json:"sessionId"`
+	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	ElapsedSeconds int64      `json:"elapsedSeconds"`
+	EndedAt        *time.Time `json:"endedAt,omitempty"`
+}
+
+type GamePlayReportResult struct {
+	Stats              GamePlayStats `json:"stats"`
+	SessionID          string        `json:"sessionId"`
+	SessionPlaySeconds int64         `json:"sessionPlaySeconds"`
+	Ended              bool          `json:"ended"`
+}
+
 type ClientPreferences struct {
 	Locale         string `json:"locale"`
 	ReaderPageMode string `json:"readerPageMode"`

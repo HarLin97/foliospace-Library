@@ -1894,6 +1894,37 @@ func mergeGameTx(tx *sql.Tx, canonicalID int64, duplicateID int64) error {
 		ON CONFLICT(profile_id, game_id) DO UPDATE SET favorite = MAX(favorite, excluded.favorite), liked = MAX(liked, excluded.liked), updated_at = CURRENT_TIMESTAMP`, canonicalID, duplicateID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`INSERT INTO game_play_sessions(
+		profile_id, game_id, session_id, started_at, last_reported_at, ended_at, elapsed_seconds
+	)
+	SELECT profile_id, ?, session_id, started_at, last_reported_at, ended_at, elapsed_seconds
+	FROM game_play_sessions WHERE game_id = ?
+	ON CONFLICT(profile_id, game_id, session_id) DO UPDATE SET
+		started_at = MIN(game_play_sessions.started_at, excluded.started_at),
+		last_reported_at = MAX(game_play_sessions.last_reported_at, excluded.last_reported_at),
+		ended_at = CASE
+			WHEN excluded.ended_at > game_play_sessions.ended_at THEN excluded.ended_at
+			ELSE game_play_sessions.ended_at END,
+		elapsed_seconds = MAX(game_play_sessions.elapsed_seconds, excluded.elapsed_seconds),
+		updated_at = CURRENT_TIMESTAMP`, canonicalID, duplicateID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM game_play_stats WHERE game_id IN (?, ?)`, canonicalID, duplicateID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO game_play_stats(
+		profile_id, game_id, first_played_at, last_played_at, total_play_seconds, launch_count
+	)
+	SELECT profile_id, ?, MIN(started_at), MAX(last_reported_at), SUM(elapsed_seconds), COUNT(*)
+	FROM game_play_sessions WHERE game_id = ? GROUP BY profile_id`, canonicalID, canonicalID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE games SET last_played_at = CASE
+		WHEN COALESCE((SELECT MAX(last_played_at) FROM game_play_stats WHERE game_id = ?), '') > last_played_at
+		THEN (SELECT MAX(last_played_at) FROM game_play_stats WHERE game_id = ?)
+		ELSE last_played_at END WHERE id = ?`, canonicalID, canonicalID, canonicalID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`INSERT OR IGNORE INTO game_metadata(game_id, display_title, summary, release_date, genres, developers, publishers, players, rating, external_links)
 		SELECT ?, display_title, summary, release_date, genres, developers, publishers, players, rating, external_links FROM game_metadata WHERE game_id = ?`, canonicalID, duplicateID); err != nil {
 		return err
@@ -2299,6 +2330,141 @@ func (s *Store) UpdateGamePrivateStateForProfile(gameID int64, profileID int64, 
 			liked = excluded.liked,
 			updated_at = CURRENT_TIMESTAMP`, profileID, gameID, favorite, liked)
 	return err
+}
+
+func (s *Store) GamePlayStatsForProfile(gameID int64, profileID int64) (domain.GamePlayStats, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.GamePlayStats{}, err
+	}
+	if _, err := scanGame(s.db.QueryRow(gameSelectSQL()+` WHERE id = ?`, gameID)); err != nil {
+		return domain.GamePlayStats{}, err
+	}
+	stats, err := scanGamePlayStats(s.db.QueryRow(`SELECT first_played_at, last_played_at, total_play_seconds, launch_count
+		FROM game_play_stats WHERE profile_id = ? AND game_id = ?`, profileID, gameID), gameID, profileID)
+	if err == sql.ErrNoRows {
+		return domain.GamePlayStats{GameID: gameID, ProfileID: profileID}, nil
+	}
+	return stats, err
+}
+
+func (s *Store) ReportGamePlaySessionForProfile(gameID int64, profileID int64, report domain.GamePlaySessionReport) (domain.GamePlayReportResult, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.GamePlayReportResult{}, err
+	}
+	if _, err := scanGame(s.db.QueryRow(gameSelectSQL()+` WHERE id = ?`, gameID)); err != nil {
+		return domain.GamePlayReportResult{}, err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return domain.GamePlayReportResult{}, err
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	nowText := now.Format(time.RFC3339Nano)
+	startedAt := now
+	if report.StartedAt != nil {
+		startedAt = report.StartedAt.UTC()
+	}
+	startedText := startedAt.Format(time.RFC3339Nano)
+	endedText := ""
+	if report.EndedAt != nil {
+		endedText = report.EndedAt.UTC().Format(time.RFC3339Nano)
+	}
+
+	var storedStarted string
+	var storedElapsed int64
+	var storedEnded string
+	err = tx.QueryRow(`SELECT started_at, elapsed_seconds, ended_at FROM game_play_sessions
+		WHERE profile_id = ? AND game_id = ? AND session_id = ?`, profileID, gameID, report.SessionID).
+		Scan(&storedStarted, &storedElapsed, &storedEnded)
+	isNewSession := err == sql.ErrNoRows
+	if err != nil && err != sql.ErrNoRows {
+		return domain.GamePlayReportResult{}, err
+	}
+
+	delta := int64(0)
+	launchDelta := int64(0)
+	acceptedElapsed := storedElapsed
+	if isNewSession {
+		acceptedElapsed = report.ElapsedSeconds
+		delta = report.ElapsedSeconds
+		launchDelta = 1
+		if _, err := tx.Exec(`INSERT INTO game_play_sessions(
+			profile_id, game_id, session_id, started_at, last_reported_at, ended_at, elapsed_seconds
+		) VALUES(?, ?, ?, ?, ?, ?, ?)`, profileID, gameID, report.SessionID, startedText, nowText, endedText, acceptedElapsed); err != nil {
+			return domain.GamePlayReportResult{}, err
+		}
+	} else {
+		startedText = storedStarted
+		if report.ElapsedSeconds > storedElapsed {
+			acceptedElapsed = report.ElapsedSeconds
+			delta = report.ElapsedSeconds - storedElapsed
+		}
+		if endedText == "" {
+			endedText = storedEnded
+		}
+		if _, err := tx.Exec(`UPDATE game_play_sessions SET last_reported_at = ?, ended_at = ?,
+			elapsed_seconds = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE profile_id = ? AND game_id = ? AND session_id = ?`, nowText, endedText, acceptedElapsed, profileID, gameID, report.SessionID); err != nil {
+			return domain.GamePlayReportResult{}, err
+		}
+	}
+
+	if _, err := tx.Exec(`INSERT INTO game_play_stats(
+		profile_id, game_id, first_played_at, last_played_at, total_play_seconds, launch_count
+	) VALUES(?, ?, ?, ?, ?, ?)
+	ON CONFLICT(profile_id, game_id) DO UPDATE SET
+		first_played_at = CASE
+			WHEN game_play_stats.first_played_at = '' OR excluded.first_played_at < game_play_stats.first_played_at THEN excluded.first_played_at
+			ELSE game_play_stats.first_played_at END,
+		last_played_at = CASE
+			WHEN excluded.last_played_at > game_play_stats.last_played_at THEN excluded.last_played_at
+			ELSE game_play_stats.last_played_at END,
+		total_play_seconds = game_play_stats.total_play_seconds + excluded.total_play_seconds,
+		launch_count = game_play_stats.launch_count + excluded.launch_count,
+		updated_at = CURRENT_TIMESTAMP`, profileID, gameID, startedText, nowText, delta, launchDelta); err != nil {
+		return domain.GamePlayReportResult{}, err
+	}
+	if _, err := tx.Exec(`UPDATE games SET last_played_at = CASE
+		WHEN last_played_at = '' OR last_played_at < ? THEN ? ELSE last_played_at END
+		WHERE id = ?`, nowText, nowText, gameID); err != nil {
+		return domain.GamePlayReportResult{}, err
+	}
+
+	stats, err := scanGamePlayStats(tx.QueryRow(`SELECT first_played_at, last_played_at, total_play_seconds, launch_count
+		FROM game_play_stats WHERE profile_id = ? AND game_id = ?`, profileID, gameID), gameID, profileID)
+	if err != nil {
+		return domain.GamePlayReportResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.GamePlayReportResult{}, err
+	}
+	return domain.GamePlayReportResult{
+		Stats:              stats,
+		SessionID:          report.SessionID,
+		SessionPlaySeconds: acceptedElapsed,
+		Ended:              endedText != "",
+	}, nil
+}
+
+func scanGamePlayStats(row scanner, gameID int64, profileID int64) (domain.GamePlayStats, error) {
+	stats := domain.GamePlayStats{GameID: gameID, ProfileID: profileID}
+	var firstPlayedAt string
+	var lastPlayedAt string
+	if err := row.Scan(&firstPlayedAt, &lastPlayedAt, &stats.TotalPlaySeconds, &stats.LaunchCount); err != nil {
+		return domain.GamePlayStats{}, err
+	}
+	if parsed := parseTime(firstPlayedAt); !parsed.IsZero() {
+		stats.FirstPlayedAt = &parsed
+	}
+	if parsed := parseTime(lastPlayedAt); !parsed.IsZero() {
+		stats.LastPlayedAt = &parsed
+	}
+	return stats, nil
 }
 
 func (s *Store) applyGamePrivateStates(profileID int64, items []domain.GameAsset) ([]domain.GameAsset, error) {

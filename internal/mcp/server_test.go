@@ -30,6 +30,8 @@ func TestServerListsTools(t *testing.T) {
 		!strings.Contains(body, "foliospace.get_game_metadata_providers") ||
 		!strings.Contains(body, "foliospace.export_game_gamelist") ||
 		!strings.Contains(body, "foliospace.save_game_private_state") ||
+		!strings.Contains(body, "foliospace.get_game_play_stats") ||
+		!strings.Contains(body, "foliospace.report_game_play_session") ||
 		!strings.Contains(body, "foliospace.list_videos") ||
 		!strings.Contains(body, "foliospace.open_video_manifest") ||
 		!strings.Contains(body, "foliospace.get_video_transcode_status") ||
@@ -46,6 +48,46 @@ func TestServerListsTools(t *testing.T) {
 		!strings.Contains(body, "foliospace.pause_job") ||
 		!strings.Contains(body, "foliospace.library_health") {
 		t.Fatalf("tools/list response %s missing expected tools", body)
+	}
+}
+
+func TestServerCallsGamePlayStatsTools(t *testing.T) {
+	type requestRecord struct {
+		method string
+		path   string
+		body   string
+	}
+	var requests []requestRecord
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var body []byte
+		if r.Body != nil {
+			body, _ = io.ReadAll(r.Body)
+		}
+		requests = append(requests, requestRecord{method: r.Method, path: r.URL.RequestURI(), body: string(body)})
+		return jsonResponse(`{"totalPlaySeconds":120,"launchCount":2}`), nil
+	})}
+
+	for _, call := range []Request{
+		toolCall(t, "foliospace.get_game_play_stats", map[string]any{"gameId": 42, "profileId": 2}),
+		toolCall(t, "foliospace.report_game_play_session", map[string]any{
+			"gameId": 42, "profileId": 2, "sessionId": "session-1", "elapsedSeconds": 120,
+		}),
+	} {
+		response := server.Handle(context.Background(), call)
+		if response.Error != nil {
+			t.Fatalf("tool error = %#v", response.Error)
+		}
+	}
+
+	if len(requests) != 2 || requests[0].method != http.MethodGet || requests[0].path != "/api/client/games/42/play-stats?profileId=2" {
+		t.Fatalf("GET request = %#v", requests)
+	}
+	if requests[1].method != http.MethodPut || requests[1].path != "/api/client/games/42/play-stats?profileId=2" {
+		t.Fatalf("PUT request = %#v", requests[1])
+	}
+	if !strings.Contains(requests[1].body, `"sessionId":"session-1"`) || !strings.Contains(requests[1].body, `"elapsedSeconds":120`) || strings.Contains(requests[1].body, "profileId") {
+		t.Fatalf("PUT body = %s", requests[1].body)
 	}
 }
 
@@ -105,13 +147,13 @@ func TestServerCallsClientGamesTool(t *testing.T) {
 	})}
 
 	response := server.Handle(context.Background(), toolCall(t, "foliospace.list_games", map[string]any{
-		"limit":    50,
-		"offset":   100,
-		"q":        "contra",
-		"platform": "nes",
+		"limit":      50,
+		"offset":     100,
+		"q":          "contra",
+		"platform":   "nes",
 		"romSetName": "NES",
-		"format":   "nes",
-		"sort":     "title",
+		"format":     "nes",
+		"sort":       "title",
 	}))
 
 	if response.Error != nil {

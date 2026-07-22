@@ -343,9 +343,32 @@ func Migrate(conn *sql.DB) error {
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY(profile_id, game_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS game_play_stats (
+			profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+			game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+			first_played_at TEXT NOT NULL DEFAULT '',
+			last_played_at TEXT NOT NULL DEFAULT '',
+			total_play_seconds INTEGER NOT NULL DEFAULT 0,
+			launch_count INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(profile_id, game_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS game_play_sessions (
+			profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+			game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+			session_id TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			last_reported_at TEXT NOT NULL,
+			ended_at TEXT NOT NULL DEFAULT '',
+			elapsed_seconds INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(profile_id, game_id, session_id)
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_profile_read_progress_profile_updated ON profile_read_progress(profile_id, updated_at DESC, book_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_book_private_states_profile_favorite_updated ON book_private_states(profile_id, favorite, updated_at DESC, book_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_book_private_states_profile_status_updated ON book_private_states(profile_id, private_status, updated_at DESC, book_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_game_play_stats_profile_last_played ON game_play_stats(profile_id, last_played_at DESC, game_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_videos_updated_id ON videos(updated_at DESC, id DESC)`,
 		`CREATE TABLE IF NOT EXISTS manual_collections (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
