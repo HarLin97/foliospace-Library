@@ -2898,6 +2898,8 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "model3"
 	case GamePlatformCollectionID("naomi"):
 		return "naomi"
+	case GamePlatformCollectionID("naomi2"):
+		return "naomi2"
 	case GamePlatformCollectionID("saturn"):
 		return "saturn"
 	case GamePlatformCollectionID("n64"):
@@ -2951,6 +2953,8 @@ func GamePlatformSortRank(platform string) int {
 		return 85
 	case "naomi":
 		return 86
+	case "naomi2":
+		return 87
 	case "arcade":
 		return 90
 	case "mame":
@@ -2979,6 +2983,8 @@ func GamePlatformLabel(platform string) string {
 		return "Model 3"
 	case "naomi":
 		return "NAOMI"
+	case "naomi2":
+		return "NAOMI 2"
 	case "saturn":
 		return "Saturn"
 	case "dreamcast":
@@ -3043,6 +3049,8 @@ func expectedGameEmulatorHint(platform string) string {
 		return "mupen64plus"
 	case "pc98":
 		return "np2kai"
+	case "naomi2":
+		return "flycast"
 	}
 	return platform
 }

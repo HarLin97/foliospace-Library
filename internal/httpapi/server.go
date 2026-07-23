@@ -2438,7 +2438,7 @@ func clientGameItem(game domain.GameAsset) clientGame {
 	inputProfile := ""
 	if strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") {
 		inputProfile = "standard"
-	} else if strings.EqualFold(game.Platform, "model2") && !strings.EqualFold(game.CatalogRole, "dependency") {
+	} else if (strings.EqualFold(game.Platform, "model2") || strings.EqualFold(game.Platform, "naomi2")) && !strings.EqualFold(game.CatalogRole, "dependency") {
 		inputProfile = "operatorArcade"
 	} else if strings.EqualFold(strings.TrimSpace(game.Title), "srmp7") || pathHasSegment(game.RelPath, "mahjong") {
 		inputProfile = "mahjong"

@@ -339,6 +339,57 @@ func TestOpenGameCoverUsesLocalMediaBoxFront(t *testing.T) {
 	}
 }
 
+func TestOpenGameCoverUsesParentMediaBoxFront(t *testing.T) {
+	root := t.TempDir()
+	romPath := filepath.Join(root, "NAOMI 2", "vf4", "vf4.zip")
+	coverPath := filepath.Join(root, "NAOMI 2", "media", "vf4", "boxFront.png")
+	if err := os.MkdirAll(filepath.Dir(romPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(romPath, []byte("rom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(coverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	coverBytes := []byte("parent-box-front")
+	if err := os.WriteFile(coverPath, coverBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Virtua Fighter 4", Platform: "naomi2", ROMSetName: "vf4", Format: "zip",
+		FilePath: romPath, RelPath: "NAOMI 2/vf4/vf4.zip", Size: 3, MTime: time.Unix(10, 0), CRC32: "crc", SHA1: "sha",
+		EmulatorHint: "flycast", Compatibility: "playable",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := NewWithConfig(st, t.TempDir()).OpenGameCover(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	data, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.ContentType != "image/png" || !bytes.Equal(data, coverBytes) {
+		t.Fatalf("stream contentType=%q data=%q, want parent boxFront.png", stream.ContentType, string(data))
+	}
+}
+
 func TestOpenGameCoverFallsBackToDiscBaseMediaFolder(t *testing.T) {
 	root := t.TempDir()
 	romPath := filepath.Join(root, "PS", "xenogearsB.PBP")

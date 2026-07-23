@@ -1088,6 +1088,23 @@ func TestClientModel2GameUsesOperatorProfileAndDependencyRole(t *testing.T) {
 	}
 }
 
+func TestClientNaomi2GameUsesOperatorProfileAndDependencyRole(t *testing.T) {
+	game := clientGameItem(domain.GameAsset{
+		ID: 44, Title: "Virtua Fighter 4 (Ver. C)", Platform: "naomi2", ROMSetName: "vf4",
+		Format: "zip", EmulatorHint: "flycast", Compatibility: "playable", CatalogRole: "game",
+	})
+	if game.InputProfile != "operatorArcade" || game.CatalogRole != "game" {
+		t.Fatalf("game = %#v, want NAOMI 2 operator profile", game)
+	}
+	dependency := clientGameItem(domain.GameAsset{
+		ID: 45, Title: "gds-0012c", Platform: "naomi2", ROMSetName: "gds-0012c",
+		Format: "chd", EmulatorHint: "flycast", Compatibility: "unknown", CatalogRole: "dependency",
+	})
+	if dependency.InputProfile != "" || dependency.CatalogRole != "dependency" {
+		t.Fatalf("dependency = %#v, want hidden NAOMI 2 dependency without launch input profile", dependency)
+	}
+}
+
 func TestAPIClientN64ZIPCatalogManifestAndDownload(t *testing.T) {
 	root := t.TempDir()
 	zipPath := filepath.Join(root, "F-Zero X.zip")

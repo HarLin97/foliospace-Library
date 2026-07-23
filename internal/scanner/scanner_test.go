@@ -2193,6 +2193,96 @@ func TestScanLibraryIndexesModel2CatalogAndHidesDependency(t *testing.T) {
 	}
 }
 
+func TestScanLibraryIndexesNaomi2CatalogAndHidesDependencies(t *testing.T) {
+	root := t.TempDir()
+	naomi2Dir := filepath.Join(root, "NAOMI 2")
+	vf4Dir := filepath.Join(naomi2Dir, "vf4")
+	makeZip(t, filepath.Join(naomi2Dir, "naomi2.zip"), map[string]string{"epr-23605.ic27": "bios"})
+	makeZip(t, filepath.Join(vf4Dir, "vf4.zip"), map[string]string{"317-0314-com.pic": "vf4-pic"})
+	if err := os.MkdirAll(filepath.Join(vf4Dir, "vf4"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vf4Dir, "vf4", "gds-0012c.chd"), []byte("gd-rom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	makeZip(t, filepath.Join(vf4Dir, "vf4_folder.zip"), map[string]string{"wrapper.txt": "ignore"})
+	// Some dumps retain parent-set ZIPs next to the child game directory. A
+	// known child short name is still not launchable unless its own directory
+	// (or the NAOMI 2 root) owns the descriptor.
+	makeZip(t, filepath.Join(naomi2Dir, "clubkcyco", "clubkcyc.zip"), map[string]string{"wrapper.txt": "ignore"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("GameROMS", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 2 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want descriptor and BIOS indexed without wrapper or CHD tasks", job)
+	}
+
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "naomi2", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 {
+		t.Fatalf("page = %#v, want one visible NAOMI 2 game", page)
+	}
+	game := page.Items[0]
+	if game.Title != "Virtua Fighter 4 (Ver. C)" || game.Platform != "naomi2" || game.ROMSetName != "vf4" || game.EmulatorHint != "flycast" || game.Format != "zip" || game.Compatibility != "playable" || game.CatalogRole != "game" {
+		t.Fatalf("game = %#v, want canonical NAOMI 2 VF4 metadata", game)
+	}
+	files, err := st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0].Name != "vf4.zip" || files[0].Role != "entry" || files[1].Name != "vf4/gds-0012c.chd" || files[1].Role != "dependency" {
+		t.Fatalf("files = %#v, want ZIP entry and GD-ROM dependency", files)
+	}
+
+	for _, query := range []string{"gds-0012c", "naomi2"} {
+		search, err := st.ListGamesPage(domain.GameListOptions{Query: query, Limit: 20})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if search.Total != 1 || len(search.Items) != 1 || search.Items[0].CatalogRole != "dependency" {
+			t.Fatalf("search %q = %#v, want searchable hidden dependency", query, search)
+		}
+	}
+	if _, err := st.GameByPath(filepath.Join(vf4Dir, "vf4_folder.zip")); err == nil {
+		t.Fatal("wrapper ZIP was indexed as a game")
+	}
+	if _, err := st.GameByPath(filepath.Join(naomi2Dir, "clubkcyco", "clubkcyc.zip")); err == nil {
+		t.Fatal("parent-set ZIP was indexed as a game")
+	}
+	if _, err := st.GameByPath(filepath.Join(vf4Dir, "vf4", "gds-0012c.chd")); err != nil {
+		t.Fatalf("GD-ROM dependency = %v, want indexed hidden dependency", err)
+	}
+	facets, err := st.ListGameFacets(domain.GameListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facets.Total != 1 || len(facets.Platforms) != 1 || facets.Platforms[0].Platform != "naomi2" || facets.Platforms[0].Count != 1 {
+		t.Fatalf("facets = %#v, want one visible NAOMI 2 game", facets)
+	}
+
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.IndexedFiles != 0 || secondJob.SkippedFiles != 2 || secondJob.ErrorCount != 0 {
+		t.Fatalf("second job = %#v, want unchanged descriptor and BIOS skipped", secondJob)
+	}
+}
+
 func TestSaturnCUERejectsDependencyPathEscape(t *testing.T) {
 	root := t.TempDir()
 	gameDir := filepath.Join(root, "Saturn")
@@ -2598,6 +2688,7 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 		{relPath: "FBNeo/arcade/hypreac2.zip", want: "mame"},
 		{relPath: "Mahjong/hypreact.zip", want: "mame"},
 		{relPath: "Model2/vf2.zip", want: "model2"},
+		{relPath: "NAOMI 2/vf4/vf4.zip", want: "naomi2"},
 		{relPath: "Model2ROMs/daytona.zip", want: "model2"},
 		{relPath: "Model3ROMs/spikeout.zip", want: "model3"},
 		{relPath: "SEGA 32X/doom32x.zip", want: "32x"},
@@ -2630,6 +2721,14 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 	model2Library := domain.Library{Name: "Model2", RootPath: "/games/Model2"}
 	if got := inferLibraryGamePlatform(model2Library, ".zip", "vf2.zip"); got != "model2" {
 		t.Fatalf("inferLibraryGamePlatform(Model2 root ZIP) = %q, want model2", got)
+	}
+	naomi2Library := domain.Library{Name: "NAOMI 2", RootPath: "/games/NAOMI 2"}
+	if got := inferLibraryGamePlatform(naomi2Library, ".zip", "vf4/vf4.zip"); got != "naomi2" {
+		t.Fatalf("inferLibraryGamePlatform(NAOMI 2 ZIP) = %q, want naomi2", got)
+	}
+	sharedGameLibrary := domain.Library{Name: "GameROMS", RootPath: "/games"}
+	if got := inferLibraryGamePlatform(sharedGameLibrary, ".zip", "NAOMI 2/vf4/vf4.zip"); got != "naomi2" {
+		t.Fatalf("inferLibraryGamePlatform(GameROMS NAOMI 2 ZIP) = %q, want naomi2", got)
 	}
 	arcadeLibrary := domain.Library{Name: "Arcade", RootPath: "/games/Arcade"}
 	if got := inferLibraryGamePlatform(arcadeLibrary, ".chd", "kinst.chd"); got != "disc" {

@@ -1228,14 +1228,20 @@ func localGameCoverCandidates(gamePath string) []string {
 		"BoxFront.webp",
 	}
 	mediaBases := gameCoverMediaBaseCandidates(base)
-	candidates := make([]string, 0, len(names)*len(mediaBases))
+	mediaDirs := []string{dir}
+	if parent := filepath.Dir(dir); parent != dir {
+		mediaDirs = append(mediaDirs, parent)
+	}
+	candidates := make([]string, 0, len(names)*len(mediaBases)*len(mediaDirs))
 	seen := map[string]bool{}
-	for _, mediaBase := range mediaBases {
-		for _, name := range names {
-			path := filepath.Join(dir, "media", mediaBase, name)
-			if !seen[path] {
-				seen[path] = true
-				candidates = append(candidates, path)
+	for _, mediaDir := range mediaDirs {
+		for _, mediaBase := range mediaBases {
+			for _, name := range names {
+				path := filepath.Join(mediaDir, "media", mediaBase, name)
+				if !seen[path] {
+					seen[path] = true
+					candidates = append(candidates, path)
+				}
 			}
 		}
 	}
