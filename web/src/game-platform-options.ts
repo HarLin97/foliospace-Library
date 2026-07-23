@@ -41,6 +41,8 @@ function gamePlatformValueFromLabel(label: string) {
       return "model3";
     case "naomi":
       return "naomi";
+    case "naomi 2":
+      return "naomi2";
     case "mame":
       return "mame";
     case "nintendo 64":
