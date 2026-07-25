@@ -1111,6 +1111,12 @@ func classifyFileKind(library domain.Library, path string, ext string) string {
 				return ""
 			}
 		}
+		if err == nil {
+			platform := inferLibraryGamePlatform(library, ext, relPath)
+			if isDedicatedDiscPlatform(platform) && !isDedicatedDiscPlatformFormat(platform, ext) {
+				return ""
+			}
+		}
 		if isGameExt(ext) || isGamePackageExt(ext) {
 			return "game"
 		}
@@ -1139,6 +1145,28 @@ func classifyFileKind(library domain.Library, path string, ext string) string {
 	return ""
 }
 
+func isDedicatedDiscPlatform(platform string) bool {
+	switch platform {
+	case "psp", "ngc", "ps2":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDedicatedDiscPlatformFormat(platform, ext string) bool {
+	switch platform {
+	case "psp":
+		return ext == ".iso" || ext == ".cso"
+	case "ngc":
+		return ext == ".iso" || ext == ".gcm" || ext == ".rvz"
+	case "ps2":
+		return ext == ".iso" || ext == ".chd"
+	default:
+		return false
+	}
+}
+
 func isBookExt(ext string) bool {
 	return ext == ".cbz" || ext == ".zip" || ext == ".epub" || ext == ".7z" || ext == ".pdf"
 }
@@ -1149,7 +1177,7 @@ func isGamePackageExt(ext string) bool {
 
 func isGameExt(ext string) bool {
 	switch ext {
-	case ".nes", ".sfc", ".smc", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".z64", ".v64", ".n64", ".gdi", ".cdi", ".chd", ".iso", ".bin", ".cue", ".ccd", ".toc", ".m3u", ".img", ".pbp":
+	case ".nes", ".sfc", ".smc", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".z64", ".v64", ".n64", ".gdi", ".cdi", ".chd", ".iso", ".bin", ".cue", ".ccd", ".toc", ".m3u", ".img", ".pbp", ".cso", ".gcm", ".rvz":
 		return true
 	default:
 		return false
@@ -1317,6 +1345,15 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 			catalogRole = "dependency"
 			compatibility = "unknown"
 		}
+	} else if platform == "psp" {
+		romSetName = "PSP"
+		emulatorHint = "ppsspp"
+	} else if platform == "ngc" {
+		romSetName = "NGC"
+		emulatorHint = "dolphin"
+	} else if platform == "ps2" {
+		romSetName = "PS2"
+		emulatorHint = "pcsx2"
 	} else if platform == "dreamcast" {
 		romSetName = "DC"
 	} else if platform == "saturn" {
@@ -4038,6 +4075,12 @@ func inferGamePlatform(ext string, relPath string) string {
 			return "snes"
 		case "n64", "nintendo64", "nintendo 64":
 			return "n64"
+		case "psp", "playstation portable":
+			return "psp"
+		case "ngc", "gamecube", "game cube", "nintendo gamecube", "nintendo game cube":
+			return "ngc"
+		case "ps2", "playstation 2", "playstation2":
+			return "ps2"
 		case "nes", "famicom":
 			return "nes"
 		case "md", "megadrive", "mega drive", "mega-drive":
@@ -4125,6 +4168,12 @@ func inferLibraryGamePlatform(library domain.Library, ext string, relPath string
 	}
 	for _, value := range []string{library.Name, filepath.Base(filepath.Clean(library.RootPath))} {
 		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "psp", "playstation portable":
+			return "psp"
+		case "ngc", "gamecube", "game cube", "nintendo gamecube", "nintendo game cube":
+			return "ngc"
+		case "ps2", "playstation 2", "playstation2":
+			return "ps2"
 		case "model2", "model2roms", "model 2", "sega model 2":
 			if ext == ".zip" {
 				return "model2"

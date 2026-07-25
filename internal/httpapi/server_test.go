@@ -1105,6 +1105,18 @@ func TestClientNaomi2GameUsesOperatorProfileAndDependencyRole(t *testing.T) {
 	}
 }
 
+func TestClientModernDiscGamesUseStandardInputProfile(t *testing.T) {
+	for _, game := range []domain.GameAsset{
+		{ID: 46, Title: "PSP Game", Platform: "psp", ROMSetName: "PSP", Format: "cso", EmulatorHint: "ppsspp"},
+		{ID: 47, Title: "GameCube Game", Platform: "ngc", ROMSetName: "NGC", Format: "rvz", EmulatorHint: "dolphin"},
+		{ID: 48, Title: "PS2 Game", Platform: "ps2", ROMSetName: "PS2", Format: "iso", EmulatorHint: "pcsx2"},
+	} {
+		if item := clientGameItem(game); item.InputProfile != "standard" {
+			t.Fatalf("game = %#v, want standard input profile", item)
+		}
+	}
+}
+
 func TestAPIClientN64ZIPCatalogManifestAndDownload(t *testing.T) {
 	root := t.TempDir()
 	zipPath := filepath.Join(root, "F-Zero X.zip")

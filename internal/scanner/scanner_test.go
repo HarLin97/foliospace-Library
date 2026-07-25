@@ -930,6 +930,82 @@ func TestScanLibraryIndexesGameROMMetadata(t *testing.T) {
 	}
 }
 
+func TestScanLibraryIndexesPSPGameCubeAndPS2DiscImages(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"PSP/Crisis Core.cso":            "psp-image",
+		"NGC/Metroid Prime.rvz":          "ngc-image",
+		"PS2/Shadow of the Colossus.iso": "ps2-image",
+		"PS2/track01.bin":                "not-a-standalone-ps2-game",
+	}
+	for relativePath, body := range files {
+		path := filepath.Join(root, filepath.FromSlash(relativePath))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "completed" || job.IndexedFiles != 3 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want three launchable disc images", job)
+	}
+
+	games, err := st.ListRecentGames(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPlatform := make(map[string]domain.GameAsset, len(games))
+	for _, game := range games {
+		byPlatform[game.Platform] = game
+	}
+	for platform, want := range map[string]struct {
+		format string
+		set    string
+		hint   string
+	}{
+		"psp": {format: "cso", set: "PSP", hint: "ppsspp"},
+		"ngc": {format: "rvz", set: "NGC", hint: "dolphin"},
+		"ps2": {format: "iso", set: "PS2", hint: "pcsx2"},
+	} {
+		game, ok := byPlatform[platform]
+		if !ok || game.Format != want.format || game.ROMSetName != want.set || game.EmulatorHint != want.hint {
+			t.Fatalf("game for %s = %#v, want format=%s set=%s hint=%s", platform, game, want.format, want.set, want.hint)
+		}
+		gameFiles, err := st.GameFiles(game.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gameFiles) != 1 || gameFiles[0].Role != "entry" {
+			t.Fatalf("files for %s = %#v, want one entry image", platform, gameFiles)
+		}
+	}
+
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.IndexedFiles != 0 || secondJob.SkippedFiles != 3 {
+		t.Fatalf("second job = %#v, want three unchanged images skipped", secondJob)
+	}
+}
+
 func TestScanLibraryIndexesN64RawAndZIPROMs(t *testing.T) {
 	tests := []struct {
 		name       string

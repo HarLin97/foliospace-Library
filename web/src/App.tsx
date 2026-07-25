@@ -4131,12 +4131,18 @@ function platformSortRank(platform: string) {
       return 70;
     case "n64":
       return 72;
+    case "ps2":
+      return 73;
+    case "ngc":
+      return 74;
     case "dreamcast":
       return 75;
     case "pc-fx":
       return 76;
     case "pc98":
       return 77;
+    case "psp":
+      return 78;
     case "neogeo":
       return 80;
     case "model2":
@@ -4168,6 +4174,12 @@ function gamePlatformLabel(game: GameAsset) {
       return "Dreamcast";
     case "n64":
       return "Nintendo 64";
+    case "psp":
+      return "PSP";
+    case "ngc":
+      return "Nintendo GameCube";
+    case "ps2":
+      return "PlayStation 2";
     case "pc-fx":
       return "PC-FX";
     case "pc98":

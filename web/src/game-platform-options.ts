@@ -47,6 +47,11 @@ function gamePlatformValueFromLabel(label: string) {
       return "mame";
     case "nintendo 64":
       return "n64";
+    case "nintendo gamecube":
+    case "gamecube":
+      return "ngc";
+    case "playstation 2":
+      return "ps2";
     case "nec pc-98":
     case "pc-98":
       return "pc98";

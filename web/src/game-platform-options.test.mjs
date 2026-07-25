@@ -27,6 +27,9 @@ test("game platform filter options come from game platform collections", async (
     { id: -1080, title: "Games / Neo Geo", collectionType: "game_platform", primaryType: "game", bookCount: 7 },
     { id: -1077, title: "Games / NEC PC-98", collectionType: "game_platform", primaryType: "game", bookCount: 42 },
     { id: -1086, title: "Games / NAOMI 2", collectionType: "game_platform", primaryType: "game", bookCount: 43 },
+    { id: -1087, title: "Games / PSP", collectionType: "game_platform", primaryType: "game", bookCount: 8 },
+    { id: -1088, title: "Games / Nintendo GameCube", collectionType: "game_platform", primaryType: "game", bookCount: 9 },
+    { id: -1089, title: "Games / PlayStation 2", collectionType: "game_platform", primaryType: "game", bookCount: 10 },
     { id: 1, title: "Books / Guides", collectionType: "directory", primaryType: "book", bookCount: 3 },
   ]);
 
@@ -36,5 +39,8 @@ test("game platform filter options come from game platform collections", async (
     { value: "neogeo", label: "Neo Geo", count: 7 },
     { value: "pc98", label: "NEC PC-98", count: 42 },
     { value: "naomi2", label: "NAOMI 2", count: 43 },
+    { value: "psp", label: "PSP", count: 8 },
+    { value: "ngc", label: "Nintendo GameCube", count: 9 },
+    { value: "ps2", label: "PlayStation 2", count: 10 },
   ]);
 });

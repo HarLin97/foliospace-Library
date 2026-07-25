@@ -249,7 +249,7 @@ Response:
   "serviceName": "FolioSpace Library",
   "serviceVersion": "0.978",
   "apiVersion": "v1",
-  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "7z", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
+  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
   "capabilities": {
     "clientHome": true,
     "unifiedManifest": true,
@@ -588,6 +588,12 @@ New Saturn CUE scans use `platform: "saturn"`, `romSetName: "SS"`, `emulatorHint
 PC-FX scans use `platform: "pc-fx"`, `romSetName: "PC-FX"`, and `emulatorHint: "pcfx"`. CUE, CCD, TOC, CHD, and M3U files are launch entries; raw BIN/IMG/ISO tracks and `pcfx.rom` are never standalone catalog items. Adjacent `CD1`/`CD2` directories are exposed as one virtual M3U game, so facets count launchable titles rather than physical discs. Pegasus `metadata.pegasus.txt` files may provide title, description, developer, and `ignore-file` data.
 
 Nintendo 64 scans use `platform: "n64"`, `romSetName: "Nintendo 64"`, `emulatorHint: "mupen64plus"`, and `inputProfile: "standard"`. Raw `.z64`, `.v64`, and `.n64` files are validated by their byte-order header. If a legacy ROM has the wrong extension, the header remains authoritative and the catalog/download filename is normalized to the matching extension without changing the source file. A ZIP is treated as N64 only when its library/path identifies N64 and it contains exactly one valid raw ROM candidate; the catalog and download endpoint expose that raw entry's normalized filename, format, size, CRC32, SHA-1, and bytes rather than the ZIP container. ZIPs with zero or multiple candidates, unsafe paths, invalid ROM headers, or size-limit violations are reported as scan errors. Historical `nintendo64` and `nintendo 64` records are normalized to the canonical `n64` facet.
+
+PSP scans use `platform: "psp"`, `romSetName: "PSP"`, `emulatorHint: "ppsspp"`, and `inputProfile: "standard"`. PSP `.iso` and `.cso` images are exposed as single-file manifests.
+
+Nintendo GameCube scans use `platform: "ngc"`, `romSetName: "NGC"`, `emulatorHint: "dolphin"`, and `inputProfile: "standard"`. GameCube `.iso`, `.gcm`, and `.rvz` images are exposed as single-file manifests.
+
+PlayStation 2 scans use `platform: "ps2"`, `romSetName: "PS2"`, `emulatorHint: "pcsx2"`, and `inputProfile: "standard"`. PS2 `.iso` and `.chd` images are exposed as single-file manifests.
 
 PC-98 scans use `platform: "pc98"`, `romSetName: "PC-98"`, `emulatorHint: "np2kai"`, and `inputProfile: "standard"`. Supported floppy and hard-disk images are validated by known geometry/header rules before indexing. ZIP entry names marked as non-UTF-8 are decoded as CP932/Shift-JIS, and generic internal names such as `1.D88` do not replace a meaningful container or parent-directory title. A ZIP is accepted only when it contains exactly one validated PC-98 media candidate; ZIPs with multiple media candidates still require manual review.
 

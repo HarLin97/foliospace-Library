@@ -2904,6 +2904,12 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "saturn"
 	case GamePlatformCollectionID("n64"):
 		return "n64"
+	case GamePlatformCollectionID("psp"):
+		return "psp"
+	case GamePlatformCollectionID("ngc"):
+		return "ngc"
+	case GamePlatformCollectionID("ps2"):
+		return "ps2"
 	case GamePlatformCollectionID("dreamcast"):
 		return "dreamcast"
 	case GamePlatformCollectionID("pc-fx"):
@@ -2939,12 +2945,18 @@ func GamePlatformSortRank(platform string) int {
 		return 70
 	case "n64":
 		return 72
+	case "ps2":
+		return 73
+	case "ngc":
+		return 74
 	case "dreamcast":
 		return 75
 	case "pc-fx":
 		return 76
 	case "pc98":
 		return 77
+	case "psp":
+		return 78
 	case "neogeo":
 		return 80
 	case "model2":
@@ -2995,6 +3007,12 @@ func GamePlatformLabel(platform string) string {
 		return "NEC PC-98"
 	case "n64":
 		return "Nintendo 64"
+	case "psp":
+		return "PSP"
+	case "ngc":
+		return "Nintendo GameCube"
+	case "ps2":
+		return "PlayStation 2"
 	case "arcade":
 		return "Arcade"
 	case "mame":
@@ -3047,6 +3065,12 @@ func expectedGameEmulatorHint(platform string) string {
 		return "pcfx"
 	case "n64":
 		return "mupen64plus"
+	case "psp":
+		return "ppsspp"
+	case "ngc":
+		return "dolphin"
+	case "ps2":
+		return "pcsx2"
 	case "pc98":
 		return "np2kai"
 	case "naomi2":
