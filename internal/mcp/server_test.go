@@ -26,6 +26,7 @@ func TestServerListsTools(t *testing.T) {
 	body := mustJSON(t, response.Result)
 	if !strings.Contains(body, "foliospace.client_info") ||
 		!strings.Contains(body, "foliospace.list_games") ||
+		!strings.Contains(body, "foliospace.list_game_platforms") ||
 		!strings.Contains(body, "foliospace.open_game_manifest") ||
 		!strings.Contains(body, "foliospace.get_game_metadata_providers") ||
 		!strings.Contains(body, "foliospace.export_game_gamelist") ||
@@ -161,6 +162,32 @@ func TestServerCallsClientGamesTool(t *testing.T) {
 	}
 	if gotPath != "/api/client/games?format=nes&limit=50&offset=100&platform=nes&q=contra&romSetName=NES&sort=title" {
 		t.Fatalf("path = %s, want client games query", gotPath)
+	}
+}
+
+func TestServerCallsGamePlatformsTool(t *testing.T) {
+	var gotPath string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.RequestURI()
+		return jsonResponse(`{"total":2,"platforms":[{"platform":"psp","count":1},{"platform":"ngc","count":1}]}`), nil
+	})}
+
+	response := server.Handle(context.Background(), toolCall(t, "foliospace.list_game_platforms", map[string]any{
+		"q":          "metal gear",
+		"platform":   "psp,ngc",
+		"romSetName": "PSP",
+		"format":     "iso",
+	}))
+
+	if response.Error != nil {
+		t.Fatalf("tool call error = %#v", response.Error)
+	}
+	if gotPath != "/api/client/games/facets?format=iso&platform=psp%2Cngc&q=metal+gear&romSetName=PSP" {
+		t.Fatalf("path = %s, want game facets query", gotPath)
+	}
+	if body := mustJSON(t, response.Result); !strings.Contains(body, `"platform":"psp"`) {
+		t.Fatalf("tool response %s missing facets", body)
 	}
 }
 

@@ -542,7 +542,7 @@ Dependency-only packages use additive `catalogRole: "dependency"`. They are excl
 
 ### `GET /api/client/games/facets`
 
-Returns full-catalog facets for native ROM browsers. Use this endpoint to build system filters before or alongside paged `/api/client/games` loading; do not derive filter options from a single page of results.
+Returns the canonical full-catalog list of **currently indexed, launchable game platforms** for native ROM browsers. Use this endpoint to build system filters before or alongside paged `/api/client/games` loading; do not derive filter options from a single page of results.
 
 Query:
 
@@ -578,6 +578,8 @@ Response:
 The response is aggregate-only and never includes NAS paths, local file paths, or Docker volume paths.
 
 Facets contain exactly one entry per normalized `platform`. Its `count` is the number of launchable game records and therefore matches `GET /api/client/games?platform={platform}`; dependency files such as Dreamcast GDI tracks and Saturn CUE tracks never contribute to the count. When one platform contains multiple ROM-set names, formats, or emulator hints, the corresponding aggregate field is an empty string instead of producing duplicate platform rows.
+
+This is an inventory endpoint, not a declaration of every platform the server could recognize. A platform with no indexed launchable ROMs is omitted. Clients that need to show a static emulator capability catalog should own that catalog locally and use facets only for the library's available filters and counts.
 
 Sega Model 2 scans use `platform: "model2"`, `romSetName: "Model2ROMs"`, `format: "zip"`, `emulatorHint: "model2"`, and `inputProfile: "operatorArcade"`. The ZIP shortname is preserved in `fileName`, while known sets receive their MAME display title. Archive size, CRC32, SHA-1, and download bytes describe the original ZIP container. The `segabill.zip` firmware package is searchable with `q=segabill` and returned as `catalogRole: "dependency"`, but is not counted in the visible Model 2 catalog or facet.
 
@@ -1605,7 +1607,7 @@ Good MCP tools:
 - `foliospace.home`: return continue-reading, recent books, and collections.
 - `foliospace.search_books`: search/filter books by title, collection, format, progress, or unread state.
 - `foliospace.open_book_manifest`: return the client manifest for a book, including `readerModes` and `defaultReaderMode`.
-- `foliospace.list_games` and `foliospace.open_game_manifest`: browse and open local ROM assets through client-safe DTOs.
+- `foliospace.list_games`, `foliospace.list_game_platforms`, and `foliospace.open_game_manifest`: browse available game platforms, paginated local ROM assets, and client-safe manifests. `list_game_platforms` mirrors full-catalog game facets and only reports platforms with launchable indexed games.
 - `foliospace.get_game_metadata_providers` and `foliospace.export_game_gamelist`: inspect game metadata sources and export launcher-style `gamelist.xml`.
 - `foliospace.save_game_private_state`: save profile-scoped game favorite and liked flags.
 - `foliospace.get_game_play_stats` and `foliospace.report_game_play_session`: inspect and idempotently update profile-scoped game play time and launch counts.

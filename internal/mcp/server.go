@@ -115,6 +115,7 @@ func tools() []Tool {
 		{Name: "foliospace.search_books", Description: "Search indexed books and comics by title, author, or collection context.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Search query."), "limit": integerSchema("Maximum number of results."), "profileId": integerSchema("Optional profile id for scoped reader state in results.")}, []string{"q"})},
 		{Name: "foliospace.open_book_manifest", Description: "Open a book/comic/PDF manifest with client-safe page, EPUB, progress, state URLs, readerModes, and defaultReaderMode.", InputSchema: objectSchema(map[string]any{"bookId": integerSchema("Book id."), "profileId": integerSchema("Optional profile id for scoped progress and private state.")}, []string{"bookId"})},
 		{Name: "foliospace.list_games", Description: "List paginated client-safe game ROM assets.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact platform filter."), "romSetName": stringSchema("Optional exact ROM set filter."), "format": stringSchema("Optional exact format filter."), "sort": stringSchema("recent, title, or platform.")}, nil)},
+		{Name: "foliospace.list_game_platforms", Description: "List normalized, launchable game platforms currently indexed by this FolioSpace library, with full-catalog counts and optional catalog filters.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact or comma-separated platform filter."), "romSetName": stringSchema("Optional exact ROM set filter."), "format": stringSchema("Optional exact format filter.")}, nil)},
 		{Name: "foliospace.open_game_manifest", Description: "Open a game ROM manifest with metadata, cover URL, and opaque file URLs. Multi-file Dreamcast GDI, Saturn CUE, and PC-FX CUE/M3U games include an ordered files list with every descriptor and required track.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id.")}, []string{"gameId"})},
 		{Name: "foliospace.get_game_metadata_providers", Description: "List configured game metadata providers and local artwork import capabilities.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.export_game_gamelist", Description: "Export indexed games as gamelist.xml. Filters mirror the game catalog.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact platform filter."), "romSetName": stringSchema("Optional exact ROM set filter."), "format": stringSchema("Optional exact format filter."), "basePath": stringSchema("Optional path prefix used in exported game paths.")}, nil)},
@@ -253,6 +254,8 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		data, err = s.get(ctx, withProfileQuery(fmt.Sprintf("/api/client/books/%d/manifest", intArg(params.Arguments, "bookId")), params.Arguments))
 	case "foliospace.list_games":
 		data, err = s.get(ctx, "/api/client/games?"+gameListQuery(params.Arguments))
+	case "foliospace.list_game_platforms":
+		data, err = s.get(ctx, "/api/client/games/facets?"+gameFacetQuery(params.Arguments))
 	case "foliospace.open_game_manifest":
 		data, err = s.get(ctx, fmt.Sprintf("/api/client/games/%d/manifest", intArg(params.Arguments, "gameId")))
 	case "foliospace.get_game_metadata_providers":
@@ -513,6 +516,16 @@ func gameListQuery(args map[string]any) string {
 func gameGamelistQuery(args map[string]any) string {
 	values := url.Values{}
 	for _, key := range []string{"q", "platform", "romSetName", "format", "basePath"} {
+		if value := stringArg(args, key); value != "" {
+			values.Set(key, value)
+		}
+	}
+	return values.Encode()
+}
+
+func gameFacetQuery(args map[string]any) string {
+	values := url.Values{}
+	for _, key := range []string{"q", "platform", "romSetName", "format"} {
 		if value := stringArg(args, key); value != "" {
 			values.Set(key, value)
 		}
