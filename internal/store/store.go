@@ -1655,13 +1655,14 @@ func (s *Store) UpsertDOSLaunch(launch domain.DOSLaunch) error {
 		return err
 	}
 	_, err = s.db.Exec(`INSERT INTO game_dos_launch(
-		game_id, entry_file, entry_source, working_directory, dosbox_config,
+		game_id, entry_file, entry_source, install_directory, working_directory, dosbox_config,
 		arguments_json, candidates_json, keymap_hints_json, source_identifier,
 		source_sha256, catalog_revision, audit_status
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(game_id) DO UPDATE SET
 		entry_file = excluded.entry_file,
 		entry_source = excluded.entry_source,
+		install_directory = excluded.install_directory,
 		working_directory = excluded.working_directory,
 		dosbox_config = excluded.dosbox_config,
 		arguments_json = excluded.arguments_json,
@@ -1673,6 +1674,7 @@ func (s *Store) UpsertDOSLaunch(launch domain.DOSLaunch) error {
 		audit_status = excluded.audit_status,
 		updated_at = CURRENT_TIMESTAMP`,
 		launch.GameID, strings.TrimSpace(launch.EntryFile), strings.TrimSpace(launch.EntrySource),
+		strings.TrimSpace(launch.InstallDirectory),
 		strings.TrimSpace(launch.WorkingDirectory), strings.TrimSpace(launch.DOSBoxConfig),
 		string(arguments), string(candidatesJSON), string(keymapJSON), strings.TrimSpace(launch.SourceIdentifier),
 		strings.ToLower(strings.TrimSpace(launch.SourceSHA256)), strings.TrimSpace(launch.CatalogRevision), strings.TrimSpace(launch.AuditStatus))
@@ -1684,13 +1686,14 @@ func (s *Store) DOSLaunch(gameID int64) (domain.DOSLaunch, error) {
 	var argumentsJSON string
 	var candidatesJSON string
 	var keymapJSON string
-	err := s.db.QueryRow(`SELECT game_id, entry_file, entry_source, working_directory, dosbox_config,
+	var updatedAt string
+	err := s.db.QueryRow(`SELECT game_id, entry_file, entry_source, install_directory, working_directory, dosbox_config,
 		arguments_json, candidates_json, keymap_hints_json, source_identifier, source_sha256,
-		catalog_revision, audit_status
+		catalog_revision, audit_status, updated_at
 		FROM game_dos_launch WHERE game_id = ?`, gameID).Scan(
-		&launch.GameID, &launch.EntryFile, &launch.EntrySource, &launch.WorkingDirectory, &launch.DOSBoxConfig,
+		&launch.GameID, &launch.EntryFile, &launch.EntrySource, &launch.InstallDirectory, &launch.WorkingDirectory, &launch.DOSBoxConfig,
 		&argumentsJSON, &candidatesJSON, &keymapJSON, &launch.SourceIdentifier, &launch.SourceSHA256,
-		&launch.CatalogRevision, &launch.AuditStatus,
+		&launch.CatalogRevision, &launch.AuditStatus, &updatedAt,
 	)
 	if err != nil {
 		return domain.DOSLaunch{}, err
@@ -1708,6 +1711,7 @@ func (s *Store) DOSLaunch(gameID int64) (domain.DOSLaunch, error) {
 	if launch.Candidates == nil {
 		launch.Candidates = []domain.DOSLaunchCandidate{}
 	}
+	launch.UpdatedAt = parseTime(updatedAt)
 	return launch, nil
 }
 

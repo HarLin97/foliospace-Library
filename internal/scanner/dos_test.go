@@ -38,7 +38,7 @@ func TestScanDOSArchiveUsesHashMatchedCatalogLaunchAndCover(t *testing.T) {
 	catalog := dosCatalogFile{Games: map[string]dosCatalogEntry{
 		"sample-id": {
 			Identifier: "sample-id", Name: map[string]string{"zh-Hans": "示例 DOS 游戏", "en": "Sample DOS Game"},
-			ReleaseYear: 1995, Executable: "game/play.exe 2", Keymaps: map[string]string{"Enter": "确认"},
+			ReleaseYear: 1995, Executable: "game/play.exe 2", InstallDirectory: "DRA4", Keymaps: map[string]string{"Enter": "确认"},
 			CoverFilename: "cover.png", SHA256: checksums.sha256, Filesize: info.Size(),
 		},
 	}}
@@ -85,7 +85,7 @@ func TestScanDOSArchiveUsesHashMatchedCatalogLaunchAndCover(t *testing.T) {
 	if launch.EntryFile != "GAME/PLAY.EXE" || launch.EntrySource != "curated" || len(launch.Arguments) != 1 || launch.Arguments[0] != "2" {
 		t.Fatalf("launch = %#v", launch)
 	}
-	if launch.WorkingDirectory != "GAME" || len(launch.Candidates) != 2 || launch.KeymapHints["Enter"] != "确认" {
+	if launch.InstallDirectory != "DRA4" || launch.WorkingDirectory != "GAME" || len(launch.Candidates) != 2 || launch.KeymapHints["Enter"] != "确认" || launch.UpdatedAt.IsZero() {
 		t.Fatalf("launch metadata = %#v", launch)
 	}
 	details, err := st.GameDetails(game.ID)
@@ -101,6 +101,24 @@ func TestScanDOSArchiveUsesHashMatchedCatalogLaunchAndCover(t *testing.T) {
 	}
 	if second.IndexedFiles != 0 || second.SkippedFiles != 1 {
 		t.Fatalf("second scan = %#v, want unchanged DOS archive skipped", second)
+	}
+}
+
+func TestNormalizeDOSInstallDirectoryRejectsPathsAndShellSyntax(t *testing.T) {
+	for _, invalid := range []string{"../DRA4", `C:\DRA4`, "DRA4/GAME", "DRA4&DEL", "DRA4\nGAME"} {
+		if normalized, ok := normalizeDOSInstallDirectory(invalid); ok || normalized != "" {
+			t.Fatalf("normalizeDOSInstallDirectory(%q) = %q, %v", invalid, normalized, ok)
+		}
+	}
+	if normalized, ok := normalizeDOSInstallDirectory("DRA4"); !ok || normalized != "DRA4" {
+		t.Fatalf("valid install directory = %q, %v", normalized, ok)
+	}
+}
+
+func TestResolveDOSCommandRejectsShellMetacharactersInArguments(t *testing.T) {
+	members := map[string]string{"play.bat": "PLAY.BAT"}
+	if entry, args, ok := resolveDOSCommand("PLAY.BAT & DEL FLAG0", members); ok || entry != "" || args != nil {
+		t.Fatalf("unsafe command resolved to %q %#v", entry, args)
 	}
 }
 

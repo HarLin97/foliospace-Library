@@ -30,15 +30,16 @@ type dosCatalogFile struct {
 }
 
 type dosCatalogEntry struct {
-	Identifier    string            `json:"identifier"`
-	Name          map[string]string `json:"name"`
-	ReleaseYear   int               `json:"releaseYear"`
-	Executable    string            `json:"executable"`
-	Keymaps       map[string]string `json:"keymaps"`
-	Links         map[string]string `json:"links"`
-	CoverFilename string            `json:"coverFilename"`
-	SHA256        string            `json:"sha256"`
-	Filesize      int64             `json:"filesize"`
+	Identifier       string            `json:"identifier"`
+	Name             map[string]string `json:"name"`
+	ReleaseYear      int               `json:"releaseYear"`
+	Executable       string            `json:"executable"`
+	InstallDirectory string            `json:"installDirectory"`
+	Keymaps          map[string]string `json:"keymaps"`
+	Links            map[string]string `json:"links"`
+	CoverFilename    string            `json:"coverFilename"`
+	SHA256           string            `json:"sha256"`
+	Filesize         int64             `json:"filesize"`
 }
 
 type dosCatalogIndex struct {
@@ -76,6 +77,11 @@ func (s *Scanner) indexDOSGameFile(library domain.Library, filePath string, info
 		launch.SourceIdentifier = entry.Identifier
 		launch.KeymapHints = entry.Keymaps
 		launch.AuditStatus = "matched"
+		if installDirectory, ok := normalizeDOSInstallDirectory(entry.InstallDirectory); ok {
+			launch.InstallDirectory = installDirectory
+		} else if strings.TrimSpace(entry.InstallDirectory) != "" {
+			launch.AuditStatus = "invalid_install_directory"
+		}
 		if localized := dosLocalizedTitle(entry); localized != "" {
 			title = localized
 		}
@@ -98,12 +104,11 @@ func (s *Scanner) indexDOSGameFile(library domain.Library, filePath string, info
 				}
 			}
 			if launch.EntryFile == "" {
-				if entry, args, config, ok := resolveDOSBoxConfig(inspection); ok {
+				if entry, args, _, ok := resolveDOSBoxConfig(inspection); ok {
 					launch.EntryFile = entry
 					launch.EntrySource = "dosboxConfig"
 					launch.Arguments = args
 					launch.WorkingDirectory = dosEntryDirectory(entry)
-					launch.DOSBoxConfig = config
 				}
 			}
 		} else {
@@ -277,15 +282,39 @@ func normalizeDOSArchivePath(name string) (string, bool) {
 	return strings.Join(parts, "/"), true
 }
 
+func normalizeDOSInstallDirectory(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", true
+	}
+	if !utf8.ValidString(name) || strings.ContainsAny(name, "\x00\r\n/\\:;&|<>^") || name == "." || name == ".." || len(name) > 64 {
+		return "", false
+	}
+	return name, true
+}
+
 func resolveDOSCommand(command string, members map[string]string) (string, []string, bool) {
 	tokens := splitDOSCommandLine(command)
 	for split := len(tokens); split >= 1; split-- {
 		program := strings.Join(tokens[:split], " ")
 		if resolved, ok := resolveDOSProgram(program, members); ok {
-			return resolved, append([]string{}, tokens[split:]...), true
+			arguments := append([]string{}, tokens[split:]...)
+			if !safeDOSArguments(arguments) {
+				return "", nil, false
+			}
+			return resolved, arguments, true
 		}
 	}
 	return "", nil, false
+}
+
+func safeDOSArguments(arguments []string) bool {
+	for _, argument := range arguments {
+		if !utf8.ValidString(argument) || strings.ContainsAny(argument, "\x00\r\n;&|<>^") {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveDOSProgram(program string, members map[string]string) (string, bool) {

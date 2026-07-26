@@ -631,6 +631,7 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 				dosLaunch = &launch
 			}
 		}
+		w.Header().Set("Cache-Control", "private, no-store")
 		writeJSON(w, clientGameManifest(game, files, dosLaunch))
 		return
 	}
@@ -2217,6 +2218,7 @@ type clientGameManifestResponse struct {
 	EntryFile *string          `json:"entryFile"`
 	Files     []clientGameFile `json:"files,omitempty"`
 	DOSLaunch *clientDOSLaunch `json:"dosLaunch,omitempty"`
+	UpdatedAt string           `json:"updatedAt,omitempty"`
 }
 
 type clientGameFile struct {
@@ -2232,6 +2234,7 @@ type clientGameFile struct {
 
 type clientDOSLaunch struct {
 	EntrySource      string                      `json:"entrySource"`
+	InstallDirectory *string                     `json:"installDirectory"`
 	WorkingDirectory *string                     `json:"workingDirectory"`
 	DOSBoxConfig     *string                     `json:"dosboxConfig"`
 	Arguments        []string                    `json:"arguments"`
@@ -2526,6 +2529,9 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunc
 		FileURL: fmt.Sprintf("/api/client/games/%d/file", game.ID),
 		Files:   make([]clientGameFile, 0, len(files)),
 	}
+	if !game.UpdatedAt.IsZero() {
+		manifest.UpdatedAt = game.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
 	diskIndex := 0
 	for _, file := range files {
 		clientFile := clientGameFile{
@@ -2560,8 +2566,9 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunc
 			manifest.EntryFile = &entry
 		}
 		manifest.DOSLaunch = &clientDOSLaunch{
-			EntrySource: dosLaunch.EntrySource, WorkingDirectory: nullableString(dosLaunch.WorkingDirectory),
-			DOSBoxConfig: nullableString(dosLaunch.DOSBoxConfig), Arguments: dosLaunch.Arguments,
+			EntrySource: dosLaunch.EntrySource, InstallDirectory: nullableString(dosLaunch.InstallDirectory),
+			WorkingDirectory: nullableString(dosLaunch.WorkingDirectory),
+			DOSBoxConfig:     nullableString(dosLaunch.DOSBoxConfig), Arguments: dosLaunch.Arguments,
 			Candidates: dosLaunch.Candidates, KeymapHints: dosLaunch.KeymapHints,
 		}
 	}

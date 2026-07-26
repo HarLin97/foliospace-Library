@@ -204,6 +204,7 @@ func Migrate(conn *sql.DB) error {
 			game_id INTEGER PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
 			entry_file TEXT NOT NULL DEFAULT '',
 			entry_source TEXT NOT NULL DEFAULT 'unknown',
+			install_directory TEXT NOT NULL DEFAULT '',
 			working_directory TEXT NOT NULL DEFAULT '',
 			dosbox_config TEXT NOT NULL DEFAULT '',
 			arguments_json TEXT NOT NULL DEFAULT '[]',
@@ -503,6 +504,9 @@ func Migrate(conn *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "games", "catalog_role", "TEXT NOT NULL DEFAULT 'game'"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "game_dos_launch", "install_directory", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if _, err := conn.Exec(`INSERT OR IGNORE INTO profile_read_progress(profile_id, book_id, page_index, locator, progress_fraction, updated_at)

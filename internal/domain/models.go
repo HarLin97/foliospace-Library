@@ -230,6 +230,7 @@ type DOSLaunch struct {
 	GameID           int64                `json:"gameId"`
 	EntryFile        string               `json:"entryFile,omitempty"`
 	EntrySource      string               `json:"entrySource"`
+	InstallDirectory string               `json:"installDirectory,omitempty"`
 	WorkingDirectory string               `json:"workingDirectory,omitempty"`
 	DOSBoxConfig     string               `json:"dosboxConfig,omitempty"`
 	Arguments        []string             `json:"arguments"`
@@ -239,6 +240,7 @@ type DOSLaunch struct {
 	SourceSHA256     string               `json:"sourceSha256,omitempty"`
 	CatalogRevision  string               `json:"catalogRevision,omitempty"`
 	AuditStatus      string               `json:"auditStatus,omitempty"`
+	UpdatedAt        time.Time            `json:"updatedAt"`
 }
 
 type GameSource struct {

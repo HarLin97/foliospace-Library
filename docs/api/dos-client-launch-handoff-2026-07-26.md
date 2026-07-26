@@ -95,6 +95,7 @@ Resolved curated example:
   },
   "fileUrl": "/api/client/games/18728/file",
   "entryFile": "PAL!.EXE",
+  "updatedAt": "2026-07-26T08:00:00Z",
   "files": [
     {
       "name": "仙剑奇侠传.zip",
@@ -106,6 +107,7 @@ Resolved curated example:
   ],
   "dosLaunch": {
     "entrySource": "curated",
+    "installDirectory": null,
     "workingDirectory": null,
     "dosboxConfig": null,
     "arguments": [],
@@ -128,6 +130,7 @@ Unresolved games return an explicit `entryFile: null`. This is a valid result, n
   "entryFile": null,
   "dosLaunch": {
     "entrySource": "unknown",
+    "installDirectory": null,
     "workingDirectory": null,
     "dosboxConfig": null,
     "arguments": [],
@@ -215,20 +218,23 @@ Create a structured launch plan rather than a host-shell command string:
 ```text
 workspaceRoot      = verified extraction directory
 entryFile          = selected archive-relative BAT/COM/EXE path
+installDirectory   = optional single DOS directory under the generated C-drive root
 workingDirectory   = dosLaunch.workingDirectory, otherwise parent(entryFile)
 arguments[]        = dosLaunch.arguments only for the authoritative backend entry
-dosboxConfig       = optional extracted config path
+dosboxConfig       = optional validated extracted config path
 ```
 
 Rules:
 
 - Validate every path again immediately before launch.
-- Mount only `workspaceRoot` as the DOS C drive.
+- If `installDirectory` is null, mount only `workspaceRoot` as the DOS C drive.
+- If `installDirectory` is present, create a private C-drive root and expose `workspaceRoot` below that single directory name before mounting the generated root as C.
 - Set the DOS working directory before launching the selected program.
 - Pass each argument as a literal DOS argument; do not interpret it as host-shell syntax.
 - Do not use `cmd.exe /c`, PowerShell, or another host shell to run archive content.
 - `keymapHints` are display help only and must not be executed as emulator configuration.
 - If the user chooses a different candidate, do not reuse arguments from the backend's previous authoritative entry.
+- Fetch the manifest on every launch. Treat `updatedAt` as launch-profile freshness metadata and cache archive bytes separately by SHA-1.
 
 If the client uses an embedded DOSBox core, pass this structured plan directly to the core/session bridge. If it starts DOSBox Staging as a child process, generate a controlled local autoexec/config file and pass that config to DOSBox without interpolating untrusted host-shell commands.
 
@@ -258,6 +264,7 @@ Use these production records on the configured test network without embedding a 
 
 - `gameId=18728`, `仙剑奇侠传`: resolved curated entry `PAL!.EXE`, cover available.
 - `gameId=18758`, `F15战斗机`: unresolved curated command, `entryFile: null`, candidates available for chooser testing.
+- `gameId=20624`, `龙骑士4`: resolved `PLAY.BAT` with `installDirectory: "DRA4"` so the client mounts the archive at `C:\DRA4`.
 
 Client acceptance checklist:
 
@@ -268,3 +275,4 @@ Client acceptance checklist:
 5. `18758` shows the chooser and remembers the selection for the same SHA-1.
 6. Changing the archive SHA-1 invalidates the extracted workspace and saved selection.
 7. A traversal or case-collision test archive is rejected before any file can escape the workspace.
+8. `20624` starts from `C:\DRA4` and proceeds beyond its absolute `UNIT.DAT` and `FLAG0` lookups.
