@@ -4141,6 +4141,8 @@ function platformSortRank(platform: string) {
       return 76;
     case "pc98":
       return 77;
+    case "dos":
+      return 79;
     case "psp":
       return 78;
     case "neogeo":
@@ -4184,6 +4186,8 @@ function gamePlatformLabel(game: GameAsset) {
       return "PC-FX";
     case "pc98":
       return "NEC PC-98";
+    case "dos":
+      return "DOS";
     case "mame":
       return "MAME";
     default:

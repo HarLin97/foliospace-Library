@@ -221,6 +221,26 @@ type GameFile struct {
 	Position int       `json:"position"`
 }
 
+type DOSLaunchCandidate struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+type DOSLaunch struct {
+	GameID           int64                `json:"gameId"`
+	EntryFile        string               `json:"entryFile,omitempty"`
+	EntrySource      string               `json:"entrySource"`
+	WorkingDirectory string               `json:"workingDirectory,omitempty"`
+	DOSBoxConfig     string               `json:"dosboxConfig,omitempty"`
+	Arguments        []string             `json:"arguments"`
+	Candidates       []DOSLaunchCandidate `json:"candidates"`
+	KeymapHints      map[string]string    `json:"keymapHints,omitempty"`
+	SourceIdentifier string               `json:"sourceIdentifier,omitempty"`
+	SourceSHA256     string               `json:"sourceSha256,omitempty"`
+	CatalogRevision  string               `json:"catalogRevision,omitempty"`
+	AuditStatus      string               `json:"auditStatus,omitempty"`
+}
+
 type GameSource struct {
 	ID                 int64     `json:"id"`
 	GameID             int64     `json:"gameId"`

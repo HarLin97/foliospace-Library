@@ -1413,6 +1413,10 @@ func (s *Service) GameFiles(id int64) ([]domain.GameFile, error) {
 	}}, nil
 }
 
+func (s *Service) DOSLaunch(id int64) (domain.DOSLaunch, error) {
+	return s.store.DOSLaunch(id)
+}
+
 func (s *Service) OpenGameFilePart(id int64, position int) (PageStream, domain.GameFile, error) {
 	game, err := s.store.GameByID(id)
 	if err != nil {

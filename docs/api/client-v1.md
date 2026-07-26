@@ -249,7 +249,7 @@ Response:
   "serviceName": "FolioSpace Library",
   "serviceVersion": "0.978",
   "apiVersion": "v1",
-  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
+  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
   "capabilities": {
     "clientHome": true,
     "unifiedManifest": true,
@@ -281,7 +281,8 @@ Response:
     "recentScan": true,
     "gameSaveSync": true,
     "gamePlayStats": true,
-    "gameMetadataProviders": true
+    "gameMetadataProviders": true,
+    "dosArchiveLaunchV1": true
   }
 }
 ```
@@ -597,6 +598,8 @@ Nintendo GameCube scans use `platform: "ngc"`, `romSetName: "NGC"`, `emulatorHin
 
 PlayStation 2 scans use `platform: "ps2"`, `romSetName: "PS2"`, `emulatorHint: "pcsx2"`, and `inputProfile: "standard"`. PS2 `.iso` and `.chd` images are exposed as single-file manifests.
 
+IBM-compatible DOS archive scans use `platform: "dos"`, `romSetName: "DOS"`, and `emulatorHint: "dosbox-staging"`. ZIP and DOSZ archives remain one catalog item and are never extracted or executed by the server. When a nearby controlled `games.json` matches the exact archive by SHA-256 plus byte size, FolioSpace imports its localized title, release year, key help, cover, and curated launch command. Archive candidates and paths are bounded, normalized, path-traversal-safe, and unique under case-insensitive comparison. PC-98 remains a separate `pc98` platform.
+
 PC-98 scans use `platform: "pc98"`, `romSetName: "PC-98"`, `emulatorHint: "np2kai"`, and `inputProfile: "standard"`. Supported floppy and hard-disk images are validated by known geometry/header rules before indexing. ZIP entry names marked as non-UTF-8 are decoded as CP932/Shift-JIS, and generic internal names such as `1.D88` do not replace a meaningful container or parent-directory title. A ZIP is accepted only when it contains exactly one validated PC-98 media candidate; ZIPs with multiple media candidates still require manual review.
 
 The scanner computes CRC32 and SHA-1 over the raw image, not the ZIP container. Byte-identical mirrors are represented by one catalog record while the backend retains every physical source for incremental scans and recovery. Floppy files in the same parent directory with explicit disk suffixes such as `Disk 1`, `Disk 2`, `Data 1`, `FD 2`, or their Japanese equivalents are grouped into one launchable game. Catalog `size` is the sum of every delivered package file. A multi-floppy manifest exposes the ordered media as one `entry` followed by `disk` files with zero-based contiguous `diskIndex` values; the first floppy also includes `driveHint: "FDD1"`.
@@ -903,6 +906,8 @@ Expansion or special-disk manifests include any cross-title media required at ru
 `Yu-No - Special Disk` is blocked as an independent game because it requires an existing bootable YU-NO installation. It may be exposed later only as a modeled add-on dependency of a complete main-game package.
 
 `files[]` is the complete ordered launch set. Single-file games contain one `entry` item. Dreamcast GDI games contain the `.gdi` descriptor as `entry` followed by every referenced track as `dependency`. Saturn and PC-FX CUE games contain the `.cue` descriptor followed by every file named by a CUE `FILE` directive, including `.bin`, `.wav`, and `.mp3` tracks. A PC-FX M3U package contains the M3U entry, every referenced disc descriptor, and all descriptor tracks. Dependency lookup is case-insensitive, while each returned `name` preserves the spelling expected by its descriptor. Clients must preserve each `name` when downloading so the emulator can resolve the package. Each `url` uses `GET /api/client/games/{gameId}/files/{position}` and requires the same authentication as `fileUrl`.
+
+For DOS ZIP/DOSZ archives, `entryFile` is the normalized path of the executable *inside* the archive, not the archive filename. It is explicitly `null` when no authoritative entry can be resolved. The additive `dosLaunch` object reports `entrySource` (`unknown`, `dosboxConfig`, or `curated`), nullable `workingDirectory` and `dosboxConfig`, literal `arguments`, safe `.bat`/`.com`/`.exe` `candidates`, and optional advisory `keymapHints`. Clients must download the archive through `fileUrl`, verify its published SHA-1, extract it with their own archive safety limits, and show an entry chooser when `entryFile` is null. The server never passes a catalog command to a host shell.
 `coverUrl` is optional. For supported retro platforms it streams a cached Libretro boxart image through FolioSpace Library; clients should fall back to their own placeholder when it is absent or returns 404.
 
 ### `GET /api/client/games/{gameId}/details`

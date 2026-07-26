@@ -325,7 +325,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		SupportedFormats: []string{
 			"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm",
 			"nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64",
-			"gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z",
+			"gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat",
 			"d88", "88d", "d98", "98d", "fdi", "xdf", "hdm", "dup", "2hd", "tfd", "nfd", "hd4", "hd5", "hd9", "fdd",
 			"h01", "hdb", "ddb", "dd6", "dcp", "dcu", "flp", "img", "ima", "fim", "thd", "nhd", "hdi", "vhd", "slh", "hdn", "cmd",
 		},
@@ -361,6 +361,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			GameSaveSync:          true,
 			GamePlayStats:         true,
 			GameMetadataProviders: true,
+			DOSArchiveLaunchV1:    true,
 		},
 	})
 }
@@ -619,7 +620,18 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 			writeJSONOrError(w, nil, err)
 			return
 		}
-		writeJSON(w, clientGameManifest(game, files))
+		var dosLaunch *domain.DOSLaunch
+		if game.Platform == "dos" {
+			launch, launchErr := s.service.DOSLaunch(id)
+			if launchErr != nil && !errors.Is(launchErr, sql.ErrNoRows) {
+				writeJSONOrError(w, nil, launchErr)
+				return
+			}
+			if launchErr == nil {
+				dosLaunch = &launch
+			}
+		}
+		writeJSON(w, clientGameManifest(game, files, dosLaunch))
 		return
 	}
 	if tail == "details" && r.Method == http.MethodGet {
@@ -724,7 +736,7 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		}
 		defer stream.Body.Close()
 		w.Header().Set("Content-Type", stream.ContentType)
-		if game.Platform == "n64" || game.Platform == "pc98" {
+		if game.Platform == "n64" || game.Platform == "pc98" || game.Platform == "dos" {
 			size := game.Size
 			name := clientGameFileName(game)
 			if game.Platform == "pc98" {
@@ -2081,6 +2093,7 @@ type clientCapabilities struct {
 	GameSaveSync          bool `json:"gameSaveSync"`
 	GamePlayStats         bool `json:"gamePlayStats"`
 	GameMetadataProviders bool `json:"gameMetadataProviders"`
+	DOSArchiveLaunchV1    bool `json:"dosArchiveLaunchV1"`
 }
 
 type clientHomeResponse struct {
@@ -2201,8 +2214,9 @@ type clientGame struct {
 type clientGameManifestResponse struct {
 	Game      clientGame       `json:"game"`
 	FileURL   string           `json:"fileUrl"`
-	EntryFile string           `json:"entryFile,omitempty"`
+	EntryFile *string          `json:"entryFile"`
 	Files     []clientGameFile `json:"files,omitempty"`
+	DOSLaunch *clientDOSLaunch `json:"dosLaunch,omitempty"`
 }
 
 type clientGameFile struct {
@@ -2213,6 +2227,16 @@ type clientGameFile struct {
 	DiskIndex *int   `json:"diskIndex,omitempty"`
 	DriveHint string `json:"driveHint,omitempty"`
 	URL       string `json:"url"`
+	Checksum  string `json:"checksum,omitempty"`
+}
+
+type clientDOSLaunch struct {
+	EntrySource      string                      `json:"entrySource"`
+	WorkingDirectory *string                     `json:"workingDirectory"`
+	DOSBoxConfig     *string                     `json:"dosboxConfig"`
+	Arguments        []string                    `json:"arguments"`
+	Candidates       []domain.DOSLaunchCandidate `json:"candidates"`
+	KeymapHints      map[string]string           `json:"keymapHints,omitempty"`
 }
 
 type clientGameMetadataResponse struct {
@@ -2436,7 +2460,7 @@ func clientGames(items []domain.GameAsset) []clientGame {
 
 func clientGameItem(game domain.GameAsset) clientGame {
 	inputProfile := ""
-	if strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") || strings.EqualFold(game.Platform, "psp") || strings.EqualFold(game.Platform, "ngc") || strings.EqualFold(game.Platform, "ps2") {
+	if strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") || strings.EqualFold(game.Platform, "dos") || strings.EqualFold(game.Platform, "psp") || strings.EqualFold(game.Platform, "ngc") || strings.EqualFold(game.Platform, "ps2") {
 		inputProfile = "standard"
 	} else if (strings.EqualFold(game.Platform, "model2") || strings.EqualFold(game.Platform, "naomi2")) && !strings.EqualFold(game.CatalogRole, "dependency") {
 		inputProfile = "operatorArcade"
@@ -2496,7 +2520,7 @@ func gameCoverURL(gameID int64, platform string) string {
 	return fmt.Sprintf("/api/games/%d/cover?v=game-cover-refresh-20260714", gameID)
 }
 
-func clientGameManifest(game domain.GameAsset, files []domain.GameFile) clientGameManifestResponse {
+func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunch *domain.DOSLaunch) clientGameManifestResponse {
 	manifest := clientGameManifestResponse{
 		Game:    clientGameItem(game),
 		FileURL: fmt.Sprintf("/api/client/games/%d/file", game.ID),
@@ -2507,6 +2531,9 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile) clientGa
 		clientFile := clientGameFile{
 			Name: file.Name, Size: file.Size, Role: file.Role,
 			URL: fmt.Sprintf("/api/client/games/%d/files/%d", game.ID, file.Position),
+		}
+		if game.Platform == "dos" && file.Position == 0 {
+			clientFile.Checksum = game.SHA1
 		}
 		if game.Platform == "pc98" && file.Role != "font" && isPC98FloppyManifestFile(file.Name) {
 			clientFile.Role = "disk"
@@ -2522,11 +2549,31 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile) clientGa
 			diskIndex++
 		}
 		manifest.Files = append(manifest.Files, clientFile)
-		if file.Role == "entry" {
-			manifest.EntryFile = file.Name
+		if file.Role == "entry" && game.Platform != "dos" {
+			entry := file.Name
+			manifest.EntryFile = &entry
+		}
+	}
+	if dosLaunch != nil {
+		if dosLaunch.EntryFile != "" {
+			entry := dosLaunch.EntryFile
+			manifest.EntryFile = &entry
+		}
+		manifest.DOSLaunch = &clientDOSLaunch{
+			EntrySource: dosLaunch.EntrySource, WorkingDirectory: nullableString(dosLaunch.WorkingDirectory),
+			DOSBoxConfig: nullableString(dosLaunch.DOSBoxConfig), Arguments: dosLaunch.Arguments,
+			Candidates: dosLaunch.Candidates, KeymapHints: dosLaunch.KeymapHints,
 		}
 	}
 	return manifest
+}
+
+func nullableString(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	value = strings.TrimSpace(value)
+	return &value
 }
 
 func isPC98FloppyManifestFile(name string) bool {

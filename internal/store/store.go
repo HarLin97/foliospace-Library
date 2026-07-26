@@ -1633,6 +1633,100 @@ func (s *Store) ReplaceGameFiles(gameID int64, files []domain.GameFile) error {
 	return tx.Commit()
 }
 
+func (s *Store) UpsertDOSLaunch(launch domain.DOSLaunch) error {
+	arguments, err := json.Marshal(nonNilStrings(launch.Arguments))
+	if err != nil {
+		return err
+	}
+	candidates := launch.Candidates
+	if candidates == nil {
+		candidates = []domain.DOSLaunchCandidate{}
+	}
+	candidatesJSON, err := json.Marshal(candidates)
+	if err != nil {
+		return err
+	}
+	keymapHints := launch.KeymapHints
+	if keymapHints == nil {
+		keymapHints = map[string]string{}
+	}
+	keymapJSON, err := json.Marshal(keymapHints)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO game_dos_launch(
+		game_id, entry_file, entry_source, working_directory, dosbox_config,
+		arguments_json, candidates_json, keymap_hints_json, source_identifier,
+		source_sha256, catalog_revision, audit_status
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(game_id) DO UPDATE SET
+		entry_file = excluded.entry_file,
+		entry_source = excluded.entry_source,
+		working_directory = excluded.working_directory,
+		dosbox_config = excluded.dosbox_config,
+		arguments_json = excluded.arguments_json,
+		candidates_json = excluded.candidates_json,
+		keymap_hints_json = excluded.keymap_hints_json,
+		source_identifier = excluded.source_identifier,
+		source_sha256 = excluded.source_sha256,
+		catalog_revision = excluded.catalog_revision,
+		audit_status = excluded.audit_status,
+		updated_at = CURRENT_TIMESTAMP`,
+		launch.GameID, strings.TrimSpace(launch.EntryFile), strings.TrimSpace(launch.EntrySource),
+		strings.TrimSpace(launch.WorkingDirectory), strings.TrimSpace(launch.DOSBoxConfig),
+		string(arguments), string(candidatesJSON), string(keymapJSON), strings.TrimSpace(launch.SourceIdentifier),
+		strings.ToLower(strings.TrimSpace(launch.SourceSHA256)), strings.TrimSpace(launch.CatalogRevision), strings.TrimSpace(launch.AuditStatus))
+	return err
+}
+
+func (s *Store) DOSLaunch(gameID int64) (domain.DOSLaunch, error) {
+	var launch domain.DOSLaunch
+	var argumentsJSON string
+	var candidatesJSON string
+	var keymapJSON string
+	err := s.db.QueryRow(`SELECT game_id, entry_file, entry_source, working_directory, dosbox_config,
+		arguments_json, candidates_json, keymap_hints_json, source_identifier, source_sha256,
+		catalog_revision, audit_status
+		FROM game_dos_launch WHERE game_id = ?`, gameID).Scan(
+		&launch.GameID, &launch.EntryFile, &launch.EntrySource, &launch.WorkingDirectory, &launch.DOSBoxConfig,
+		&argumentsJSON, &candidatesJSON, &keymapJSON, &launch.SourceIdentifier, &launch.SourceSHA256,
+		&launch.CatalogRevision, &launch.AuditStatus,
+	)
+	if err != nil {
+		return domain.DOSLaunch{}, err
+	}
+	if err := json.Unmarshal([]byte(argumentsJSON), &launch.Arguments); err != nil {
+		return domain.DOSLaunch{}, err
+	}
+	if err := json.Unmarshal([]byte(candidatesJSON), &launch.Candidates); err != nil {
+		return domain.DOSLaunch{}, err
+	}
+	if err := json.Unmarshal([]byte(keymapJSON), &launch.KeymapHints); err != nil {
+		return domain.DOSLaunch{}, err
+	}
+	launch.Arguments = nonNilStrings(launch.Arguments)
+	if launch.Candidates == nil {
+		launch.Candidates = []domain.DOSLaunchCandidate{}
+	}
+	return launch, nil
+}
+
+func (s *Store) CanSkipDOSGame(path string, size int64, mtime time.Time, catalogRevision string) bool {
+	game, err := s.GameByPath(path)
+	if err != nil || game.Size != size || !game.MTime.Equal(mtime) || game.Platform != "dos" || game.EmulatorHint != "dosbox-staging" || game.CRC32 == "" || game.SHA1 == "" {
+		return false
+	}
+	launch, err := s.DOSLaunch(game.ID)
+	return err == nil && launch.CatalogRevision == strings.TrimSpace(catalogRevision)
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
+}
+
 func (s *Store) CanSkipPC98Source(path string, containerSize int64, mtime time.Time) bool {
 	var platform string
 	var emulatorHint string
@@ -2916,6 +3010,8 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "pc-fx"
 	case GamePlatformCollectionID("pc98"):
 		return "pc98"
+	case GamePlatformCollectionID("dos"):
+		return "dos"
 	case GamePlatformCollectionID("arcade"):
 		return "arcade"
 	case GamePlatformCollectionID("mame"):
@@ -2955,6 +3051,8 @@ func GamePlatformSortRank(platform string) int {
 		return 76
 	case "pc98":
 		return 77
+	case "dos":
+		return 79
 	case "psp":
 		return 78
 	case "neogeo":
@@ -3005,6 +3103,8 @@ func GamePlatformLabel(platform string) string {
 		return "PC-FX"
 	case "pc98":
 		return "NEC PC-98"
+	case "dos":
+		return "DOS"
 	case "n64":
 		return "Nintendo 64"
 	case "psp":
@@ -3073,6 +3173,8 @@ func expectedGameEmulatorHint(platform string) string {
 		return "pcsx2"
 	case "pc98":
 		return "np2kai"
+	case "dos":
+		return "dosbox-staging"
 	case "naomi2":
 		return "flycast"
 	}

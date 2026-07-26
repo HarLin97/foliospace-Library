@@ -55,6 +55,9 @@ function gamePlatformValueFromLabel(label: string) {
     case "nec pc-98":
     case "pc-98":
       return "pc98";
+    case "dos":
+    case "ms-dos":
+      return "dos";
     case "32x":
       return "32x";
     default:

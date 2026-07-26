@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -33,10 +34,11 @@ import (
 )
 
 type Scanner struct {
-	store         *store.Store
-	workerCount   func() int
-	gamelistCache sync.Map
-	pegasusCache  sync.Map
+	store           *store.Store
+	workerCount     func() int
+	gamelistCache   sync.Map
+	pegasusCache    sync.Map
+	dosCatalogCache sync.Map
 }
 
 type scanScope struct {
@@ -951,6 +953,10 @@ func (s *Scanner) scanTaskNeedsIndex(library domain.Library, task scanFileTask, 
 }
 
 func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileInfo, ext string, platform string) bool {
+	if platform == "dos" {
+		catalog, _ := s.dosCatalogForPath(library.RootPath, path)
+		return s.store.CanSkipDOSGame(path, info.Size(), info.ModTime(), catalog.revision)
+	}
 	if platform == "naomi2" {
 		return s.canSkipNaomi2Game(path, info)
 	}
@@ -1085,6 +1091,12 @@ func classifyFileKind(library domain.Library, path string, ext string) string {
 		return ""
 	}
 	if library.AssetType == "game" {
+		if relPath, err := filepath.Rel(library.RootPath, path); err == nil && inferLibraryGamePlatform(library, ext, relPath) == "dos" {
+			if ext == ".zip" || ext == ".dosz" || ext == ".exe" || ext == ".com" || ext == ".bat" {
+				return "game"
+			}
+			return ""
+		}
 		if isNaomi2Path(library, path) {
 			if ext != ".zip" {
 				return ""
@@ -1277,6 +1289,9 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	checksums := checksumPair{}
 	title := gameTitle(path)
 	platform := inferLibraryGamePlatform(library, ext, relPath)
+	if platform == "dos" {
+		return s.indexDOSGameFile(library, path, info, ext, relPath)
+	}
 	if platform == "naomi2" {
 		return s.indexNaomi2GameFile(library, path, info, relPath)
 	}
@@ -3892,8 +3907,9 @@ func seriesIdentityForRelPath(rootPath string, relPath string) (string, string) 
 }
 
 type checksumPair struct {
-	crc32 string
-	sha1  string
+	crc32  string
+	sha1   string
+	sha256 string
 }
 
 func fileChecksums(path string) (checksumPair, error) {
@@ -3905,12 +3921,14 @@ func fileChecksums(path string) (checksumPair, error) {
 
 	crc := crc32.NewIEEE()
 	sha := sha1.New()
-	if _, err := io.Copy(io.MultiWriter(crc, sha), file); err != nil {
+	sha256Hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(crc, sha, sha256Hash), file); err != nil {
 		return checksumPair{}, err
 	}
 	return checksumPair{
-		crc32: fmt.Sprintf("%08x", crc.Sum32()),
-		sha1:  hex.EncodeToString(sha.Sum(nil)),
+		crc32:  fmt.Sprintf("%08x", crc.Sum32()),
+		sha1:   hex.EncodeToString(sha.Sum(nil)),
+		sha256: hex.EncodeToString(sha256Hash.Sum(nil)),
 	}, nil
 }
 
@@ -4119,6 +4137,8 @@ func inferGamePlatform(ext string, relPath string) string {
 			return "pc-fx"
 		case "pc98", "pc-98", "pc 98", "pc9801", "pc-9801", "pc9821", "pc-9821", "nec pc-98", "game.pc98":
 			return "pc98"
+		case "dos", "ms-dos", "msdos", "ibm dos", "ibm pc dos":
+			return "dos"
 		case "ps", "ps1", "psx", "playstation", "playstation 1", "playstation one", "psone":
 			return "ps1"
 		}
@@ -4162,6 +4182,11 @@ func inferLibraryGamePlatform(library domain.Library, ext string, relPath string
 	}
 	for _, value := range []string{relPath, library.Name, filepath.Base(filepath.Clean(library.RootPath))} {
 		lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(value)))
+		for _, part := range strings.Split(lower, "/") {
+			if part == "dos" || part == "ms-dos" || part == "msdos" {
+				return "dos"
+			}
+		}
 		if strings.Contains(lower, "pc-fx") || strings.Contains(lower, "pcfx") {
 			return "pc-fx"
 		}
