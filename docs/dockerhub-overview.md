@@ -21,7 +21,9 @@ Release `0.978` adds profile-scoped game play-time synchronization for GameEMU a
 
 - Clients report cumulative active emulation time through idempotent launch-session heartbeats, so retries and out-of-order reports never double-count time.
 - `GET` and `PUT /api/client/games/{gameId}/play-stats` provide total play seconds, launch count, and first/last played timestamps.
+- `GET /api/client/games/played` provides a profile-scoped, paginated played-game catalog for recent activity and play-time dashboards.
 - MCP adds `foliospace.get_game_play_stats` and `foliospace.report_game_play_session` for trusted local agents.
+- MCP also provides `foliospace.list_played_games` for aggregate game-history queries without one request per game.
 - `/api/client/info` advertises `gamePlayStats: true` for capability detection.
 - Service and MCP metadata report version `0.978`.
 

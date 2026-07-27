@@ -281,6 +281,7 @@ Response:
     "recentScan": true,
     "gameSaveSync": true,
     "gamePlayStats": true,
+    "gamePlayedCatalog": true,
     "gameMetadataProviders": true,
     "dosArchiveLaunchV1": true
   }
@@ -945,6 +946,48 @@ Returns profile-scoped play history for one game. A game that has never been lau
   "launchCount": 3
 }
 ```
+
+### `GET /api/client/games/played`
+
+Returns the profile-scoped, paginated list of games that have at least one recorded launch or non-zero play time. This is the preferred endpoint for recent-games and play-time statistics screens because clients do not need to fetch every game individually.
+
+Supported query parameters:
+
+- `limit` (default `50`, maximum `200`)
+- `offset`
+- `q`
+- `platform` (one value or comma-separated values)
+- `sort=recent|playtime|launches|title` (default `recent`)
+- `direction=desc|asc` (default `desc`)
+- `profileId` (or `X-FolioSpace-Profile-Id`)
+
+```json
+{
+  "items": [
+    {
+      "gameId": 42,
+      "title": "Metal Slug",
+      "platform": "neogeo",
+      "romSetName": "FBNeo",
+      "format": "zip",
+      "sha1": "...",
+      "emulatorHint": "neogeo",
+      "coverUrl": "/api/games/42/cover",
+      "manifestUrl": "/api/client/games/42/manifest",
+      "firstPlayedAt": "2026-07-22T10:00:00Z",
+      "lastPlayedAt": "2026-07-22T10:45:00Z",
+      "totalPlaySeconds": 2700,
+      "launchCount": 3
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0,
+  "hasMore": false
+}
+```
+
+Use `gameId` as the primary match key within one FolioSpace instance. `sha1` and `crc32` are included as fallback identity keys after a library rebuild or re-index.
 
 ### `PUT /api/client/games/{gameId}/play-stats`
 
@@ -1615,6 +1658,7 @@ Good MCP tools:
 - `foliospace.list_games`, `foliospace.list_game_platforms`, and `foliospace.open_game_manifest`: browse available game platforms, paginated local ROM assets, and client-safe manifests. `list_game_platforms` mirrors full-catalog game facets and only reports platforms with launchable indexed games.
 - `foliospace.get_game_metadata_providers` and `foliospace.export_game_gamelist`: inspect game metadata sources and export launcher-style `gamelist.xml`.
 - `foliospace.save_game_private_state`: save profile-scoped game favorite and liked flags.
+- `foliospace.list_played_games`: list profile-scoped played games with pagination, filters, cumulative play time, launch count, and first/last played timestamps.
 - `foliospace.get_game_play_stats` and `foliospace.report_game_play_session`: inspect and idempotently update profile-scoped game play time and launch counts.
 - `foliospace.list_videos` and `foliospace.open_video_manifest`: browse and open local video assets through client-safe DTOs.
 - `foliospace.get_private_state` and `foliospace.save_private_state`: inspect or update status, favorite, rating, tags, and notes.

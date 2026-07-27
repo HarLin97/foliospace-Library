@@ -31,6 +31,7 @@ func TestServerListsTools(t *testing.T) {
 		!strings.Contains(body, "foliospace.get_game_metadata_providers") ||
 		!strings.Contains(body, "foliospace.export_game_gamelist") ||
 		!strings.Contains(body, "foliospace.save_game_private_state") ||
+		!strings.Contains(body, "foliospace.list_played_games") ||
 		!strings.Contains(body, "foliospace.get_game_play_stats") ||
 		!strings.Contains(body, "foliospace.report_game_play_session") ||
 		!strings.Contains(body, "foliospace.list_videos") ||
@@ -70,6 +71,7 @@ func TestServerCallsGamePlayStatsTools(t *testing.T) {
 	})}
 
 	for _, call := range []Request{
+		toolCall(t, "foliospace.list_played_games", map[string]any{"profileId": 2, "limit": 25, "platform": "snes,n64", "sort": "playtime", "direction": "desc"}),
 		toolCall(t, "foliospace.get_game_play_stats", map[string]any{"gameId": 42, "profileId": 2}),
 		toolCall(t, "foliospace.report_game_play_session", map[string]any{
 			"gameId": 42, "profileId": 2, "sessionId": "session-1", "elapsedSeconds": 120,
@@ -81,14 +83,17 @@ func TestServerCallsGamePlayStatsTools(t *testing.T) {
 		}
 	}
 
-	if len(requests) != 2 || requests[0].method != http.MethodGet || requests[0].path != "/api/client/games/42/play-stats?profileId=2" {
-		t.Fatalf("GET request = %#v", requests)
+	if len(requests) != 3 || requests[0].method != http.MethodGet || requests[0].path != "/api/client/games/played?direction=desc&limit=25&platform=snes%2Cn64&sort=playtime&profileId=2" {
+		t.Fatalf("list request = %#v", requests)
 	}
-	if requests[1].method != http.MethodPut || requests[1].path != "/api/client/games/42/play-stats?profileId=2" {
-		t.Fatalf("PUT request = %#v", requests[1])
+	if requests[1].method != http.MethodGet || requests[1].path != "/api/client/games/42/play-stats?profileId=2" {
+		t.Fatalf("GET request = %#v", requests[1])
 	}
-	if !strings.Contains(requests[1].body, `"sessionId":"session-1"`) || !strings.Contains(requests[1].body, `"elapsedSeconds":120`) || strings.Contains(requests[1].body, "profileId") {
-		t.Fatalf("PUT body = %s", requests[1].body)
+	if requests[2].method != http.MethodPut || requests[2].path != "/api/client/games/42/play-stats?profileId=2" {
+		t.Fatalf("PUT request = %#v", requests[2])
+	}
+	if !strings.Contains(requests[2].body, `"sessionId":"session-1"`) || !strings.Contains(requests[2].body, `"elapsedSeconds":120`) || strings.Contains(requests[2].body, "profileId") {
+		t.Fatalf("PUT body = %s", requests[2].body)
 	}
 }
 

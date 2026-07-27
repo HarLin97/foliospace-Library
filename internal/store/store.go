@@ -2446,6 +2446,85 @@ func (s *Store) GamePlayStatsForProfile(gameID int64, profileID int64) (domain.G
 	return stats, err
 }
 
+func (s *Store) ListPlayedGamesForProfile(options domain.PlayedGameListOptions, profileID int64) (domain.PlayedGameListPage, error) {
+	profileID, err := s.ResolveProfileID(profileID)
+	if err != nil {
+		return domain.PlayedGameListPage{}, err
+	}
+	limit := options.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset := options.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	clauses := []string{`ps.profile_id = ?`, `LOWER(TRIM(g.catalog_role)) <> 'dependency'`, `(ps.launch_count > 0 OR ps.total_play_seconds > 0)`}
+	args := []any{profileID}
+	if query := strings.TrimSpace(options.Query); query != "" {
+		like := "%" + strings.ToLower(query) + "%"
+		clauses = append(clauses, `(LOWER(g.title) LIKE ? OR LOWER(g.rel_path) LIKE ? OR LOWER(g.rom_set_name) LIKE ? OR LOWER(g.platform) LIKE ?)`)
+		args = append(args, like, like, like, like)
+	}
+	if platform := strings.TrimSpace(options.Platform); platform != "" {
+		platforms := splitFilterValues(platform)
+		if len(platforms) == 1 {
+			clauses = append(clauses, `LOWER(g.platform) = LOWER(?)`)
+			args = append(args, platforms[0])
+		} else if len(platforms) > 1 {
+			placeholders := strings.TrimRight(strings.Repeat("LOWER(?),", len(platforms)), ",")
+			clauses = append(clauses, `LOWER(g.platform) IN (`+placeholders+`)`)
+			for _, value := range platforms {
+				args = append(args, value)
+			}
+		}
+	}
+	where := ` WHERE ` + strings.Join(clauses, ` AND `)
+
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM game_play_stats ps JOIN games g ON g.id = ps.game_id`+where, args...).Scan(&total); err != nil {
+		return domain.PlayedGameListPage{}, err
+	}
+	queryArgs := append([]any{}, args...)
+	queryArgs = append(queryArgs, limit, offset)
+	rows, err := s.db.Query(playedGameSelectSQL()+where+playedGameOrderBy(options.Sort, options.Direction)+` LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return domain.PlayedGameListPage{}, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.PlayedGame, 0)
+	for rows.Next() {
+		item, err := scanPlayedGame(rows, profileID)
+		if err != nil {
+			return domain.PlayedGameListPage{}, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return domain.PlayedGameListPage{}, err
+	}
+	games := make([]domain.GameAsset, len(items))
+	for i := range items {
+		games[i] = items[i].Game
+	}
+	games, err = s.applyGamePrivateStates(profileID, games)
+	if err != nil {
+		return domain.PlayedGameListPage{}, err
+	}
+	for i := range items {
+		items[i].Game = games[i]
+	}
+	return domain.PlayedGameListPage{
+		Items: items, Total: total, Limit: limit, Offset: offset,
+		HasMore: int64(offset+len(items)) < total,
+	}, nil
+}
+
 func (s *Store) ReportGamePlaySessionForProfile(gameID int64, profileID int64, report domain.GamePlaySessionReport) (domain.GamePlayReportResult, error) {
 	profileID, err := s.ResolveProfileID(profileID)
 	if err != nil {
@@ -2563,6 +2642,57 @@ func scanGamePlayStats(row scanner, gameID int64, profileID int64) (domain.GameP
 		stats.LastPlayedAt = &parsed
 	}
 	return stats, nil
+}
+
+func playedGameSelectSQL() string {
+	return `SELECT g.id, g.library_id, g.title, g.platform, g.rom_set_name, g.region, g.format, g.file_path, g.rel_path, g.size, g.mtime, g.crc32, g.sha1, g.emulator_hint, g.compatibility, g.catalog_role, g.last_played_at, g.created_at, g.updated_at, ps.first_played_at, ps.last_played_at, ps.total_play_seconds, ps.launch_count FROM game_play_stats ps JOIN games g ON g.id = ps.game_id`
+}
+
+func scanPlayedGame(row scanner, profileID int64) (domain.PlayedGame, error) {
+	var item domain.PlayedGame
+	var mtime, gameLastPlayedAt, createdAt, updatedAt string
+	var firstPlayedAt, lastPlayedAt string
+	if err := row.Scan(
+		&item.Game.ID, &item.Game.LibraryID, &item.Game.Title, &item.Game.Platform,
+		&item.Game.ROMSetName, &item.Game.Region, &item.Game.Format, &item.Game.FilePath,
+		&item.Game.RelPath, &item.Game.Size, &mtime, &item.Game.CRC32, &item.Game.SHA1,
+		&item.Game.EmulatorHint, &item.Game.Compatibility, &item.Game.CatalogRole,
+		&gameLastPlayedAt, &createdAt, &updatedAt, &firstPlayedAt, &lastPlayedAt,
+		&item.Stats.TotalPlaySeconds, &item.Stats.LaunchCount,
+	); err != nil {
+		return domain.PlayedGame{}, err
+	}
+	item.Game.MTime = parseTime(mtime)
+	item.Game.LastPlayedAt = parseTime(gameLastPlayedAt)
+	item.Game.CreatedAt = parseTime(createdAt)
+	item.Game.UpdatedAt = parseTime(updatedAt)
+	item.Stats.GameID = item.Game.ID
+	item.Stats.ProfileID = profileID
+	if parsed := parseTime(firstPlayedAt); !parsed.IsZero() {
+		item.Stats.FirstPlayedAt = &parsed
+	}
+	if parsed := parseTime(lastPlayedAt); !parsed.IsZero() {
+		item.Stats.LastPlayedAt = &parsed
+	}
+	return item, nil
+}
+
+func playedGameOrderBy(sort, direction string) string {
+	desc := !strings.EqualFold(strings.TrimSpace(direction), "asc")
+	order := "DESC"
+	if !desc {
+		order = "ASC"
+	}
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "playtime":
+		return ` ORDER BY ps.total_play_seconds ` + order + `, ps.last_played_at DESC, g.id DESC`
+	case "launches":
+		return ` ORDER BY ps.launch_count ` + order + `, ps.last_played_at DESC, g.id DESC`
+	case "title":
+		return ` ORDER BY LOWER(g.title) ` + order + `, g.id ` + order
+	default:
+		return ` ORDER BY ps.last_played_at ` + order + `, g.id ` + order
+	}
 }
 
 func (s *Store) applyGamePrivateStates(profileID int64, items []domain.GameAsset) ([]domain.GameAsset, error) {

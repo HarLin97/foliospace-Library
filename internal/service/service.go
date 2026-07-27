@@ -967,6 +967,10 @@ func (s *Service) GamePlayStatsForProfile(gameID int64, profileID int64) (domain
 	return s.store.GamePlayStatsForProfile(gameID, profileID)
 }
 
+func (s *Service) ListPlayedGamesForProfile(options domain.PlayedGameListOptions, profileID int64) (domain.PlayedGameListPage, error) {
+	return s.store.ListPlayedGamesForProfile(options, profileID)
+}
+
 func (s *Service) ReportGamePlaySessionForProfile(gameID int64, profileID int64, report domain.GamePlaySessionReport) (domain.GamePlayReportResult, error) {
 	report.SessionID = strings.TrimSpace(report.SessionID)
 	if report.SessionID == "" || len(report.SessionID) > 128 {

@@ -177,6 +177,28 @@ type GamePlayReportResult struct {
 	Ended              bool          `json:"ended"`
 }
 
+type PlayedGame struct {
+	Game  GameAsset     `json:"game"`
+	Stats GamePlayStats `json:"stats"`
+}
+
+type PlayedGameListOptions struct {
+	Limit     int
+	Offset    int
+	Query     string
+	Platform  string
+	Sort      string
+	Direction string
+}
+
+type PlayedGameListPage struct {
+	Items   []PlayedGame `json:"items"`
+	Total   int64        `json:"total"`
+	Limit   int          `json:"limit"`
+	Offset  int          `json:"offset"`
+	HasMore bool         `json:"hasMore"`
+}
+
 type ClientPreferences struct {
 	Locale         string `json:"locale"`
 	ReaderPageMode string `json:"readerPageMode"`

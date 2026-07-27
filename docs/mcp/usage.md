@@ -130,6 +130,7 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.get_game_metadata_providers`: list game metadata provider status and local artwork import capabilities.
 - `foliospace.export_game_gamelist`: export indexed games as `gamelist.xml` with optional catalog filters.
 - `foliospace.save_game_private_state`: save profile-scoped game `favorite` and `liked` flags.
+- `foliospace.list_played_games`: list profile-scoped games with recorded launches or play time. Supports `limit`, `offset`, `q`, `platform`, `sort=recent|playtime|launches|title`, and `direction=desc|asc`; returns stable game ids, hashes, cover URLs, cumulative seconds, launch counts, and first/last played timestamps.
 - `foliospace.get_game_play_stats`: read profile-scoped first/last played timestamps, cumulative play seconds, and launch count.
 - `foliospace.report_game_play_session`: report cumulative elapsed seconds for a stable client-generated session id; repeated heartbeat payloads do not double-count time.
 - `foliospace.list_videos`: list paginated client-safe video assets with `limit`, `offset`, `q`, `format`, and `sort`.

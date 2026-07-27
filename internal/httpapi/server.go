@@ -60,6 +60,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/client/manual-collections", s.handleClientManualCollections)
 	mux.HandleFunc("/api/client/manual-collections/", s.handleClientManualCollectionAction)
 	mux.HandleFunc("/api/client/games", s.handleClientGames)
+	mux.HandleFunc("/api/client/games/played", s.handleClientPlayedGames)
 	mux.HandleFunc("/api/client/games/", s.handleClientGameAction)
 	mux.HandleFunc("/api/client/videos", s.handleClientVideos)
 	mux.HandleFunc("/api/client/videos/", s.handleClientVideoAction)
@@ -360,6 +361,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			RecentScan:            true,
 			GameSaveSync:          true,
 			GamePlayStats:         true,
+			GamePlayedCatalog:     true,
 			GameMetadataProviders: true,
 			DOSArchiveLaunchV1:    true,
 		},
@@ -800,6 +802,35 @@ func (s *Server) handleClientGames(w http.ResponseWriter, r *http.Request) {
 		Limit:   page.Limit,
 		Offset:  page.Offset,
 		HasMore: page.HasMore,
+	})
+}
+
+func (s *Server) handleClientPlayedGames(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	page, err := s.service.ListPlayedGamesForProfile(domain.PlayedGameListOptions{
+		Limit:     queryInt(r, "limit", 50, 200),
+		Offset:    queryInt(r, "offset", 0, 0),
+		Query:     r.URL.Query().Get("q"),
+		Platform:  r.URL.Query().Get("platform"),
+		Sort:      r.URL.Query().Get("sort"),
+		Direction: r.URL.Query().Get("direction"),
+	}, s.requestProfileID(r))
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	items := make([]clientPlayedGame, 0, len(page.Items))
+	for _, item := range page.Items {
+		items = append(items, clientPlayedGameItem(item))
+	}
+	writeJSON(w, clientPlayedGameListResponse{
+		Items: items, Total: page.Total, Limit: page.Limit, Offset: page.Offset, HasMore: page.HasMore,
 	})
 }
 
@@ -2093,6 +2124,7 @@ type clientCapabilities struct {
 	RecentScan            bool `json:"recentScan"`
 	GameSaveSync          bool `json:"gameSaveSync"`
 	GamePlayStats         bool `json:"gamePlayStats"`
+	GamePlayedCatalog     bool `json:"gamePlayedCatalog"`
 	GameMetadataProviders bool `json:"gameMetadataProviders"`
 	DOSArchiveLaunchV1    bool `json:"dosArchiveLaunchV1"`
 }
@@ -2298,6 +2330,31 @@ type clientGameListResponse struct {
 	HasMore bool         `json:"hasMore"`
 }
 
+type clientPlayedGame struct {
+	GameID           int64      `json:"gameId"`
+	Title            string     `json:"title"`
+	Platform         string     `json:"platform"`
+	ROMSetName       string     `json:"romSetName,omitempty"`
+	Format           string     `json:"format"`
+	CRC32            string     `json:"crc32,omitempty"`
+	SHA1             string     `json:"sha1,omitempty"`
+	EmulatorHint     string     `json:"emulatorHint,omitempty"`
+	CoverURL         string     `json:"coverUrl,omitempty"`
+	ManifestURL      string     `json:"manifestUrl"`
+	FirstPlayedAt    *time.Time `json:"firstPlayedAt"`
+	LastPlayedAt     *time.Time `json:"lastPlayedAt"`
+	TotalPlaySeconds int64      `json:"totalPlaySeconds"`
+	LaunchCount      int64      `json:"launchCount"`
+}
+
+type clientPlayedGameListResponse struct {
+	Items   []clientPlayedGame `json:"items"`
+	Total   int64              `json:"total"`
+	Limit   int                `json:"limit"`
+	Offset  int                `json:"offset"`
+	HasMore bool               `json:"hasMore"`
+}
+
 type clientVideo struct {
 	ID                 int64   `json:"id"`
 	AssetType          string  `json:"assetType"`
@@ -2459,6 +2516,17 @@ func clientGames(items []domain.GameAsset) []clientGame {
 		out = append(out, clientGameItem(item))
 	}
 	return out
+}
+
+func clientPlayedGameItem(item domain.PlayedGame) clientPlayedGame {
+	game := clientGameItem(item.Game)
+	return clientPlayedGame{
+		GameID: item.Game.ID, Title: game.Title, Platform: game.Platform, ROMSetName: game.ROMSetName,
+		Format: game.Format, CRC32: game.CRC32, SHA1: game.SHA1, EmulatorHint: game.EmulatorHint,
+		CoverURL: game.CoverURL, ManifestURL: game.ManifestURL, FirstPlayedAt: item.Stats.FirstPlayedAt,
+		LastPlayedAt: item.Stats.LastPlayedAt, TotalPlaySeconds: item.Stats.TotalPlaySeconds,
+		LaunchCount: item.Stats.LaunchCount,
+	}
 }
 
 func clientGameItem(game domain.GameAsset) clientGame {

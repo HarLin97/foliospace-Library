@@ -895,6 +895,55 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	}
 }
 
+func TestStoreListsPlayedGamesByProfileAndPlaytime(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.UpsertGame(domain.GameAsset{LibraryID: lib.ID, Title: "Alpha", Platform: "snes", Format: "zip", FilePath: "/library/alpha.zip", RelPath: "alpha.zip", MTime: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.UpsertGame(domain.GameAsset{LibraryID: lib.ID, Title: "Beta", Platform: "neogeo", Format: "zip", FilePath: "/library/beta.zip", RelPath: "beta.zip", MTime: time.Unix(2, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest, err := s.CreateProfile("Guest", "game", "violet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReportGamePlaySessionForProfile(first.ID, 0, domain.GamePlaySessionReport{SessionID: "alpha-1", ElapsedSeconds: 30}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReportGamePlaySessionForProfile(second.ID, 0, domain.GamePlaySessionReport{SessionID: "beta-1", ElapsedSeconds: 120}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReportGamePlaySessionForProfile(first.ID, guest.ID, domain.GamePlaySessionReport{SessionID: "guest-1", ElapsedSeconds: 300}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := s.ListPlayedGamesForProfile(domain.PlayedGameListOptions{Limit: 1, Sort: "playtime", Direction: "desc"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Items) != 1 || page.Items[0].Game.ID != second.ID || page.Items[0].Stats.TotalPlaySeconds != 120 || !page.HasMore {
+		t.Fatalf("default played page = %#v", page)
+	}
+	guestPage, err := s.ListPlayedGamesForProfile(domain.PlayedGameListOptions{Limit: 20}, guest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guestPage.Total != 1 || len(guestPage.Items) != 1 || guestPage.Items[0].Game.ID != first.ID || guestPage.Items[0].Stats.TotalPlaySeconds != 300 {
+		t.Fatalf("guest played page = %#v", guestPage)
+	}
+}
+
 func TestStoreScopesGamePrivateStateByProfile(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

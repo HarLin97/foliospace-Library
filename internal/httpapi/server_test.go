@@ -1774,6 +1774,14 @@ func TestAPIClientGamePlayStatsAreProfileScopedAndIdempotent(t *testing.T) {
 	if !strings.Contains(defaultStats, `"totalPlaySeconds":30`) || !strings.Contains(defaultStats, `"launchCount":2`) {
 		t.Fatalf("default stats after guest report = %q, want unchanged values", defaultStats)
 	}
+	played := authGet(t, ts.URL+"/api/client/games/played?sort=playtime&direction=desc", "secret")
+	if !strings.Contains(played, `"gameId":`+itoa(game.ID)) || !strings.Contains(played, `"title":"Metal Slug"`) || !strings.Contains(played, `"totalPlaySeconds":30`) || !strings.Contains(played, `"total":1`) {
+		t.Fatalf("played games = %q", played)
+	}
+	guestPlayed := authGet(t, ts.URL+"/api/client/games/played?profileId="+itoa(guest.ID), "secret")
+	if !strings.Contains(guestPlayed, `"totalPlaySeconds":7`) || !strings.Contains(guestPlayed, `"total":1`) {
+		t.Fatalf("guest played games = %q", guestPlayed)
+	}
 
 	invalidReq, err := http.NewRequest(http.MethodPut, path, strings.NewReader(`{"sessionId":"","elapsedSeconds":1}`))
 	if err != nil {
