@@ -21,10 +21,10 @@ This installs `foliospace-mcp` to:
 Release packages are expected at:
 
 ```text
-https://foliospace.app/releases/foliospace-mcp_0.978_darwin_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.978_darwin_amd64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.978_linux_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.978_linux_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.98_darwin_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.98_darwin_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.98_linux_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.98_linux_amd64.tar.gz
 https://foliospace.app/releases/checksums.txt
 ```
 

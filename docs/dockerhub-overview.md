@@ -4,6 +4,17 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.98 Release: Expanded Platforms and Curated DOS Launches
+
+Release `0.98` expands the game catalog while keeping launch details stable for native clients.
+
+- PSP, Nintendo GameCube, and PlayStation 2 files receive canonical platform metadata and web/API filters.
+- NAOMI 2 filtering now remains distinct from adjacent arcade platforms.
+- MCP adds `foliospace.list_game_platforms`, using full-library facets and launchable-item counts.
+- Curated DOS collections can read `games.json` metadata, match covers, index archive packages, and expose executable launch commands and working directories.
+- DOS manifests preserve archive-relative paths so clients can extract a package and start the intended executable reliably.
+- Service, Client API, Web, and MCP metadata report version `0.98`.
+
 ## 0.978 Release: Game Play-Time Sync
 
 Release `0.978` adds profile-scoped game play-time synchronization for GameEMU and other native clients.
@@ -130,7 +141,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.978
+docker pull funland/foliospace-library:0.98
 ```
 
 ```bash
@@ -140,7 +151,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.978
+  funland/foliospace-library:0.98
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.
