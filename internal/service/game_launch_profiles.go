@@ -589,7 +589,10 @@ func validatePragmaticDOSLaunch(launch domain.DOSLaunch) error {
 	}
 	for _, candidate := range launch.Candidates {
 		kind := strings.ToLower(strings.TrimSpace(candidate.Kind))
-		if !validDOSLaunchPath(candidate.Path) || (kind != "bat" && kind != "com" && kind != "exe") {
+		// Candidates are metadata, not command lines. DOS archives legitimately
+		// contain names such as C&C.EXE and (O)_(-).EXE; keep traversal checks,
+		// while reserving shell metacharacter restrictions for executable fields.
+		if !validLaunchRelativePath(candidate.Path) || (kind != "bat" && kind != "com" && kind != "exe") {
 			return fmt.Errorf("DOS launch candidate %q is invalid", candidate.Path)
 		}
 	}

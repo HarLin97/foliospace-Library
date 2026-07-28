@@ -70,6 +70,13 @@ func TestValidatePragmaticDOSLaunchRejectsUnsafePaths(t *testing.T) {
 	if err := validatePragmaticDOSLaunch(valid); err != nil {
 		t.Fatalf("valid DOS launch rejected: %v", err)
 	}
+	valid.Candidates = []domain.DOSLaunchCandidate{
+		{Path: "C&C107.EXE", Kind: "exe"},
+		{Path: "(O)_(-).EXE", Kind: "exe"},
+	}
+	if err := validatePragmaticDOSLaunch(valid); err != nil {
+		t.Fatalf("valid DOS candidate filenames rejected: %v", err)
+	}
 
 	unsafe := valid
 	unsafe.EntryFile = "GAME/START.BAT|FORMAT"
