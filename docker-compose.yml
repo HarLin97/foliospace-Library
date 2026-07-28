@@ -1,7 +1,7 @@
 services:
   foliospace-library:
     build: .
-    image: foliospace-library:0.98
+    image: foliospace-library:0.981
     mem_limit: 1536m
     memswap_limit: 1536m
     ports:

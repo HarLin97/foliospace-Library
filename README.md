@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.98`.
+Current release branch: `0.981`.
 
 ## Screenshots
 
@@ -219,6 +219,18 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.981
+
+Release `0.981` adds immutable, audited launch-profile negotiation for native game clients while preserving the existing manifest contract:
+
+- `POST /api/client/games/:id/resolve` selects an exact profile from the authoritative client and runtime inventory in the request body.
+- Windows MAME 0.288 profiles are available for Virtua Striker and Tekken Tag Tournament; Virtua Striker includes its required `segabill.zip` dependency, while Tekken receives a client-visible logical entry name without renaming the stored ROM.
+- Resolver manifests include profile revisions, checksums, logical filenames, exact runtime identity, and the complete dependency closure.
+- Unsupported runtime combinations return `409 runtime-profile-not-available` instead of silently choosing a nearby ROM set.
+- Existing clients continue using `GET /api/client/games/:id/manifest` unchanged.
+- MCP adds `foliospace.resolve_game_launch_profile` for the same exact negotiation flow.
+- Service, Client API, and MCP metadata report version `0.981`.
+
 ## Release 0.98
 
 Release `0.98` expands game-platform indexing and adds a curated DOS launch contract:
@@ -277,7 +289,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.98 ./scripts/build-mcp-release.sh
+VERSION=0.981 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -297,10 +309,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.98` image tag:
+Release `0.981` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.98
+docker pull funland/foliospace-library:0.981
 ```
 
 For local verification:
@@ -319,7 +331,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.98
+  funland/foliospace-library:0.981
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -334,11 +346,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.98
-git push github v0.98
+git tag v0.981
+git push github v0.981
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.98` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.981` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

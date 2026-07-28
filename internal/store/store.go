@@ -1561,6 +1561,15 @@ func (s *Store) GameByPath(filePath string) (domain.GameAsset, error) {
 	return scanGame(row)
 }
 
+func (s *Store) GamesBySHA1(sha1 string) ([]domain.GameAsset, error) {
+	rows, err := s.db.Query(gameSelectSQL()+` WHERE LOWER(sha1) = ? ORDER BY id`, strings.ToLower(strings.TrimSpace(sha1)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanGames(rows)
+}
+
 func (s *Store) DeleteGameByPath(filePath string) error {
 	tx, err := s.db.Begin()
 	if err != nil {

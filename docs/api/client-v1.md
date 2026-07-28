@@ -247,7 +247,7 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.98",
+  "serviceVersion": "0.981",
   "apiVersion": "v1",
   "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
   "capabilities": {
@@ -854,6 +854,87 @@ Current defaults are conservative:
 - EPUB: `readerModes: ["single"]`.
 - CBZ/ZIP/PDF: `readerModes: ["single", "double", "webtoon"]`.
 - `defaultReaderMode` is currently `single` for all formats. Future metadata or user preferences may choose `webtoon` automatically for known long-strip works.
+
+### `POST /api/client/games/{gameId}/resolve`
+
+Resolves an immutable, audited launch profile for the exact client and emulator runtime reported in the request body. This endpoint is additive: older clients continue using `GET /api/client/games/{gameId}/manifest` unchanged.
+
+```json
+{
+  "client": {
+    "name": "SpatialEMU.Windows",
+    "version": "1.302",
+    "platform": "windows-x64",
+    "architecture": "x64"
+  },
+  "runtimes": [
+    {
+      "id": "mame",
+      "version": "0.288",
+      "contentSet": "mame-0.288"
+    }
+  ]
+}
+```
+
+The request body is authoritative. Optional `X-FolioSpace-Client`, `X-FolioSpace-Client-Version`, and `X-FolioSpace-Runtime` headers are observability hints only and never affect authentication, authorization, or profile selection.
+
+A successful response nests the canonical game manifest and adds cache identity:
+
+```json
+{
+  "launchProfileId": "vstriker-windows-mame0288-v1",
+  "profileRevision": 1,
+  "runtime": {
+    "id": "mame",
+    "version": "0.288",
+    "contentSet": "mame-0.288"
+  },
+  "manifest": {
+    "game": {
+      "id": 12,
+      "title": "Virtua Striker",
+      "platform": "model2",
+      "romSetName": "vstriker",
+      "format": "zip",
+      "fileName": "vstriker.zip",
+      "size": 10316803,
+      "sha1": "8e3518318eeb157ab299b2f284faef176d3f49dd"
+    },
+    "fileUrl": "/api/client/games/12/file",
+    "entryFile": "vstriker.zip",
+    "files": [
+      {
+        "name": "vstriker.zip",
+        "size": 10313686,
+        "role": "entry",
+        "url": "/api/client/games/12/file",
+        "checksum": "sha1:8e3518318eeb157ab299b2f284faef176d3f49dd"
+      },
+      {
+        "name": "segabill.zip",
+        "size": 3117,
+        "role": "dependency",
+        "url": "/api/client/games/13/file",
+        "checksum": "sha1:4631db7f7f5160a3a6591d3102722be869710f66"
+      }
+    ]
+  }
+}
+```
+
+The profile may publish a client-visible logical filename that differs from the immutable physical asset name. Clients must save each downloaded file using `files[].name`; URLs remain opaque, bearer-authenticated service URLs and never contain access tokens or NAS paths. Exactly one file is `entry`; BIOS, parent sets, device ROMs, CHDs, and other required files are `dependency` entries. `manifest.game.size` is the complete profile download size.
+
+Profile matching is exact and audited. The server does not choose the newest or closest runtime profile. An installed resolver returns `409` with a structured error when no compatible profile exists:
+
+```json
+{
+  "code": "runtime-profile-not-available",
+  "message": "No MAME 0.289 profile is available for game 12."
+}
+```
+
+Clients must not fall back after `409`, `422`, authentication failures, or server errors. Only `404`, `405`, or `501` indicate that the resolver itself is unavailable and permit legacy manifest fallback. Cache identity is `gameId + launchProfileId + profileRevision + runtime.id + runtime.version + runtime.contentSet`.
 
 ### `GET /api/client/games/{gameId}/manifest`
 

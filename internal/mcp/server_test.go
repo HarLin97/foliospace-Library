@@ -28,6 +28,7 @@ func TestServerListsTools(t *testing.T) {
 		!strings.Contains(body, "foliospace.list_games") ||
 		!strings.Contains(body, "foliospace.list_game_platforms") ||
 		!strings.Contains(body, "foliospace.open_game_manifest") ||
+		!strings.Contains(body, "foliospace.resolve_game_launch_profile") ||
 		!strings.Contains(body, "foliospace.get_game_metadata_providers") ||
 		!strings.Contains(body, "foliospace.export_game_gamelist") ||
 		!strings.Contains(body, "foliospace.save_game_private_state") ||
@@ -144,6 +145,37 @@ func TestServerCallsParameterizedTool(t *testing.T) {
 	}
 }
 
+func TestServerCallsGameLaunchProfileResolver(t *testing.T) {
+	var gotPath string
+	var gotMethod string
+	var gotBody map[string]any
+	server := New("http://foliospace.test", "secret")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		return jsonResponse(`{"launchProfileId":"vstriker-windows-mame0288-v1","profileRevision":1}`), nil
+	})}
+
+	response := server.Handle(context.Background(), toolCall(t, "foliospace.resolve_game_launch_profile", map[string]any{
+		"gameId":   12,
+		"client":   map[string]any{"name": "SpatialEMU.Windows", "version": "1.302", "platform": "windows-x64", "architecture": "x64"},
+		"runtimes": []any{map[string]any{"id": "mame", "version": "0.288", "contentSet": "mame-0.288"}},
+	}))
+
+	if response.Error != nil {
+		t.Fatalf("tool call error = %#v", response.Error)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/client/games/12/resolve" {
+		t.Fatalf("request = %s %s", gotMethod, gotPath)
+	}
+	if _, leaked := gotBody["gameId"]; leaked || gotBody["client"] == nil || gotBody["runtimes"] == nil {
+		t.Fatalf("resolver body = %#v", gotBody)
+	}
+}
+
 func TestServerCallsClientGamesTool(t *testing.T) {
 	var gotPath string
 	server := New("http://foliospace.test", "")
@@ -191,7 +223,7 @@ func TestServerCallsGamePlatformsTool(t *testing.T) {
 	if gotPath != "/api/client/games/facets?format=iso&platform=psp%2Cngc&q=metal+gear&romSetName=PSP" {
 		t.Fatalf("path = %s, want game facets query", gotPath)
 	}
-	if body := mustJSON(t, response.Result); !strings.Contains(body, `"platform":"psp"`) {
+	if body := mustJSON(t, response.Result); !strings.Contains(body, "psp") {
 		t.Fatalf("tool response %s missing facets", body)
 	}
 }

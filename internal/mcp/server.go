@@ -51,7 +51,7 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-const serviceVersion = "0.98"
+const serviceVersion = "0.981"
 
 func New(baseURL string, token string) *Server {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -117,6 +117,22 @@ func tools() []Tool {
 		{Name: "foliospace.list_games", Description: "List paginated client-safe game ROM assets.", InputSchema: objectSchema(map[string]any{"limit": integerSchema("Maximum number of items."), "offset": integerSchema("Zero-based item offset."), "q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact platform filter."), "romSetName": stringSchema("Optional exact ROM set filter."), "format": stringSchema("Optional exact format filter."), "sort": stringSchema("recent, title, or platform.")}, nil)},
 		{Name: "foliospace.list_game_platforms", Description: "List normalized, launchable game platforms currently indexed by this FolioSpace library, with full-catalog counts and optional catalog filters.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact or comma-separated platform filter."), "romSetName": stringSchema("Optional exact ROM set filter."), "format": stringSchema("Optional exact format filter.")}, nil)},
 		{Name: "foliospace.open_game_manifest", Description: "Open a game ROM manifest with metadata, cover URL, and opaque file URLs. Multi-file Dreamcast GDI, Saturn CUE, and PC-FX CUE/M3U games include an ordered files list with every descriptor and required track.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id.")}, []string{"gameId"})},
+		{Name: "foliospace.resolve_game_launch_profile", Description: "Resolve an immutable, audited game launch profile for an exact client and emulator runtime. Returns logical filenames and dependency closure without changing stored ROM assets.", InputSchema: objectSchema(map[string]any{
+			"gameId": integerSchema("Game asset id."),
+			"client": objectSchema(map[string]any{
+				"name":         stringSchema("Client name, for example SpatialEMU.Windows."),
+				"version":      stringSchema("Client version, for example 1.302."),
+				"platform":     stringSchema("Client platform, for example windows-x64."),
+				"architecture": stringSchema("Client architecture, for example x64."),
+			}, []string{"name", "version", "platform", "architecture"}),
+			"runtimes": arraySchema("Installed emulator runtime descriptors.", objectSchema(map[string]any{
+				"id":         stringSchema("Runtime id, for example mame or libretro."),
+				"version":    stringSchema("Exact runtime version when applicable."),
+				"contentSet": stringSchema("Exact audited content set when applicable."),
+				"coreId":     stringSchema("Libretro core id when applicable."),
+				"coreSha256": stringSchema("Lowercase SHA-256 of the packaged Libretro core when applicable."),
+			}, []string{"id"})),
+		}, []string{"gameId", "client", "runtimes"})},
 		{Name: "foliospace.get_game_metadata_providers", Description: "List configured game metadata providers and local artwork import capabilities.", InputSchema: objectSchema(nil, nil)},
 		{Name: "foliospace.export_game_gamelist", Description: "Export indexed games as gamelist.xml. Filters mirror the game catalog.", InputSchema: objectSchema(map[string]any{"q": stringSchema("Optional search query."), "platform": stringSchema("Optional exact platform filter."), "romSetName": stringSchema("Optional exact ROM set filter."), "format": stringSchema("Optional exact format filter."), "basePath": stringSchema("Optional path prefix used in exported game paths.")}, nil)},
 		{Name: "foliospace.save_game_private_state", Description: "Save profile-scoped favorite and liked flags for a game asset.", InputSchema: objectSchema(map[string]any{"gameId": integerSchema("Game asset id."), "profileId": integerSchema("Optional profile id."), "favorite": booleanSchema("Whether the game is a favorite."), "liked": booleanSchema("Whether the game is liked.")}, []string{"gameId"})},
@@ -259,6 +275,9 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) (any, error)
 		data, err = s.get(ctx, "/api/client/games/facets?"+gameFacetQuery(params.Arguments))
 	case "foliospace.open_game_manifest":
 		data, err = s.get(ctx, fmt.Sprintf("/api/client/games/%d/manifest", intArg(params.Arguments, "gameId")))
+	case "foliospace.resolve_game_launch_profile":
+		gameID := intArg(params.Arguments, "gameId")
+		data, err = s.post(ctx, fmt.Sprintf("/api/client/games/%d/resolve", gameID), withoutKeys(params.Arguments, "gameId"))
 	case "foliospace.get_game_metadata_providers":
 		data, err = s.get(ctx, "/api/games/metadata/providers")
 	case "foliospace.export_game_gamelist":

@@ -4,6 +4,19 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.981 Release: Audited Game Launch Profiles
+
+Release `0.981` adds exact launch-profile negotiation for clients that package specific emulator and ROM-set versions.
+
+- `POST /api/client/games/{gameId}/resolve` matches an authoritative client/runtime inventory against immutable audited profiles.
+- Virtua Striker resolves its required `segabill.zip` dependency for Windows MAME 0.288.
+- Tekken Tag Tournament can receive the compatible logical entry name without renaming or rewriting the physical ROM archive.
+- Responses include profile revision, exact runtime identity, logical filenames, per-file checksums, and complete dependency closure.
+- Unsupported runtime combinations return an explicit `409 runtime-profile-not-available`; the server never substitutes the closest or newest MAME set.
+- The legacy game manifest remains unchanged for existing clients.
+- MCP adds `foliospace.resolve_game_launch_profile` for trusted agent integrations.
+- Service, Client API, and MCP metadata report version `0.981`.
+
 ## 0.98 Release: Expanded Platforms and Curated DOS Launches
 
 Release `0.98` expands the game catalog while keeping launch details stable for native clients.
@@ -143,7 +156,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.98
+docker pull funland/foliospace-library:0.981
 ```
 
 ```bash
@@ -153,7 +166,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.98
+  funland/foliospace-library:0.981
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

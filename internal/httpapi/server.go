@@ -32,7 +32,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.98"
+const serviceVersion = "0.981"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -363,6 +363,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			GamePlayStats:         true,
 			GamePlayedCatalog:     true,
 			GameMetadataProviders: true,
+			GameLaunchResolver:    true,
 			DOSArchiveLaunchV1:    true,
 		},
 	})
@@ -609,6 +610,39 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 	id, tail, ok := parseIDTail(r.URL.Path, "/api/client/games/")
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if tail == "resolve" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		var req domain.GameLaunchResolveRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := service.ValidateGameLaunchResolveRequest(req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		resolution, err := s.service.ResolveGameLaunchProfile(id, req)
+		if err != nil {
+			var unavailable *service.RuntimeProfileNotAvailableError
+			if errors.As(err, &unavailable) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"code": "runtime-profile-not-available", "message": unavailable.Error(),
+				})
+				return
+			}
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, clientGameLaunchResolution(resolution))
 		return
 	}
 	if tail == "manifest" && r.Method == http.MethodGet {
@@ -2126,6 +2160,7 @@ type clientCapabilities struct {
 	GamePlayStats         bool `json:"gamePlayStats"`
 	GamePlayedCatalog     bool `json:"gamePlayedCatalog"`
 	GameMetadataProviders bool `json:"gameMetadataProviders"`
+	GameLaunchResolver    bool `json:"gameLaunchResolver"`
 	DOSArchiveLaunchV1    bool `json:"dosArchiveLaunchV1"`
 }
 
@@ -2251,6 +2286,13 @@ type clientGameManifestResponse struct {
 	Files     []clientGameFile `json:"files,omitempty"`
 	DOSLaunch *clientDOSLaunch `json:"dosLaunch,omitempty"`
 	UpdatedAt string           `json:"updatedAt,omitempty"`
+}
+
+type clientGameLaunchResolutionResponse struct {
+	LaunchProfileID string                       `json:"launchProfileId"`
+	ProfileRevision int                          `json:"profileRevision"`
+	Runtime         domain.GameRuntimeDescriptor `json:"runtime"`
+	Manifest        clientGameManifestResponse   `json:"manifest"`
 }
 
 type clientGameFile struct {
@@ -2641,6 +2683,33 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunc
 		}
 	}
 	return manifest
+}
+
+func clientGameLaunchResolution(resolution domain.GameLaunchResolution) clientGameLaunchResolutionResponse {
+	game := clientGameItem(resolution.Game)
+	game.FileName = resolution.EntryFile
+	manifest := clientGameManifestResponse{
+		Game:      game,
+		FileURL:   fmt.Sprintf("/api/client/games/%d/file", resolution.Files[0].SourceGameID),
+		EntryFile: &resolution.EntryFile,
+		Files:     make([]clientGameFile, 0, len(resolution.Files)),
+	}
+	if !resolution.Game.UpdatedAt.IsZero() {
+		manifest.UpdatedAt = resolution.Game.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	for _, file := range resolution.Files {
+		manifest.Files = append(manifest.Files, clientGameFile{
+			Name: file.Name, Size: file.Size, Role: file.Role,
+			URL:      fmt.Sprintf("/api/client/games/%d/file", file.SourceGameID),
+			Checksum: "sha1:" + file.SHA1,
+		})
+	}
+	return clientGameLaunchResolutionResponse{
+		LaunchProfileID: resolution.LaunchProfileID,
+		ProfileRevision: resolution.ProfileRevision,
+		Runtime:         resolution.Runtime,
+		Manifest:        manifest,
+	}
 }
 
 func nullableString(value string) *string {

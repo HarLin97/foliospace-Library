@@ -21,10 +21,10 @@ This installs `foliospace-mcp` to:
 Release packages are expected at:
 
 ```text
-https://foliospace.app/releases/foliospace-mcp_0.98_darwin_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.98_darwin_amd64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.98_linux_arm64.tar.gz
-https://foliospace.app/releases/foliospace-mcp_0.98_linux_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.981_darwin_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.981_darwin_amd64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.981_linux_arm64.tar.gz
+https://foliospace.app/releases/foliospace-mcp_0.981_linux_amd64.tar.gz
 https://foliospace.app/releases/checksums.txt
 ```
 
@@ -87,6 +87,10 @@ Search my FolioSpace Library for "metal slug" and open the game manifest for the
 ```
 
 ```text
+Resolve game 12 for SpatialEMU.Windows 1.302 using MAME 0.288 and content set mame-0.288.
+```
+
+```text
 List my configured FolioSpace libraries, then start a scan for the Books library.
 ```
 
@@ -127,6 +131,7 @@ Check whether FolioSpace is currently transcoding a video and which item is occu
 - `foliospace.list_games`: list paginated client-safe ROM assets with `limit`, `offset`, `q`, `platform`, `romSetName`, `format`, and `sort`. Use `platform: "model2"` for canonical Sega Model 2 records, `platform: "n64"` for Nintendo 64, `platform: "psp"` for PSP, `platform: "ngc"` for Nintendo GameCube, `platform: "ps2"` for PlayStation 2, `platform: "pc98"` for NEC PC-98, and `platform: "dos"` for IBM-compatible DOS archives. Model 2 runtime packages such as `segabill.zip` are excluded from ordinary pages and facets but can be resolved by shortname search, where they carry `catalogRole: "dependency"`. Validated metadata includes `fileName`, `format`, hashes, and an opaque authenticated `downloadUrl`.
 - `foliospace.list_game_platforms`: list normalized platforms currently represented by launchable indexed ROMs, with full-catalog counts. Optional `q`, `platform`, `romSetName`, and `format` filters mirror `GET /api/client/games/facets`. Use it before `list_games` to choose valid library filters; it intentionally omits platform types with no indexed games.
 - `foliospace.open_game_manifest`: open a ROM client manifest by `gameId`. Sega Model 2 manifests retain the original MAME ZIP filename and bytes and use `inputProfile: "operatorArcade"`. Nintendo 64 manifests expose one validated raw ROM entry. PC-98 manifests expose byte-exact raw disk images even when the server stores each image in a single-media ZIP; numbered multi-disk sets include one `entryFile` plus ordered `entry`/`disk` files with `diskIndex`, and translated titles may include a validated `role: "font"` sidecar without disk metadata. DOS ZIP/DOSZ manifests add `dosLaunch`: `entryFile` is a safe inner-archive executable only when curated metadata or `dosbox.conf` resolves it unambiguously, otherwise it is null and `candidates` provides the safe chooser inventory. PC-98 HDIs missing an active MS-DOS partition or required DOS system files are retained with `compatibility: "broken"`; standalone YU-NO Special Disk media is blocked until it can be modeled as a complete add-on package. Multi-file Dreamcast GDI, Saturn CUE, and PC-FX CUE/M3U manifests likewise include `entryFile` plus an ordered `files[]` list containing every descriptor and required track. Transfer the returned HTTP URLs outside MCP and preserve each returned filename.
+- `foliospace.resolve_game_launch_profile`: post an exact client/runtime inventory for a `gameId` and return an immutable audited profile with `launchProfileId`, `profileRevision`, logical file names, checksums, and the complete dependency closure. Pass nested `client` and `runtimes` values exactly as the native client reports them. A profile mismatch is an explicit error; the tool never substitutes a nearby MAME or Libretro content set. Returned file URLs remain bearer-authenticated and must be transferred outside MCP.
 - `foliospace.get_game_metadata_providers`: list game metadata provider status and local artwork import capabilities.
 - `foliospace.export_game_gamelist`: export indexed games as `gamelist.xml` with optional catalog filters.
 - `foliospace.save_game_private_state`: save profile-scoped game `favorite` and `liked` flags.

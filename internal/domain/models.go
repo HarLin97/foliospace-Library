@@ -243,6 +243,43 @@ type GameFile struct {
 	Position int       `json:"position"`
 }
 
+type GameLaunchClient struct {
+	Name         string `json:"name"`
+	Version      string `json:"version"`
+	Platform     string `json:"platform"`
+	Architecture string `json:"architecture"`
+}
+
+type GameRuntimeDescriptor struct {
+	ID         string `json:"id"`
+	Version    string `json:"version,omitempty"`
+	ContentSet string `json:"contentSet,omitempty"`
+	CoreID     string `json:"coreId,omitempty"`
+	CoreSHA256 string `json:"coreSha256,omitempty"`
+}
+
+type GameLaunchResolveRequest struct {
+	Client   GameLaunchClient        `json:"client"`
+	Runtimes []GameRuntimeDescriptor `json:"runtimes"`
+}
+
+type GameLaunchResolvedFile struct {
+	SourceGameID int64  `json:"sourceGameId"`
+	Name         string `json:"name"`
+	Size         int64  `json:"size"`
+	Role         string `json:"role"`
+	SHA1         string `json:"sha1"`
+}
+
+type GameLaunchResolution struct {
+	LaunchProfileID string                   `json:"launchProfileId"`
+	ProfileRevision int                      `json:"profileRevision"`
+	Runtime         GameRuntimeDescriptor    `json:"runtime"`
+	Game            GameAsset                `json:"game"`
+	EntryFile       string                   `json:"entryFile"`
+	Files           []GameLaunchResolvedFile `json:"files"`
+}
+
 type DOSLaunchCandidate struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
