@@ -4,14 +4,19 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
-## 0.981 Release: Audited Game Launch Profiles
+## 0.981 Release: Tiered Game Launch Profiles
 
-Release `0.981` adds exact launch-profile negotiation for clients that package specific emulator and ROM-set versions.
+Release `0.981` adds launch-profile negotiation without forcing every ordinary console game into a per-runtime audit table.
 
-- `POST /api/client/games/{gameId}/resolve` matches an authoritative client/runtime inventory against immutable audited profiles.
+- `POST /api/client/games/{gameId}/resolve` matches the authoritative client/runtime inventory against a validated canonical manifest.
+- Ordinary console platforms reuse existing single-file and multi-file manifests. Known Libretro platform/core combinations do not require a per-build core hash.
+- Curated DOS packages preserve the archive download plus their safe inner executable, arguments, working directory, and launch candidates. Unknown DOS entries still return a profile conflict.
+- Windows runtime versions such as PCSX2 `2.6.3.0` and DOSBox Staging `0.82.2.0` are normalized only for policy matching; the successful response echoes the exact selected request tuple.
 - Virtua Striker resolves its required `segabill.zip` dependency for Windows MAME 0.288.
 - Tekken Tag Tournament can receive the compatible logical entry name without renaming or rewriting the physical ROM archive.
-- Responses include profile revision, exact runtime identity, logical filenames, per-file checksums, and complete dependency closure.
+- CPS1, CPS2, and CPS3 are exposed as separate canonical platforms. Audited `sf2`, `sfa`, and `sfiii` profiles match the exact packaged FBNeo core SHA-256.
+- MAME 0.288 profiles now cover six audited Mahjong sets. `mcnpshnt` receives the required logical `ym2413.zip` dependency without renaming `ym2413_instruments.zip` on disk.
+- Responses include profile revision, exact selected runtime identity, logical filenames, available checksums, and complete dependency closure.
 - Unsupported runtime combinations return an explicit `409 runtime-profile-not-available`; the server never substitutes the closest or newest MAME set.
 - The legacy game manifest remains unchanged for existing clients.
 - MCP adds `foliospace.resolve_game_launch_profile` for trusted agent integrations.

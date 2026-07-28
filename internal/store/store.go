@@ -3127,6 +3127,12 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "md"
 	case GamePlatformCollectionID("neogeo"):
 		return "neogeo"
+	case GamePlatformCollectionID("cps1"):
+		return "cps1"
+	case GamePlatformCollectionID("cps2"):
+		return "cps2"
+	case GamePlatformCollectionID("cps3"):
+		return "cps3"
 	case GamePlatformCollectionID("32x"):
 		return "32x"
 	case GamePlatformCollectionID("model2"):
@@ -3200,6 +3206,12 @@ func GamePlatformSortRank(platform string) int {
 		return 78
 	case "neogeo":
 		return 80
+	case "cps1":
+		return 81
+	case "cps2":
+		return 82
+	case "cps3":
+		return 83
 	case "model2":
 		return 84
 	case "model3":
@@ -3230,6 +3242,12 @@ func GamePlatformLabel(platform string) string {
 		return "32X"
 	case "neogeo":
 		return "Neo Geo"
+	case "cps1":
+		return "CPS-1"
+	case "cps2":
+		return "CPS-2"
+	case "cps3":
+		return "CPS-3"
 	case "model2":
 		return "Model 2"
 	case "model3":
@@ -3320,6 +3338,8 @@ func expectedGameEmulatorHint(platform string) string {
 		return "dosbox-staging"
 	case "naomi2":
 		return "flycast"
+	case "cps1", "cps2", "cps3":
+		return "fbneo"
 	}
 	return platform
 }

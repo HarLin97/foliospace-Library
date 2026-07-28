@@ -265,10 +265,11 @@ type GameLaunchResolveRequest struct {
 
 type GameLaunchResolvedFile struct {
 	SourceGameID int64  `json:"sourceGameId"`
+	Position     *int   `json:"position,omitempty"`
 	Name         string `json:"name"`
 	Size         int64  `json:"size"`
 	Role         string `json:"role"`
-	SHA1         string `json:"sha1"`
+	SHA1         string `json:"sha1,omitempty"`
 }
 
 type GameLaunchResolution struct {
@@ -278,6 +279,7 @@ type GameLaunchResolution struct {
 	Game            GameAsset                `json:"game"`
 	EntryFile       string                   `json:"entryFile"`
 	Files           []GameLaunchResolvedFile `json:"files"`
+	DOSLaunch       *DOSLaunch               `json:"dosLaunch,omitempty"`
 }
 
 type DOSLaunchCandidate struct {

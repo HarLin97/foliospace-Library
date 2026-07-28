@@ -2324,7 +2324,7 @@ func TestScanLibraryIndexesNaomi2CatalogAndHidesDependencies(t *testing.T) {
 		t.Fatalf("files = %#v, want ZIP entry and GD-ROM dependency", files)
 	}
 
-	for _, query := range []string{"gds-0012c", "naomi2"} {
+	for _, query := range []string{"gds-0012c", "naomi2.zip"} {
 		search, err := st.ListGamesPage(domain.GameListOptions{Query: query, Limit: 20})
 		if err != nil {
 			t.Fatal(err)
@@ -2760,8 +2760,14 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 		{relPath: "FBNeo/arcade/mslug.zip", want: "neogeo"},
 		{relPath: "FBNeo/arcade/shinobi3.zip", want: "md"},
 		{relPath: "FBNeo/arcade/wof.zip", want: "arcade"},
+		{relPath: "CPS1 CPS2 CPS3/sf2.zip", want: "cps1"},
+		{relPath: "CPS1 CPS2 CPS3/sfa.zip", want: "cps2"},
+		{relPath: "CPS1 CPS2 CPS3/sfiii.zip", want: "cps3"},
+		{relPath: "CPS1 CPS2 CPS3/sf2hack.zip", want: "mame"},
 		{relPath: "FBNeo/arcade/hypreact.zip", want: "mame"},
 		{relPath: "FBNeo/arcade/hypreac2.zip", want: "mame"},
+		{relPath: "FBNeo/arcade/fromanc4.zip", want: "mame"},
+		{relPath: "FBNeo/arcade/mcnpshnt.zip", want: "mame"},
 		{relPath: "Mahjong/hypreact.zip", want: "mame"},
 		{relPath: "Model2/vf2.zip", want: "model2"},
 		{relPath: "NAOMI 2/vf4/vf4.zip", want: "naomi2"},
@@ -2809,6 +2815,111 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 	arcadeLibrary := domain.Library{Name: "Arcade", RootPath: "/games/Arcade"}
 	if got := inferLibraryGamePlatform(arcadeLibrary, ".chd", "kinst.chd"); got != "disc" {
 		t.Fatalf("inferLibraryGamePlatform(Arcade root CHD) = %q, want disc", got)
+	}
+}
+
+func TestScanLibraryCanonicalizesCPSAndMAMECatalog(t *testing.T) {
+	root := t.TempDir()
+	cpsDir := filepath.Join(root, "CPS1 CPS2 CPS3")
+	mahjongDir := filepath.Join(root, "Mahjong")
+	paths := map[string]string{
+		"sf2":        filepath.Join(cpsDir, "sf2.zip"),
+		"sfa":        filepath.Join(cpsDir, "sfa.zip"),
+		"sfiii":      filepath.Join(cpsDir, "sfiii.zip"),
+		"hypreact":   filepath.Join(mahjongDir, "hypreact.zip"),
+		"dependency": filepath.Join(mahjongDir, "ym2413_instruments.zip"),
+	}
+	for name, path := range paths {
+		makeZip(t, path, map[string]string{name + ".bin": name})
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("GameROMS", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 5 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want five catalog assets indexed", job)
+	}
+
+	wants := map[string]struct {
+		platform string
+		romSet   string
+		emulator string
+		role     string
+	}{
+		"sf2":        {platform: "cps1", romSet: "sf2", emulator: "fbneo", role: "game"},
+		"sfa":        {platform: "cps2", romSet: "sfa", emulator: "fbneo", role: "game"},
+		"sfiii":      {platform: "cps3", romSet: "sfiii", emulator: "fbneo", role: "game"},
+		"hypreact":   {platform: "mame", romSet: "hypreact", emulator: "mame", role: "game"},
+		"dependency": {platform: "mame", romSet: "ym2413_instruments", emulator: "mame", role: "dependency"},
+	}
+	games := map[string]domain.GameAsset{}
+	for name, want := range wants {
+		game, err := st.GameByPath(paths[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		games[name] = game
+		if game.Platform != want.platform || game.ROMSetName != want.romSet || game.EmulatorHint != want.emulator || game.CatalogRole != want.role {
+			t.Fatalf("%s = %#v, want platform=%s romSet=%s emulator=%s role=%s", name, game, want.platform, want.romSet, want.emulator, want.role)
+		}
+	}
+
+	facets, err := st.ListGameFacets(domain.GameListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int64{}
+	for _, facet := range facets.Platforms {
+		counts[facet.Platform] = facet.Count
+	}
+	if facets.Total != 4 || counts["cps1"] != 1 || counts["cps2"] != 1 || counts["cps3"] != 1 || counts["mame"] != 1 {
+		t.Fatalf("facets = %#v, want one launchable game in each CPS family and MAME", facets)
+	}
+
+	legacyCPS := games["sf2"]
+	legacyCPS.Platform = "arcade"
+	legacyCPS.ROMSetName = "FBNeo"
+	legacyCPS.EmulatorHint = "arcade"
+	if _, err := st.UpsertGame(legacyCPS); err != nil {
+		t.Fatal(err)
+	}
+	legacyMAME := games["hypreact"]
+	legacyMAME.ROMSetName = "MAME"
+	if _, err := st.UpsertGame(legacyMAME); err != nil {
+		t.Fatal(err)
+	}
+	legacyDependency := games["dependency"]
+	legacyDependency.CatalogRole = "game"
+	if _, err := st.UpsertGame(legacyDependency); err != nil {
+		t.Fatal(err)
+	}
+
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.IndexedFiles != 3 || secondJob.SkippedFiles != 2 || secondJob.ErrorCount != 0 {
+		t.Fatalf("second job = %#v, want three stale catalog records repaired and two unchanged files skipped", secondJob)
+	}
+	for name, want := range wants {
+		game, err := st.GameByPath(paths[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if game.Platform != want.platform || game.ROMSetName != want.romSet || game.EmulatorHint != want.emulator || game.CatalogRole != want.role {
+			t.Fatalf("repaired %s = %#v", name, game)
+		}
 	}
 }
 

@@ -567,11 +567,11 @@ Response:
       "count": 1400
     },
     {
-      "platform": "arcade",
-      "romSetName": "MAME",
+      "platform": "cps2",
+      "romSetName": "",
       "format": "zip",
-      "emulatorHint": "arcade",
-      "count": 400
+      "emulatorHint": "fbneo",
+      "count": 37
     }
   ]
 }
@@ -584,6 +584,10 @@ Facets contain exactly one entry per normalized `platform`. Its `count` is the n
 This is an inventory endpoint, not a declaration of every platform the server could recognize. A platform with no indexed launchable ROMs is omitted. Clients that need to show a static emulator capability catalog should own that catalog locally and use facets only for the library's available filters and counts.
 
 Sega Model 2 scans use `platform: "model2"`, `romSetName: "Model2ROMs"`, `format: "zip"`, `emulatorHint: "model2"`, and `inputProfile: "operatorArcade"`. The ZIP shortname is preserved in `fileName`, while known sets receive their MAME display title. Archive size, CRC32, SHA-1, and download bytes describe the original ZIP container. The `segabill.zip` firmware package is searchable with `q=segabill` and returned as `catalogRole: "dependency"`, but is not counted in the visible Model 2 catalog or facet.
+
+CPS sets pinned to the MAME 0.288 driver catalog use canonical `platform: "cps1"`, `"cps2"`, or `"cps3"`, the ZIP stem as `romSetName`, and `emulatorHint: "fbneo"`. Classification uses an explicit versioned allow-list rather than title-prefix guesses. The audited Windows 1.302 profiles for `sf2`, `sfa`, and `sfiii` require Libretro core `fbneo` with SHA-256 `6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1`; other CPS sets remain catalog-visible but return `409` until an exact profile is audited.
+
+Canonical MAME ZIP/7Z records use the physical file stem as `romSetName`, never a collection label such as `MAME`. Windows MAME 0.288 profiles are audited for `hypreact`, `hypreac2`, `srmp4`, `fromancr`, `fromanc4`, and `mcnpshnt`. The physical `ym2413_instruments.zip` asset is stored with `catalogRole: "dependency"`, omitted from ordinary pages and facets, and exposed to `mcnpshnt` only as the logical profile filename `ym2413.zip`; the NAS file is never renamed.
 
 New Dreamcast scans use `platform: "dreamcast"`, `romSetName: "DC"`, and `emulatorHint: "dreamcast"`. Existing records with `platform: "disc"` remain queryable for backward compatibility, but are not emitted for newly recognized Dreamcast games.
 
@@ -857,7 +861,13 @@ Current defaults are conservative:
 
 ### `POST /api/client/games/{gameId}/resolve`
 
-Resolves an immutable, audited launch profile for the exact client and emulator runtime reported in the request body. This endpoint is additive: older clients continue using `GET /api/client/games/{gameId}/manifest` unchanged.
+Resolves a stable launch profile for the exact client and emulator runtime inventory reported in the request body. This endpoint is additive: older clients continue using `GET /api/client/games/{gameId}/manifest` unchanged.
+
+Resolution is risk-tiered:
+
+- Ordinary console and computer platforms reuse the existing validated canonical manifest. Known Libretro platform/core combinations do not require a per-build core SHA-256; Dolphin and Supermodel may report an empty version.
+- Curated DOS packages reuse their existing `dosLaunch` object. An ambiguous or unknown inner executable is not promoted to a launchable profile.
+- MAME and FBNeo remain strict: runtime/content-set or core/hash mismatches return `409`, and every audited dependency must be present.
 
 ```json
 {
@@ -923,9 +933,13 @@ A successful response nests the canonical game manifest and adds cache identity:
 }
 ```
 
-The profile may publish a client-visible logical filename that differs from the immutable physical asset name. Clients must save each downloaded file using `files[].name`; URLs remain opaque, bearer-authenticated service URLs and never contain access tokens or NAS paths. Exactly one file is `entry`; BIOS, parent sets, device ROMs, CHDs, and other required files are `dependency` entries. `manifest.game.size` is the complete profile download size.
+The profile may publish a client-visible logical filename that differs from the immutable physical asset name. Clients must save each downloaded file using `files[].name`; URLs remain opaque, bearer-authenticated service URLs and never contain access tokens or NAS paths. Exactly one file is `entry`; BIOS, parent sets, device ROMs, CHDs, tracks, and other required files are `dependency` entries. `manifest.game.size` is the complete profile download size.
 
-Profile matching is exact and audited. The server does not choose the newest or closest runtime profile. An installed resolver returns `409` with a structured error when no compatible profile exists:
+For a successful Windows 1.302 request, `runtime` is the exact selected request tuple, including trailing version components such as PCSX2 `2.6.3.0` or DOSBox Staging `0.82.2.0`. The server may normalize these versions internally for compatibility policy but must not rewrite them in the response.
+
+Ordinary profiles are deterministic wrappers over the current canonical manifest. Their IDs and revisions are stable until the indexed game changes. Multi-file games use `/api/client/games/{gameId}/files/{position}` URLs and preserve descriptor-relative filenames. DOS responses keep the downloadable archive as `manifest.game.fileName`, use the inner `.bat`/`.com`/`.exe` as `entryFile`, and include the validated `dosLaunch` object.
+
+The server never chooses an unreported runtime or substitutes the newest or closest MAME/FBNeo profile. An installed resolver returns `409` with a structured error when no compatible profile exists:
 
 ```json
 {
@@ -934,7 +948,7 @@ Profile matching is exact and audited. The server does not choose the newest or 
 }
 ```
 
-Clients must not fall back after `409`, `422`, authentication failures, or server errors. Only `404`, `405`, or `501` indicate that the resolver itself is unavailable and permit legacy manifest fallback. Cache identity is `gameId + launchProfileId + profileRevision + runtime.id + runtime.version + runtime.contentSet`.
+Clients must not fall back after `409`, `422`, authentication failures, or server errors. Only `404`, `405`, or `501` indicate that the resolver itself is unavailable and permit legacy manifest fallback. Cache identity is `gameId + launchProfileId + profileRevision + runtime.id + runtime.version + runtime.contentSet + runtime.coreId + runtime.coreSha256`.
 
 ### `GET /api/client/games/{gameId}/manifest`
 

@@ -979,6 +979,18 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 		}
 		return s.store.CanSkipPC98Source(path, info.Size(), info.ModTime()) && samePC98SupportFiles(path, fonts, storedFonts)
 	}
+	if romSetName, emulatorHint, catalogRole, ok := canonicalArcadeCatalogMetadata(platform, path, ext); ok {
+		game, err := s.store.GameByPath(path)
+		return err == nil &&
+			game.Size == info.Size() &&
+			game.MTime.Equal(info.ModTime()) &&
+			game.Platform == platform &&
+			game.ROMSetName == romSetName &&
+			game.EmulatorHint == emulatorHint &&
+			strings.EqualFold(game.CatalogRole, catalogRole) &&
+			game.CRC32 != "" &&
+			game.SHA1 != ""
+	}
 	if !isMultiFileGameDescriptor(ext) {
 		return s.store.CanSkipGame(path, info.Size(), info.ModTime(), platform)
 	}
@@ -1303,6 +1315,11 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	compatibility := "unknown"
 	catalogRole := "game"
 	bootabilityChecked := false
+	if canonicalROMSetName, canonicalEmulatorHint, canonicalCatalogRole, ok := canonicalArcadeCatalogMetadata(platform, path, ext); ok {
+		romSetName = canonicalROMSetName
+		emulatorHint = canonicalEmulatorHint
+		catalogRole = canonicalCatalogRole
+	}
 	if platform == "n64" {
 		rom, inspectErr := inspectN64ROM(path, info, ext)
 		if inspectErr != nil {
@@ -4084,6 +4101,9 @@ func isPC98ExcludedFile(path string) bool {
 
 func inferGamePlatform(ext string, relPath string) string {
 	path := strings.ToLower(filepath.ToSlash(relPath))
+	if platform := cpsPlatformForROMSet(path, ext); platform != "" {
+		return platform
+	}
 	if platform := inferFBNeoPlatform(path); platform != "" {
 		return platform
 	}
@@ -4287,7 +4307,7 @@ func isFBNeoMegaDriveShortName(name string) bool {
 func isMAMEMahjongShortName(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
-	case "hypreact", "hypreac2", "srmp4":
+	case "fromanc4", "fromancr", "hypreact", "hypreac2", "mcnpshnt", "srmp4", "srmp7", "ym2413_instruments":
 		return true
 	default:
 		return false
@@ -4323,14 +4343,16 @@ func inferROMSetName(relPath string) string {
 	if len(parts) > 1 {
 		switch strings.ToLower(strings.TrimSpace(parts[0])) {
 		case "mahjong", "mame":
-			return "MAME"
+			return gameROMSetStem(relPath, filepath.Ext(relPath))
+		case "cps1 cps2 cps3", "cps1", "cps2", "cps3":
+			return gameROMSetStem(relPath, filepath.Ext(relPath))
 		case "model2", "model2roms", "model 2", "sega model 2":
 			return "Model2ROMs"
 		case "fbneo":
 			if len(parts) > 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "arcade") {
 				shortName := strings.TrimSuffix(parts[2], filepath.Ext(parts[2]))
 				if isMAMEMahjongShortName(shortName) {
-					return "MAME"
+					return strings.ToLower(shortName)
 				}
 			}
 		}

@@ -2687,22 +2687,52 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunc
 
 func clientGameLaunchResolution(resolution domain.GameLaunchResolution) clientGameLaunchResolutionResponse {
 	game := clientGameItem(resolution.Game)
-	game.FileName = resolution.EntryFile
+	if resolution.DOSLaunch != nil {
+		game.FileName = resolution.Files[0].Name
+	} else {
+		game.FileName = resolution.EntryFile
+	}
 	manifest := clientGameManifestResponse{
 		Game:      game,
-		FileURL:   fmt.Sprintf("/api/client/games/%d/file", resolution.Files[0].SourceGameID),
+		FileURL:   resolvedGameFileURL(resolution.Files[0]),
 		EntryFile: &resolution.EntryFile,
 		Files:     make([]clientGameFile, 0, len(resolution.Files)),
 	}
 	if !resolution.Game.UpdatedAt.IsZero() {
 		manifest.UpdatedAt = resolution.Game.UpdatedAt.UTC().Format(time.RFC3339Nano)
 	}
+	diskIndex := 0
 	for _, file := range resolution.Files {
-		manifest.Files = append(manifest.Files, clientGameFile{
+		clientFile := clientGameFile{
 			Name: file.Name, Size: file.Size, Role: file.Role,
-			URL:      fmt.Sprintf("/api/client/games/%d/file", file.SourceGameID),
-			Checksum: "sha1:" + file.SHA1,
-		})
+			URL: resolvedGameFileURL(file),
+		}
+		if file.SHA1 != "" {
+			clientFile.Checksum = "sha1:" + file.SHA1
+		}
+		if resolution.Game.Platform == "pc98" && file.Role != "font" && isPC98FloppyManifestFile(file.Name) {
+			clientFile.Role = "disk"
+			if file.Role == "entry" {
+				clientFile.Role = "entry"
+			}
+			if diskIndex == 0 {
+				clientFile.DriveHint = "FDD1"
+			}
+			index := diskIndex
+			clientFile.DiskIndex = &index
+			clientFile.Label = fmt.Sprintf("Disk %d", diskIndex+1)
+			diskIndex++
+		}
+		manifest.Files = append(manifest.Files, clientFile)
+	}
+	if resolution.DOSLaunch != nil {
+		launch := resolution.DOSLaunch
+		manifest.DOSLaunch = &clientDOSLaunch{
+			EntrySource: launch.EntrySource, InstallDirectory: nullableString(launch.InstallDirectory),
+			WorkingDirectory: nullableString(launch.WorkingDirectory),
+			DOSBoxConfig:     nullableString(launch.DOSBoxConfig), Arguments: launch.Arguments,
+			Candidates: launch.Candidates, KeymapHints: launch.KeymapHints,
+		}
 	}
 	return clientGameLaunchResolutionResponse{
 		LaunchProfileID: resolution.LaunchProfileID,
@@ -2710,6 +2740,13 @@ func clientGameLaunchResolution(resolution domain.GameLaunchResolution) clientGa
 		Runtime:         resolution.Runtime,
 		Manifest:        manifest,
 	}
+}
+
+func resolvedGameFileURL(file domain.GameLaunchResolvedFile) string {
+	if file.Position != nil {
+		return fmt.Sprintf("/api/client/games/%d/files/%d", file.SourceGameID, *file.Position)
+	}
+	return fmt.Sprintf("/api/client/games/%d/file", file.SourceGameID)
 }
 
 func nullableString(value string) *string {

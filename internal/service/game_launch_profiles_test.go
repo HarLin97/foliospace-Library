@@ -45,3 +45,40 @@ func TestLaunchProfileClientVersionFloor(t *testing.T) {
 		t.Fatal("1.302 and later should match the profile floor")
 	}
 }
+
+func TestCanonicalPragmaticVersionNormalizesWindowsVersions(t *testing.T) {
+	tests := map[string]string{
+		"  v0.82.2.0  ": "0.82.2",
+		"0, 82, 2, 0":   "0.82.2",
+		"2.6.3.0":       "2.6.3",
+		"1.20.4":        "1.20.4",
+		"2.6":           "2.6",
+		"unknown":       "",
+	}
+	for input, expected := range tests {
+		if actual := canonicalPragmaticVersion(input); actual != expected {
+			t.Fatalf("canonicalPragmaticVersion(%q)=%q, want %q", input, actual, expected)
+		}
+	}
+}
+
+func TestValidatePragmaticDOSLaunchRejectsUnsafePaths(t *testing.T) {
+	valid := domain.DOSLaunch{
+		EntrySource: "curated", EntryFile: "GAME/START.BAT", WorkingDirectory: "GAME",
+		Candidates: []domain.DOSLaunchCandidate{{Path: "GAME/START.BAT", Kind: "bat"}},
+	}
+	if err := validatePragmaticDOSLaunch(valid); err != nil {
+		t.Fatalf("valid DOS launch rejected: %v", err)
+	}
+
+	unsafe := valid
+	unsafe.EntryFile = "GAME/START.BAT|FORMAT"
+	if err := validatePragmaticDOSLaunch(unsafe); err == nil {
+		t.Fatal("expected shell metacharacter to be rejected")
+	}
+	unsafe = valid
+	unsafe.Candidates = []domain.DOSLaunchCandidate{{Path: "../START.BAT", Kind: "bat"}}
+	if err := validatePragmaticDOSLaunch(unsafe); err == nil {
+		t.Fatal("expected unsafe candidate path to be rejected")
+	}
+}

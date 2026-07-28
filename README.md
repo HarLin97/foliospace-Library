@@ -221,11 +221,16 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 
 ## Release 0.981
 
-Release `0.981` adds immutable, audited launch-profile negotiation for native game clients while preserving the existing manifest contract:
+Release `0.981` adds tiered launch-profile negotiation for native game clients while preserving the existing manifest contract:
 
-- `POST /api/client/games/:id/resolve` selects an exact profile from the authoritative client and runtime inventory in the request body.
+- `POST /api/client/games/:id/resolve` selects a compatible profile from the authoritative client and runtime inventory in the request body.
+- Ordinary console platforms reuse their validated canonical manifests. Libretro routes match a known platform/core family without requiring a per-build core hash; Dolphin and Supermodel also accept runtimes without a reliable product version.
+- Dreamcast, Saturn, PlayStation, PC-FX, PC-98, PSP, PlayStation 2, GameCube, Nintendo 64, and other ordinary platforms no longer require one manually authored profile per game.
+- Curated DOS entries reuse the existing `dosLaunch` contract and accept Windows DOSBox Staging `0.82.2.0` while preserving the exact selected runtime tuple in the response. Ambiguous DOS entries remain unavailable until curated.
 - Windows MAME 0.288 profiles are available for Virtua Striker and Tekken Tag Tournament; Virtua Striker includes its required `segabill.zip` dependency, while Tekken receives a client-visible logical entry name without renaming the stored ROM.
-- Resolver manifests include profile revisions, checksums, logical filenames, exact runtime identity, and the complete dependency closure.
+- CPS1/CPS2/CPS3 sets use pinned MAME 0.288 family classification; audited `sf2`, `sfa`, and `sfiii` profiles require the exact bundled FBNeo core hash.
+- Audited MAME 0.288 profiles cover `hypreact`, `hypreac2`, `srmp4`, `fromancr`, `fromanc4`, and `mcnpshnt`; the latter receives `ym2413.zip` as a logical dependency alias while the physical source remains unchanged.
+- Resolver manifests include stable profile revisions, logical filenames, available checksums, exact selected runtime identity, and the canonical dependency closure.
 - Unsupported runtime combinations return `409 runtime-profile-not-available` instead of silently choosing a nearby ROM set.
 - Existing clients continue using `GET /api/client/games/:id/manifest` unchanged.
 - MCP adds `foliospace.resolve_game_launch_profile` for the same exact negotiation flow.
