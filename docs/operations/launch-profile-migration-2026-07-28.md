@@ -45,7 +45,7 @@ Legacy single-file Model 2, Model 3, and NAOMI records missing `game_files` rows
 
 ## Remaining Audit Work
 
-The original migration deliberately did not claim that all historical arcade archives were compatible. The FBNeo addendum below now audits eligible archives against an exact DAT and core fingerprint; unmatched or rejected archives stay in `needs-curation`. Remaining MAME-only rows still need a fixed MAME 0.288 audit, dependency-closure verification, and an exact runtime profile before promotion. macOS MAME/FBNeo binaries must likewise be audited against their actual version or core hash rather than inheriting the Windows allow-list.
+The original migration deliberately did not claim that all historical arcade archives were compatible. The FBNeo addendum below audits eligible archives against an exact DAT and core fingerprint; unmatched or rejected archives stay in `needs-curation`. The MAME addendum performs the equivalent fixed-version audit for explicitly selected platforms. macOS MAME/FBNeo binaries must likewise be audited against their actual version or core hash rather than inheriting the Windows allow-list.
 
 ## FBNeo Profile Rebuild Addendum
 
@@ -59,3 +59,19 @@ The official FBNeo Arcade DAT is deployment-supplied rather than bundled in the 
 ```
 
 The command is explicit and idempotent. It streams the DAT and opens one ZIP central directory at a time, so it does not perform a full-library audit during normal service startup. It never renames, rewrites, moves, or deletes ROM files. Before production writeback, the 2026-07-28 isolated audit matched 8,322 indexed candidates: 7,714 passed exact ROM and dependency verification, while 608 remained `needs-curation`. The rebuild emitted 13,978 logical entry/dependency file rows and a deterministic profile revision derived from the DAT SHA-256.
+
+## MAME 0.288 Profile Rebuild Addendum
+
+The official MAME 0.288 `listxml` archive is deployment-supplied rather than bundled in the image. Place it at `/config/policies/mame0288lx.zip`. Always inspect a dry-run before writing production data:
+
+```sh
+/app/foliospace-rebuild-launch-profiles \
+  --policy=mame \
+  --mame-listxml=/config/policies/mame0288lx.zip \
+  --platforms=model2 \
+  --dry-run
+```
+
+When the dry-run counts and failures are understood, omit `--dry-run` to write the audited profiles. The command uses each physical ZIP stem as the canonical MAME set name, validates logical ROM names, uncompressed sizes, and CRCs, and recursively validates parent, BIOS, and device archives. Required assets such as `segabill.zip` remain dependencies and never become playable catalog entries. Sets that fail audit remain indexed as `needs-curation`; they are not deleted or advertised as playable.
+
+After writeback, verify that the profile revision changed, `GET /api/client/games?platform=model2` returns the ready count, `/api/client/games/facets` reports the same count, and representative ready games resolve with the exact `mame/0.288/mame-0.288` runtime tuple. Also verify that a rejected set still returns `409 runtime-profile-not-available`.

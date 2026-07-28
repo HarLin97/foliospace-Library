@@ -1371,7 +1371,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	}
 	if platform == "model2" {
 		shortName := strings.ToLower(strings.TrimSuffix(filepath.Base(path), ext))
-		romSetName = "Model2ROMs"
+		romSetName = shortName
 		emulatorHint = "model2"
 		compatibility = model2Compatibility(shortName)
 		if friendlyTitle := model2FriendlyTitle(shortName); friendlyTitle != "" {
@@ -4353,7 +4353,7 @@ func inferROMSetName(relPath string) string {
 		case "cps1 cps2 cps3", "cps1", "cps2", "cps3":
 			return gameROMSetStem(relPath, filepath.Ext(relPath))
 		case "model2", "model2roms", "model 2", "sega model 2":
-			return "Model2ROMs"
+			return gameROMSetStem(relPath, filepath.Ext(relPath))
 		case "fbneo":
 			if len(parts) > 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "arcade") {
 				shortName := strings.TrimSuffix(parts[2], filepath.Ext(parts[2]))

@@ -2236,7 +2236,8 @@ func TestScanLibraryIndexesModel2CatalogAndHidesDependency(t *testing.T) {
 	byTitle := map[string]domain.GameAsset{}
 	for _, game := range page.Items {
 		byTitle[game.Title] = game
-		if game.Platform != "model2" || game.ROMSetName != "Model2ROMs" || game.EmulatorHint != "model2" || game.Format != "zip" || game.CatalogRole != "needs-curation" {
+		fileName := filepath.Base(game.FilePath)
+		if game.Platform != "model2" || game.ROMSetName != strings.ToLower(strings.TrimSuffix(fileName, filepath.Ext(fileName))) || game.EmulatorHint != "model2" || game.Format != "zip" || game.CatalogRole != "needs-curation" {
 			t.Fatalf("game = %#v, want canonical Model 2 metadata", game)
 		}
 	}

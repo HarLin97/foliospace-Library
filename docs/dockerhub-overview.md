@@ -10,6 +10,7 @@ Release `0.982` makes audited arcade launch profiles durable and rebuildable for
 
 - Audited profiles and their complete entry/dependency closure are persisted in SQLite.
 - The explicit `foliospace-rebuild-launch-profiles` command validates existing FBNeo ZIP sets against a deployment-supplied official Arcade DAT without rescanning or rewriting ROM files.
+- It also supports an official MAME 0.288 `listxml` audit for selected platforms. Model 2 archives are matched by ZIP stem and promoted only when their complete parent, device, and BIOS closure validates.
 - Every published FBNeo game passes logical ROM name, uncompressed size, CRC, and parent/BIOS dependency checks.
 - Windows FBNeo profiles require the exact approved core SHA-256; unknown or mismatched cores return `409 runtime-profile-not-available`.
 - SFC/SNES profile negotiation recognizes Libretro bsnes alongside Snes9x and Mesen-S.
@@ -22,6 +23,16 @@ The official FBNeo Arcade DAT is intentionally not bundled. Place it at `/config
 ```bash
 docker exec foliospace-library /app/foliospace-rebuild-launch-profiles \
   --dat=/config/policies/fbneo-arcade.dat
+```
+
+For Model 2, place the official MAME 0.288 listxml ZIP at `/config/policies/mame0288lx.zip`, inspect a dry-run, and then repeat without `--dry-run`:
+
+```bash
+docker exec foliospace-library /app/foliospace-rebuild-launch-profiles \
+  --policy=mame \
+  --mame-listxml=/config/policies/mame0288lx.zip \
+  --platforms=model2 \
+  --dry-run
 ```
 
 ## 0.981 Release: Tiered Game Launch Profiles

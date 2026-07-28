@@ -35,14 +35,13 @@ type rebuildOutput struct {
 func main() {
 	cfg := config.Load()
 	datPath := flag.String("dat", filepath.Join(cfg.ConfigDir, "policies", "fbneo-arcade.dat"), "official FBNeo arcade DAT path")
+	policy := flag.String("policy", "fbneo", "audit policy: fbneo or mame")
+	mameListXML := flag.String("mame-listxml", filepath.Join(cfg.ConfigDir, "policies", "mame0288lx.zip"), "official MAME 0.288 listxml XML or ZIP path")
+	platforms := flag.String("platforms", "model2", "comma-separated platforms to audit with MAME")
 	dryRun := flag.Bool("dry-run", false, "audit without writing SQLite")
 	failureLimit := flag.Int("failure-limit", 50, "maximum failure details to print")
 	flag.Parse()
 
-	catalog, err := launchprofile.ParseFBNeoDATFile(*datPath)
-	if err != nil {
-		log.Fatal(err)
-	}
 	conn, err := db.Open(cfg.ConfigDir)
 	if err != nil {
 		log.Fatal(err)
@@ -53,7 +52,33 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	var output rebuildOutput
+	switch strings.ToLower(strings.TrimSpace(*policy)) {
+	case "fbneo":
+		catalog, err := launchprofile.ParseFBNeoDATFile(*datPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		output, err = rebuildFBNeoProfiles(appStore, catalog, candidates, *dryRun)
+	case "mame":
+		output, err = rebuildMAMEProfiles(appStore, *mameListXML, parsePlatformSelection(*platforms), candidates, *dryRun)
+	default:
+		log.Fatalf("unsupported audit policy %q", *policy)
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *failureLimit >= 0 && len(output.Failures) > *failureLimit {
+		output.Failures = output.Failures[:*failureLimit]
+	}
+	encoded, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(encoded))
+}
 
+func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCatalog, candidates []domain.GameAsset, dryRun bool) (rebuildOutput, error) {
 	bySet := make(map[string][]domain.GameAsset)
 	for _, candidate := range candidates {
 		setName := canonicalSetName(candidate.FilePath)
@@ -97,25 +122,92 @@ func main() {
 		result.GamesReady++
 	}
 	result.GamesRejected = len(updates) - result.GamesReady
-	if !*dryRun {
-		result, err = appStore.ReplaceGameLaunchProfiles(launchprofile.FBNeoPolicy, profiles, updates)
+	if !dryRun {
+		written, err := appStore.ReplaceGameLaunchProfiles(launchprofile.FBNeoPolicy, profiles, updates)
 		if err != nil {
-			log.Fatal(err)
+			return rebuildOutput{}, err
 		}
+		result = written
 	}
-	if *failureLimit >= 0 && len(failures) > *failureLimit {
-		failures = failures[:*failureLimit]
-	}
-	output := rebuildOutput{
+	return rebuildOutput{
 		Policy: launchprofile.FBNeoPolicy, DATName: catalog.Name, DATVersion: catalog.Version,
 		DATSHA256: catalog.SHA256, ProfileRevision: catalog.Revision,
-		Candidates: len(candidates), Matched: matched, Result: result, Failures: failures, DryRun: *dryRun,
+		Candidates: len(candidates), Matched: matched, Result: result, Failures: failures, DryRun: dryRun,
+	}, nil
+}
+
+func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms map[string]bool, candidates []domain.GameAsset, dryRun bool) (rebuildOutput, error) {
+	if len(platforms) == 0 {
+		return rebuildOutput{}, fmt.Errorf("MAME platform selection is empty")
 	}
-	encoded, err := json.MarshalIndent(output, "", "  ")
+	bySet := make(map[string][]domain.GameAsset)
+	requested := make([]string, 0)
+	scoped := make([]domain.GameAsset, 0)
+	for _, candidate := range candidates {
+		setName := canonicalSetName(candidate.FilePath)
+		if setName != "" {
+			bySet[setName] = append(bySet[setName], candidate)
+		}
+		if platforms[strings.ToLower(strings.TrimSpace(candidate.Platform))] && !isKnownDependency(candidate) {
+			scoped = append(scoped, candidate)
+			requested = append(requested, setName)
+		}
+	}
+	catalog, err := launchprofile.ParseMAMEListXMLFile(listXMLPath, requested)
 	if err != nil {
-		log.Fatal(err)
+		return rebuildOutput{}, err
 	}
-	fmt.Println(string(encoded))
+	version := mameBuildVersion(catalog.Build)
+	if version != "0.288" {
+		return rebuildOutput{}, fmt.Errorf("MAME listxml build %q is not the required 0.288 catalog", catalog.Build)
+	}
+
+	profiles := make([]domain.GameLaunchProfile, 0, len(scoped))
+	updates := make([]domain.GameLaunchCatalogUpdate, 0, len(scoped))
+	failures := make([]string, 0)
+	matched := 0
+	for _, candidate := range scoped {
+		setName := canonicalSetName(candidate.FilePath)
+		update := domain.GameLaunchCatalogUpdate{
+			GameID: candidate.ID, Platform: strings.ToLower(strings.TrimSpace(candidate.Platform)), ROMSetName: setName,
+			EmulatorHint: mameEmulatorHint(candidate.Platform), CatalogRole: launchcatalog.RoleNeedsCuration,
+		}
+		machine, ok := catalog.Machines[setName]
+		if !ok {
+			failures = append(failures, fmt.Sprintf("game=%d set=%s: set is absent from MAME 0.288 listxml", candidate.ID, setName))
+			updates = append(updates, update)
+			continue
+		}
+		matched++
+		profile, auditErr := buildMAMEProfile(catalog, machine, candidate, bySet)
+		if auditErr == nil {
+			profiles = append(profiles, profile)
+			update.CatalogRole = launchcatalog.RoleGame
+		} else {
+			failures = append(failures, fmt.Sprintf("game=%d set=%s: %v", candidate.ID, setName, auditErr))
+		}
+		updates = append(updates, update)
+	}
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].GameID < profiles[j].GameID })
+	sort.Slice(updates, func(i, j int) bool { return updates[i].GameID < updates[j].GameID })
+
+	result := domain.GameLaunchProfileRebuildResult{ProfilesWritten: len(profiles)}
+	for _, profile := range profiles {
+		result.FilesWritten += len(profile.Files)
+		result.GamesReady++
+	}
+	result.GamesRejected = len(updates) - result.GamesReady
+	if !dryRun {
+		result, err = appStore.ReplaceGameLaunchProfiles(launchprofile.MAMEPolicy, profiles, updates)
+		if err != nil {
+			return rebuildOutput{}, err
+		}
+	}
+	return rebuildOutput{
+		Policy: launchprofile.MAMEPolicy, DATName: "MAME", DATVersion: version,
+		DATSHA256: catalog.SHA256, ProfileRevision: catalog.Revision,
+		Candidates: len(scoped), Matched: matched, Result: result, Failures: failures, DryRun: dryRun,
+	}, nil
 }
 
 func buildFBNeoProfile(catalog launchprofile.FBNeoCatalog, datGame launchprofile.FBNeoGame, entry domain.GameAsset, bySet map[string][]domain.GameAsset) (domain.GameLaunchProfile, error) {
@@ -153,6 +245,44 @@ func buildFBNeoProfile(catalog launchprofile.FBNeoCatalog, datGame launchprofile
 	}, nil
 }
 
+func buildMAMEProfile(catalog launchprofile.MAMECatalog, machine launchprofile.MAMEMachine, entry domain.GameAsset, bySet map[string][]domain.GameAsset) (domain.GameLaunchProfile, error) {
+	if !validContainerIdentity(entry) {
+		return domain.GameLaunchProfile{}, fmt.Errorf("entry container has no stable SHA-1 identity")
+	}
+	if !machine.Runnable || machine.IsBIOS || machine.IsDevice {
+		return domain.GameLaunchProfile{}, fmt.Errorf("MAME machine is not a runnable game")
+	}
+	if err := launchprofile.ValidateMAMEArchive(entry.FilePath, machine); err != nil {
+		return domain.GameLaunchProfile{}, err
+	}
+	files := []domain.GameLaunchProfileFile{{
+		Position: 0, SourceGameID: entry.ID, SourceSHA1: strings.ToLower(entry.SHA1),
+		SourceName: filepath.Base(entry.FilePath), Name: machine.Name + ".zip", Size: entry.Size, Role: "entry",
+	}}
+	dependencies, err := catalog.Dependencies(machine.Name)
+	if err != nil {
+		return domain.GameLaunchProfile{}, err
+	}
+	for _, dependency := range dependencies {
+		source, err := selectMAMEDependencySource(entry, dependency, bySet[dependency.Name])
+		if err != nil {
+			return domain.GameLaunchProfile{}, err
+		}
+		files = append(files, domain.GameLaunchProfileFile{
+			Position: len(files), SourceGameID: source.ID, SourceSHA1: strings.ToLower(source.SHA1),
+			SourceName: filepath.Base(source.FilePath), Name: dependency.Name + ".zip", Size: source.Size, Role: "dependency",
+		})
+	}
+	version := mameBuildVersion(catalog.Build)
+	return domain.GameLaunchProfile{
+		GameID: entry.ID, ID: fmt.Sprintf("%s-windows-mame-%s-%s", machine.Name, profileVersion(version), catalog.SHA256[:8]),
+		Revision: catalog.Revision, Priority: 200, Policy: launchprofile.MAMEPolicy,
+		ClientName: "SpatialEMU.Windows", MinClientVersion: "1.302", ClientPlatform: "windows-x64", Architecture: "x64",
+		Runtime:   domain.GameRuntimeDescriptor{ID: "mame", Version: version, ContentSet: "mame-" + version},
+		EntryFile: machine.Name + ".zip", CanonicalSet: machine.Name, Status: "ready", Files: files,
+	}, nil
+}
+
 func selectDependencySource(entry domain.GameAsset, dependency launchprofile.FBNeoGame, candidates []domain.GameAsset) (domain.GameAsset, error) {
 	sort.SliceStable(candidates, func(i, j int) bool {
 		leftSameDir := filepath.Dir(candidates[i].FilePath) == filepath.Dir(entry.FilePath)
@@ -170,6 +300,23 @@ func selectDependencySource(entry domain.GameAsset, dependency launchprofile.FBN
 	return domain.GameAsset{}, fmt.Errorf("verified dependency %s.zip is unavailable", dependency.Name)
 }
 
+func selectMAMEDependencySource(entry domain.GameAsset, dependency launchprofile.MAMEMachine, candidates []domain.GameAsset) (domain.GameAsset, error) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		leftSameDir := filepath.Dir(candidates[i].FilePath) == filepath.Dir(entry.FilePath)
+		rightSameDir := filepath.Dir(candidates[j].FilePath) == filepath.Dir(entry.FilePath)
+		return leftSameDir && !rightSameDir
+	})
+	for _, candidate := range candidates {
+		if !validContainerIdentity(candidate) {
+			continue
+		}
+		if err := launchprofile.ValidateMAMEArchive(candidate.FilePath, dependency); err == nil {
+			return candidate, nil
+		}
+	}
+	return domain.GameAsset{}, fmt.Errorf("verified MAME dependency %s.zip is unavailable", dependency.Name)
+}
+
 func canonicalSetName(path string) string {
 	return strings.ToLower(strings.TrimSpace(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))))
 }
@@ -184,7 +331,8 @@ func eligibleFBNeoCandidate(game domain.GameAsset) bool {
 
 func isKnownDependency(game domain.GameAsset) bool {
 	return strings.EqualFold(strings.TrimSpace(game.CatalogRole), launchcatalog.RoleDependency) ||
-		canonicalSetName(game.FilePath) == "neogeo" || canonicalSetName(game.FilePath) == "ym2413_instruments"
+		canonicalSetName(game.FilePath) == "neogeo" || canonicalSetName(game.FilePath) == "segabill" ||
+		canonicalSetName(game.FilePath) == "ym2413_instruments"
 }
 
 func validContainerIdentity(game domain.GameAsset) bool {
@@ -211,4 +359,30 @@ func profileVersion(version string) string {
 		return "dat"
 	}
 	return builder.String()
+}
+
+func parsePlatformSelection(value string) map[string]bool {
+	selected := make(map[string]bool)
+	for _, platform := range strings.Split(value, ",") {
+		platform = strings.ToLower(strings.TrimSpace(platform))
+		if platform != "" {
+			selected[platform] = true
+		}
+	}
+	return selected
+}
+
+func mameBuildVersion(build string) string {
+	fields := strings.Fields(strings.TrimSpace(build))
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.TrimPrefix(strings.ToLower(fields[0]), "v")
+}
+
+func mameEmulatorHint(platform string) string {
+	if strings.EqualFold(strings.TrimSpace(platform), "model2") {
+		return "model2"
+	}
+	return "mame"
 }
