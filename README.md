@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.981`.
+Current release branch: `0.982`.
 
 ## Screenshots
 
@@ -219,6 +219,26 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.982
+
+Release `0.982` makes audited arcade launch profiles durable and rebuildable for existing libraries:
+
+- Audited launch profiles and their complete entry/dependency closure are persisted in SQLite instead of being limited to a small hard-coded list.
+- The explicit `foliospace-rebuild-launch-profiles` maintenance command validates existing FBNeo ZIP sets against a deployment-supplied official Arcade DAT without rescanning or rewriting ROM files.
+- Each archive is checked by logical ROM name, uncompressed size, CRC, and its complete parent/BIOS dependency chain before it is published as playable.
+- Windows FBNeo profiles require the exact approved core SHA-256; an incorrect or unknown core continues to return `409 runtime-profile-not-available`.
+- SFC/SNES launch negotiation now recognizes the Windows Libretro bsnes family in addition to the existing Snes9x and Mesen-S routes.
+- Client game lists, facets, search, and played shelves no longer advertise dependency or `needs-curation` records as playable games.
+- Existing users do not need to rescan their game libraries. Only records missing stable hashes or rejected by the DAT audit need a targeted rescan or ROM-set repair.
+- Service, Client API, and MCP source metadata report version `0.982`.
+
+The FBNeo DAT is intentionally not bundled in the image. Mount or copy it to `/config/policies/fbneo-arcade.dat`, then run the rebuild once after upgrading:
+
+```bash
+docker exec foliospace-library /app/foliospace-rebuild-launch-profiles \
+  --dat=/config/policies/fbneo-arcade.dat
+```
+
 ## Release 0.981
 
 Release `0.981` adds tiered launch-profile negotiation for native game clients while preserving the existing manifest contract:
@@ -294,7 +314,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.981 ./scripts/build-mcp-release.sh
+VERSION=0.982 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -314,10 +334,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.981` image tag:
+Release `0.982` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.981
+docker pull funland/foliospace-library:0.982
 ```
 
 For local verification:
@@ -336,7 +356,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.981
+  funland/foliospace-library:0.982
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -351,11 +371,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.981
-git push github v0.981
+git tag v0.982
+git push github v0.982
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.981` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.982` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

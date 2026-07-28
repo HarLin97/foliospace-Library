@@ -4,6 +4,26 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.982 Release: Durable Audited Arcade Profiles
+
+Release `0.982` makes audited arcade launch profiles durable and rebuildable for existing libraries.
+
+- Audited profiles and their complete entry/dependency closure are persisted in SQLite.
+- The explicit `foliospace-rebuild-launch-profiles` command validates existing FBNeo ZIP sets against a deployment-supplied official Arcade DAT without rescanning or rewriting ROM files.
+- Every published FBNeo game passes logical ROM name, uncompressed size, CRC, and parent/BIOS dependency checks.
+- Windows FBNeo profiles require the exact approved core SHA-256; unknown or mismatched cores return `409 runtime-profile-not-available`.
+- SFC/SNES profile negotiation recognizes Libretro bsnes alongside Snes9x and Mesen-S.
+- Client lists, facets, search, and played shelves hide dependency and `needs-curation` records instead of advertising games that cannot launch.
+- Existing users do not need to rescan their game libraries. Only missing hashes or rejected ROM sets need a targeted rescan or repair.
+- Service, Client API, and MCP source metadata report version `0.982`.
+
+The official FBNeo Arcade DAT is intentionally not bundled. Place it at `/config/policies/fbneo-arcade.dat`, then run once after upgrading:
+
+```bash
+docker exec foliospace-library /app/foliospace-rebuild-launch-profiles \
+  --dat=/config/policies/fbneo-arcade.dat
+```
+
 ## 0.981 Release: Tiered Game Launch Profiles
 
 Release `0.981` adds launch-profile negotiation without forcing every ordinary console game into a per-runtime audit table.
@@ -161,7 +181,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.981
+docker pull funland/foliospace-library:0.982
 ```
 
 ```bash
@@ -171,7 +191,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.981
+  funland/foliospace-library:0.982
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.
