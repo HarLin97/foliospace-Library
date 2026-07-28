@@ -31,7 +31,8 @@ Legacy single-file Model 2, Model 3, and NAOMI records missing `game_files` rows
 
 - 14 of 14 published strict arcade entries resolved successfully for the Windows 1.302 MAME 0.288 or pinned FBNeo runtime tuple.
 - 199 of 199 Model 3, NAOMI, and NAOMI 2 entries resolved successfully with their pragmatic Supermodel/Flycast runtime policies.
-- 9 of 9 ordinary-platform control entries continued to resolve successfully: NES, PS1, N64, Saturn, PS2, PSP, GameCube, Dreamcast, and curated DOS.
+- 1,859 of 1,859 published DOS entries resolved successfully with their deterministic curated launch contracts.
+- 10 of 10 ordinary-platform control entries continued to resolve successfully: NES, PS1, N64, Saturn, PC-98, PS2, PSP, GameCube, Dreamcast, and curated DOS.
 - Direct checks of quarantined records continued to return `409 runtime-profile-not-available`, confirming that the resolver did not manufacture compatibility.
 
 ## Explicitly Quarantined Samples
