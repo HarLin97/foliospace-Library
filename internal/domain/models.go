@@ -438,15 +438,15 @@ type BookListPage struct {
 }
 
 type GameListOptions struct {
-	Limit      int
-	Offset     int
-	Query      string
-	Platform   string
-	ROMSetName string
-	Format     string
-	Sort       string
-	BasePath   string
-	ReadyOnly  bool
+	Limit             int
+	Offset            int
+	Query             string
+	Platform          string
+	ROMSetName        string
+	Format            string
+	Sort              string
+	BasePath          string
+	ClientVisibleOnly bool
 }
 
 type GameListPage struct {

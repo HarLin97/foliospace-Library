@@ -486,7 +486,7 @@ func collectionListOrderBy(sort string, direction string) string {
 }
 
 func (s *Store) ListGamePlatformCollections() ([]domain.Series, error) {
-	rows, err := s.db.Query(`SELECT platform, COUNT(*) FROM games WHERE LOWER(TRIM(catalog_role)) IN ('', 'game') GROUP BY platform`)
+	rows, err := s.db.Query(`SELECT platform, COUNT(*) FROM games WHERE LOWER(TRIM(catalog_role)) <> 'dependency' GROUP BY platform`)
 	if err != nil {
 		return nil, err
 	}
@@ -2306,7 +2306,7 @@ func (s *Store) GameFileByPosition(gameID int64, position int) (domain.GameFile,
 
 func (s *Store) ListRecentGames(limit int) ([]domain.GameAsset, error) {
 	limit = normalizeShelfLimit(limit)
-	rows, err := s.db.Query(gameSelectSQL()+` WHERE LOWER(TRIM(catalog_role)) IN ('', 'game') ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
+	rows, err := s.db.Query(gameSelectSQL()+` WHERE LOWER(TRIM(catalog_role)) <> 'dependency' ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2472,7 +2472,7 @@ func (s *Store) ListPlayedGamesForProfile(options domain.PlayedGameListOptions, 
 		offset = 0
 	}
 
-	clauses := []string{`ps.profile_id = ?`, `LOWER(TRIM(g.catalog_role)) IN ('', 'game')`, `(ps.launch_count > 0 OR ps.total_play_seconds > 0)`}
+	clauses := []string{`ps.profile_id = ?`, `LOWER(TRIM(g.catalog_role)) <> 'dependency'`, `(ps.launch_count > 0 OR ps.total_play_seconds > 0)`}
 	args := []any{profileID}
 	if query := strings.TrimSpace(options.Query); query != "" {
 		like := "%" + strings.ToLower(query) + "%"
@@ -3020,8 +3020,8 @@ func (s *Store) ListVideosPage(options domain.VideoListOptions) (domain.VideoLis
 func gameListWhere(options domain.GameListOptions, includeDependencies bool) (string, []any) {
 	clauses := make([]string, 0, 3)
 	args := make([]any, 0, 8)
-	if options.ReadyOnly {
-		clauses = append(clauses, `LOWER(TRIM(catalog_role)) IN ('', 'game')`)
+	if options.ClientVisibleOnly {
+		clauses = append(clauses, `LOWER(TRIM(catalog_role)) <> 'dependency'`)
 	} else if !includeDependencies {
 		clauses = append(clauses, `LOWER(TRIM(catalog_role)) <> 'dependency'`)
 	}

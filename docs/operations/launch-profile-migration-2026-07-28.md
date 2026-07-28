@@ -13,7 +13,7 @@ This migration changed SQLite catalog metadata and repaired missing single-file 
 | Strict arcade families (`arcade`, `mame`, `model2`, `cps1`, `cps2`, `cps3`, `neogeo`) | 8,175 | 14 | 3 | 8,158 | 0 |
 | DOS | 1,897 | 1,859 | 0 | 38 | 0 |
 
-The client catalog, search, recent/played shelves, logical platform collections, and facets now publish only `catalogRole=game` records. Dependency and `needs-curation` rows remain available to backend administration and direct ID-based audit flows.
+The client catalog, search, recent/played shelves, logical platform collections, and facets exclude only `catalogRole=dependency` records. `needs-curation` games remain visible with their audit status, while strict launch resolution continues to reject unaudited runtime tuples.
 
 Exact audited fingerprints also repair stale catalog metadata. For example, a
 verified `sf2.zip` formerly stored as `platform=arcade, romSetName=FBNeo` is

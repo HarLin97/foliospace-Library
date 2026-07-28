@@ -895,7 +895,7 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	}
 }
 
-func TestStoreReadyOnlyGameCatalogHidesUncuratedEntries(t *testing.T) {
+func TestStoreClientCatalogShowsUncuratedGamesAndHidesDependencies(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -915,12 +915,12 @@ func TestStoreReadyOnlyGameCatalogHidesUncuratedEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, ReadyOnly: true})
+	page, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, ClientVisibleOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].Title != "Ready" {
-		t.Fatalf("ready page = %#v, want only Ready", page)
+	if page.Total != 2 || len(page.Items) != 2 {
+		t.Fatalf("client page = %#v, want ready and needs-curation games", page)
 	}
 	dependency, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "BIOS"})
 	if err != nil {
@@ -929,40 +929,40 @@ func TestStoreReadyOnlyGameCatalogHidesUncuratedEntries(t *testing.T) {
 	if dependency.Total != 1 || len(dependency.Items) != 1 || dependency.Items[0].CatalogRole != "dependency" {
 		t.Fatalf("dependency search = %#v, want searchable BIOS", dependency)
 	}
-	clientDependency, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "BIOS", ReadyOnly: true})
+	clientDependency, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "BIOS", ClientVisibleOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if clientDependency.Total != 0 {
-		t.Fatalf("ready dependency search = %#v, want dependency hidden from client catalog", clientDependency)
+		t.Fatalf("client dependency search = %#v, want dependency hidden from client catalog", clientDependency)
 	}
-	uncurated, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "Needs Curation", ReadyOnly: true})
+	uncurated, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "Needs Curation", ClientVisibleOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uncurated.Total != 0 {
-		t.Fatalf("uncurated search = %#v, want hidden entry", uncurated)
+	if uncurated.Total != 1 || len(uncurated.Items) != 1 || uncurated.Items[0].CatalogRole != "needs-curation" {
+		t.Fatalf("uncurated search = %#v, want visible needs-curation game", uncurated)
 	}
-	facets, err := s.ListGameFacets(domain.GameListOptions{ReadyOnly: true})
+	facets, err := s.ListGameFacets(domain.GameListOptions{ClientVisibleOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if facets.Total != 1 || len(facets.Platforms) != 1 || facets.Platforms[0].Platform != "nes" {
-		t.Fatalf("ready facets = %#v, want NES only", facets)
+	if facets.Total != 2 || len(facets.Platforms) != 2 {
+		t.Fatalf("client facets = %#v, want NES and arcade games", facets)
 	}
 	recent, err := s.ListRecentGames(20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recent) != 1 || recent[0].Title != "Ready" {
-		t.Fatalf("recent games = %#v, want Ready only", recent)
+	if len(recent) != 2 {
+		t.Fatalf("recent games = %#v, want ready and needs-curation games", recent)
 	}
 	collections, err := s.ListGamePlatformCollections()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(collections) != 1 || collections[0].Title != "Games / NES" || collections[0].BookCount != 1 {
-		t.Fatalf("platform collections = %#v, want one ready NES collection", collections)
+	if len(collections) != 2 {
+		t.Fatalf("platform collections = %#v, want NES and arcade collections", collections)
 	}
 }
 
@@ -1010,7 +1010,7 @@ func TestStoreListsPlayedGamesByProfileAndPlaytime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 2 || len(page.Items) != 1 || page.Items[0].Game.ID != second.ID || page.Items[0].Stats.TotalPlaySeconds != 120 || !page.HasMore {
+	if page.Total != 3 || len(page.Items) != 1 || page.Items[0].Game.ID != hidden.ID || page.Items[0].Stats.TotalPlaySeconds != 600 || !page.HasMore {
 		t.Fatalf("default played page = %#v", page)
 	}
 	guestPage, err := s.ListPlayedGamesForProfile(domain.PlayedGameListOptions{Limit: 20}, guest.ID)

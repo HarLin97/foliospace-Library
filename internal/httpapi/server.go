@@ -599,11 +599,11 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		facets, err := s.service.ListGameFacets(domain.GameListOptions{
-			Query:      r.URL.Query().Get("q"),
-			Platform:   r.URL.Query().Get("platform"),
-			ROMSetName: r.URL.Query().Get("romSetName"),
-			Format:     r.URL.Query().Get("format"),
-			ReadyOnly:  true,
+			Query:             r.URL.Query().Get("q"),
+			Platform:          r.URL.Query().Get("platform"),
+			ROMSetName:        r.URL.Query().Get("romSetName"),
+			Format:            r.URL.Query().Get("format"),
+			ClientVisibleOnly: true,
 		})
 		writeJSONOrError(w, facets, err)
 		return
@@ -819,14 +819,14 @@ func (s *Server) handleClientGames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page, err := s.service.ListGamesPageForProfile(domain.GameListOptions{
-		Limit:      queryInt(r, "limit", 50, 200),
-		Offset:     queryInt(r, "offset", 0, 0),
-		Query:      r.URL.Query().Get("q"),
-		Platform:   r.URL.Query().Get("platform"),
-		ROMSetName: r.URL.Query().Get("romSetName"),
-		Format:     r.URL.Query().Get("format"),
-		Sort:       r.URL.Query().Get("sort"),
-		ReadyOnly:  true,
+		Limit:             queryInt(r, "limit", 50, 200),
+		Offset:            queryInt(r, "offset", 0, 0),
+		Query:             r.URL.Query().Get("q"),
+		Platform:          r.URL.Query().Get("platform"),
+		ROMSetName:        r.URL.Query().Get("romSetName"),
+		Format:            r.URL.Query().Get("format"),
+		Sort:              r.URL.Query().Get("sort"),
+		ClientVisibleOnly: true,
 	}, s.requestProfileID(r))
 	if err != nil {
 		writeJSONOrError(w, nil, err)
