@@ -138,6 +138,42 @@ func Migrate(conn *sql.DB) error {
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(game_id, name)
 		)`,
+		`CREATE TABLE IF NOT EXISTS game_launch_profiles (
+			game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+			profile_id TEXT NOT NULL,
+			profile_revision INTEGER NOT NULL,
+			priority INTEGER NOT NULL DEFAULT 100,
+			policy TEXT NOT NULL,
+			client_name TEXT NOT NULL,
+			min_client_version TEXT NOT NULL,
+			client_platform TEXT NOT NULL,
+			architecture TEXT NOT NULL,
+			runtime_id TEXT NOT NULL,
+			runtime_version TEXT NOT NULL DEFAULT '',
+			content_set TEXT NOT NULL DEFAULT '',
+			core_id TEXT NOT NULL DEFAULT '',
+			core_sha256 TEXT NOT NULL DEFAULT '',
+			entry_file TEXT NOT NULL,
+			canonical_set TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'ready',
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(game_id, profile_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_game_launch_profiles_ready ON game_launch_profiles(game_id, status, priority DESC)`,
+		`CREATE TABLE IF NOT EXISTS game_launch_profile_files (
+			game_id INTEGER NOT NULL,
+			profile_id TEXT NOT NULL,
+			position INTEGER NOT NULL,
+			source_game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+			source_sha1 TEXT NOT NULL,
+			source_name TEXT NOT NULL,
+			name TEXT NOT NULL,
+			size INTEGER NOT NULL,
+			role TEXT NOT NULL,
+			PRIMARY KEY(game_id, profile_id, position),
+			FOREIGN KEY(game_id, profile_id) REFERENCES game_launch_profiles(game_id, profile_id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_game_launch_profile_files_source ON game_launch_profile_files(source_game_id)`,
 		`CREATE TABLE IF NOT EXISTS game_sources (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			game_id INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
@@ -607,26 +643,28 @@ func backfillLegacyArcadeGameFiles(conn *sql.DB) error {
 
 func reconcileGameCatalogRoles(conn *sql.DB) error {
 	rows, err := conn.Query(`SELECT g.id, g.platform, g.rom_set_name, g.emulator_hint, g.file_path, g.size, g.sha1, g.catalog_role,
-		COALESCE(d.entry_file, ''), COALESCE(d.entry_source, '')
+		COALESCE(d.entry_file, ''), COALESCE(d.entry_source, ''),
+		EXISTS(SELECT 1 FROM game_launch_profiles p WHERE p.game_id = g.id AND LOWER(TRIM(p.status)) = 'ready')
 		FROM games g LEFT JOIN game_dos_launch d ON d.game_id = g.id
 		ORDER BY g.id`)
 	if err != nil {
 		return err
 	}
 	type catalogGame struct {
-		id       int64
-		game     domain.GameAsset
-		dos      domain.DOSLaunch
-		hasDOS   bool
-		wantGame domain.GameAsset
-		wantRole string
+		id         int64
+		game       domain.GameAsset
+		dos        domain.DOSLaunch
+		hasDOS     bool
+		hasProfile bool
+		wantGame   domain.GameAsset
+		wantRole   string
 	}
 	games := make([]catalogGame, 0)
 	for rows.Next() {
 		var item catalogGame
 		if err := rows.Scan(&item.id, &item.game.Platform, &item.game.ROMSetName, &item.game.EmulatorHint,
 			&item.game.FilePath, &item.game.Size, &item.game.SHA1, &item.game.CatalogRole,
-			&item.dos.EntryFile, &item.dos.EntrySource); err != nil {
+			&item.dos.EntryFile, &item.dos.EntrySource, &item.hasProfile); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -637,6 +675,9 @@ func reconcileGameCatalogRoles(conn *sql.DB) error {
 		}
 		item.wantGame = launchcatalog.CanonicalizeAuditedGame(item.game)
 		item.wantRole = launchcatalog.CatalogRole(item.wantGame, dos)
+		if item.hasProfile {
+			item.wantRole = launchcatalog.RoleGame
+		}
 		if !strings.EqualFold(strings.TrimSpace(item.game.Platform), item.wantGame.Platform) ||
 			!strings.EqualFold(strings.TrimSpace(item.game.ROMSetName), item.wantGame.ROMSetName) ||
 			!strings.EqualFold(strings.TrimSpace(item.game.EmulatorHint), item.wantGame.EmulatorHint) ||

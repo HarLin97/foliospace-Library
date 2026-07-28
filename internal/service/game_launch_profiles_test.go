@@ -51,6 +51,63 @@ func TestLaunchProfileClientVersionFloor(t *testing.T) {
 	}
 }
 
+func TestSFCSupportsWindowsBSNES(t *testing.T) {
+	runtime := domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "bsnes"}
+	if !pragmaticRuntimeSupportsPlatform(runtime, "snes") {
+		t.Fatal("expected SFC/SNES to accept the Windows bsnes core")
+	}
+}
+
+func TestPersistedLaunchProfileResolvesFromSQLite(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	root := t.TempDir()
+	library, err := st.CreateLibrary("Games", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "clone.zip")
+	if err := os.WriteFile(path, []byte("verified-container"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const sourceSHA1 = "0123456789abcdef0123456789abcdef01234567"
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: library.ID, Title: "Clone", Platform: "cps1", ROMSetName: "clone", Format: "zip",
+		FilePath: path, RelPath: "clone.zip", Size: int64(len("verified-container")), MTime: time.Unix(1, 0),
+		SHA1: sourceSHA1, EmulatorHint: "fbneo", CatalogRole: "needs-curation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	profile := domain.GameLaunchProfile{
+		GameID: game.ID, ID: "clone-windows-fbneo-test", Revision: 42, Priority: 200, Policy: "test",
+		ClientName: "SpatialEMU.Windows", MinClientVersion: "1.302", ClientPlatform: "windows-x64", Architecture: "x64",
+		Runtime: runtime, EntryFile: "clone.zip", CanonicalSet: "clone", Status: "ready",
+		Files: []domain.GameLaunchProfileFile{{Position: 0, SourceGameID: game.ID, SourceSHA1: sourceSHA1, SourceName: "clone.zip", Name: "clone.zip", Size: game.Size, Role: "entry"}},
+	}
+	if _, err := st.ReplaceGameLaunchProfiles("test", []domain.GameLaunchProfile{profile}, []domain.GameLaunchCatalogUpdate{{
+		GameID: game.ID, Platform: "cps1", ROMSetName: "clone", EmulatorHint: "fbneo", CatalogRole: "game",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	request := domain.GameLaunchResolveRequest{
+		Client:   domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"},
+		Runtimes: []domain.GameRuntimeDescriptor{runtime},
+	}
+	resolved, err := New(st).ResolveGameLaunchProfile(game.ID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.LaunchProfileID != profile.ID || resolved.ProfileRevision != 42 || len(resolved.Files) != 1 {
+		t.Fatalf("resolution=%+v", resolved)
+	}
+}
+
 func TestAuditedLaunchCandidatePriorityDoesNotDependOnRuntimeOrder(t *testing.T) {
 	const sha1 = "0123456789abcdef0123456789abcdef01234567"
 	client := domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"}

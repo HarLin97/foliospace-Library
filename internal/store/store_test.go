@@ -895,7 +895,7 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	}
 }
 
-func TestStoreClientCatalogShowsUncuratedGamesAndHidesDependencies(t *testing.T) {
+func TestStoreClientCatalogShowsOnlyLaunchReadyGames(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -919,8 +919,8 @@ func TestStoreClientCatalogShowsUncuratedGamesAndHidesDependencies(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 2 || len(page.Items) != 2 {
-		t.Fatalf("client page = %#v, want ready and needs-curation games", page)
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].Title != "Ready" {
+		t.Fatalf("client page = %#v, want launch-ready game only", page)
 	}
 	dependency, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "BIOS"})
 	if err != nil {
@@ -940,29 +940,29 @@ func TestStoreClientCatalogShowsUncuratedGamesAndHidesDependencies(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uncurated.Total != 1 || len(uncurated.Items) != 1 || uncurated.Items[0].CatalogRole != "needs-curation" {
-		t.Fatalf("uncurated search = %#v, want visible needs-curation game", uncurated)
+	if uncurated.Total != 0 {
+		t.Fatalf("uncurated search = %#v, want needs-curation hidden from client catalog", uncurated)
 	}
 	facets, err := s.ListGameFacets(domain.GameListOptions{ClientVisibleOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if facets.Total != 2 || len(facets.Platforms) != 2 {
-		t.Fatalf("client facets = %#v, want NES and arcade games", facets)
+	if facets.Total != 1 || len(facets.Platforms) != 1 || facets.Platforms[0].Platform != "nes" {
+		t.Fatalf("client facets = %#v, want launch-ready NES only", facets)
 	}
 	recent, err := s.ListRecentGames(20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(recent) != 2 {
-		t.Fatalf("recent games = %#v, want ready and needs-curation games", recent)
+		t.Fatalf("recent games = %#v, want ready and needs-curation games in the admin shelf", recent)
 	}
 	collections, err := s.ListGamePlatformCollections()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(collections) != 2 {
-		t.Fatalf("platform collections = %#v, want NES and arcade collections", collections)
+		t.Fatalf("platform collections = %#v, want NES and arcade admin collections", collections)
 	}
 }
 
@@ -1010,7 +1010,7 @@ func TestStoreListsPlayedGamesByProfileAndPlaytime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 3 || len(page.Items) != 1 || page.Items[0].Game.ID != hidden.ID || page.Items[0].Stats.TotalPlaySeconds != 600 || !page.HasMore {
+	if page.Total != 2 || len(page.Items) != 1 || page.Items[0].Game.ID != second.ID || page.Items[0].Stats.TotalPlaySeconds != 120 || !page.HasMore {
 		t.Fatalf("default played page = %#v", page)
 	}
 	guestPage, err := s.ListPlayedGamesForProfile(domain.PlayedGameListOptions{Limit: 20}, guest.ID)

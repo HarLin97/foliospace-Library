@@ -540,7 +540,7 @@ Response:
 
 Empty results return `items: []` with `total: 0`; the endpoint does not return 404 for an empty catalog. The `items` DTO is the same client-safe game DTO used by `gameShelf`, and never includes NAS paths, local file paths, or Docker volume paths.
 
-The client catalog excludes only records whose `catalogRole` is `dependency`. Records marked `needs-curation` remain visible in paginated results, search results, recent/played shelves, logical platform collections, and facets so users can browse their complete library. Clients can use `catalogRole` to label compatibility as unverified. Launch-profile resolution remains strict and can return `409 runtime-profile-not-available` for an uncurated game.
+The client catalog (`/api/client/games`, `/api/client/games/facets`, client search, and played-game lists) publishes only records whose `catalogRole` is `game` (or the legacy empty value). Records marked `needs-curation` or `dependency` remain in the server database and administrative views, but they are not advertised as playable assets. This prevents a catalog item from appearing in a native client when launch-profile resolution is guaranteed to return `409 runtime-profile-not-available`.
 
 ### `GET /api/client/games/facets`
 
@@ -585,7 +585,7 @@ This is an inventory endpoint, not a declaration of every platform the server co
 
 Sega Model 2 scans use `platform: "model2"`, `romSetName: "Model2ROMs"`, `format: "zip"`, `emulatorHint: "model2"`, and `inputProfile: "operatorArcade"`. The ZIP shortname is preserved in `fileName`, while known sets receive their MAME display title. Archive size, CRC32, SHA-1, and download bytes describe the original ZIP container. The `segabill.zip` firmware package remains stored as `catalogRole: "dependency"` for audited profile dependency closure, but it is not returned by client search, catalog pages, or facets.
 
-CPS sets pinned to the MAME 0.288 driver catalog use canonical `platform: "cps1"`, `"cps2"`, or `"cps3"`, the ZIP stem as `romSetName`, and `emulatorHint: "fbneo"`. Classification uses an explicit versioned allow-list rather than title-prefix guesses. The audited Windows 1.302 profiles for `sf2`, `sfa`, and `sfiii` require Libretro core `fbneo` with SHA-256 `6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1`; other CPS sets remain visible with `catalogRole: "needs-curation"` until an exact profile is audited.
+CPS and Neo Geo sets verified against the configured official FBNeo Arcade DAT use canonical `platform: "cps1"`, `"cps2"`, `"cps3"`, or `"neogeo"`, the DAT set name as `romSetName`, and `emulatorHint: "fbneo"`. The audit checks every non-merged ROM entry by logical name, uncompressed size, and CRC, then verifies the complete `romof` parent/BIOS closure. Ready Windows 1.302 profiles require Libretro core `fbneo` with SHA-256 `6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1`. Rejected archives remain `needs-curation` and are hidden from client catalog endpoints until a matching profile is rebuilt.
 
 Canonical MAME ZIP/7Z records use the physical file stem as `romSetName`, never a collection label such as `MAME`. Windows MAME 0.288 profiles are audited for `hypreact`, `hypreac2`, `srmp4`, `fromancr`, `fromanc4`, and `mcnpshnt`. The physical `ym2413_instruments.zip` asset is stored with `catalogRole: "dependency"`, omitted from ordinary pages and facets, and exposed to `mcnpshnt` only as the logical profile filename `ym2413.zip`; the NAS file is never renamed.
 
@@ -868,6 +868,7 @@ Resolution is risk-tiered:
 - Ordinary console and computer platforms reuse the existing validated canonical manifest. Known Libretro platform/core combinations do not require a per-build core SHA-256; Dolphin and Supermodel may report an empty version.
 - Curated DOS packages reuse their existing `dosLaunch` object. An ambiguous or unknown inner executable is not promoted to a launchable profile.
 - MAME and FBNeo remain strict: runtime/content-set or core/hash mismatches return `409`, and every audited dependency must be present.
+- Ordinary SFC/SNES entries accept the known Libretro `bsnes`, `bsnes-mercury`, `snes9x`, `snes9x-current`, and Mesen-S core identifiers. They do not require the per-ROM arcade audit table.
 
 Clients may report MAME and FBNeo together in `runtimes`. The server evaluates every reported capability against the game's immutable fingerprint and audited profiles, then returns the selected request tuple in `runtime`. Selection is controlled by a stable server-side profile priority and does not depend on the order of `runtimes`. Existing clients that report only one runtime keep the same behavior. If no reported runtime has an audited profile, the endpoint returns `409`.
 

@@ -1570,6 +1570,142 @@ func (s *Store) GamesBySHA1(sha1 string) ([]domain.GameAsset, error) {
 	return scanGames(rows)
 }
 
+func (s *Store) ListGameLaunchAuditCandidates() ([]domain.GameAsset, error) {
+	rows, err := s.db.Query(gameSelectSQL() + ` WHERE LOWER(TRIM(format)) = 'zip' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanGames(rows)
+}
+
+func (s *Store) GameLaunchProfiles(gameID int64) ([]domain.GameLaunchProfile, error) {
+	rows, err := s.db.Query(`SELECT game_id, profile_id, profile_revision, priority, policy,
+		client_name, min_client_version, client_platform, architecture,
+		runtime_id, runtime_version, content_set, core_id, core_sha256,
+		entry_file, canonical_set, status
+		FROM game_launch_profiles
+		WHERE game_id = ? AND LOWER(TRIM(status)) = 'ready'
+		ORDER BY priority DESC, profile_id`, gameID)
+	if err != nil {
+		return nil, err
+	}
+	profiles := make([]domain.GameLaunchProfile, 0, 2)
+	for rows.Next() {
+		var profile domain.GameLaunchProfile
+		if err := rows.Scan(&profile.GameID, &profile.ID, &profile.Revision, &profile.Priority, &profile.Policy,
+			&profile.ClientName, &profile.MinClientVersion, &profile.ClientPlatform, &profile.Architecture,
+			&profile.Runtime.ID, &profile.Runtime.Version, &profile.Runtime.ContentSet, &profile.Runtime.CoreID,
+			&profile.Runtime.CoreSHA256, &profile.EntryFile, &profile.CanonicalSet, &profile.Status); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		profiles = append(profiles, profile)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for index := range profiles {
+		fileRows, err := s.db.Query(`SELECT position, source_game_id, source_sha1, source_name, name, size, role
+			FROM game_launch_profile_files WHERE game_id = ? AND profile_id = ? ORDER BY position`,
+			profiles[index].GameID, profiles[index].ID)
+		if err != nil {
+			return nil, err
+		}
+		for fileRows.Next() {
+			var file domain.GameLaunchProfileFile
+			if err := fileRows.Scan(&file.Position, &file.SourceGameID, &file.SourceSHA1, &file.SourceName,
+				&file.Name, &file.Size, &file.Role); err != nil {
+				_ = fileRows.Close()
+				return nil, err
+			}
+			profiles[index].Files = append(profiles[index].Files, file)
+		}
+		if err := fileRows.Close(); err != nil {
+			return nil, err
+		}
+		if err := fileRows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return profiles, nil
+}
+
+func (s *Store) ReplaceGameLaunchProfiles(policy string, profiles []domain.GameLaunchProfile, updates []domain.GameLaunchCatalogUpdate) (domain.GameLaunchProfileRebuildResult, error) {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		return domain.GameLaunchProfileRebuildResult{}, errors.New("launch profile policy is required")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return domain.GameLaunchProfileRebuildResult{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE games SET catalog_role = 'needs-curation', updated_at = CURRENT_TIMESTAMP
+		WHERE id IN (SELECT game_id FROM game_launch_profiles WHERE policy = ?)`, policy); err != nil {
+		return domain.GameLaunchProfileRebuildResult{}, err
+	}
+	if _, err := tx.Exec(`DELETE FROM game_launch_profiles WHERE policy = ?`, policy); err != nil {
+		return domain.GameLaunchProfileRebuildResult{}, err
+	}
+	profileStatement, err := tx.Prepare(`INSERT INTO game_launch_profiles(
+		game_id, profile_id, profile_revision, priority, policy,
+		client_name, min_client_version, client_platform, architecture,
+		runtime_id, runtime_version, content_set, core_id, core_sha256,
+		entry_file, canonical_set, status, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
+	if err != nil {
+		return domain.GameLaunchProfileRebuildResult{}, err
+	}
+	defer profileStatement.Close()
+	fileStatement, err := tx.Prepare(`INSERT INTO game_launch_profile_files(
+		game_id, profile_id, position, source_game_id, source_sha1, source_name, name, size, role)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return domain.GameLaunchProfileRebuildResult{}, err
+	}
+	defer fileStatement.Close()
+	result := domain.GameLaunchProfileRebuildResult{}
+	for _, profile := range profiles {
+		if _, err := profileStatement.Exec(profile.GameID, profile.ID, profile.Revision, profile.Priority, policy,
+			profile.ClientName, profile.MinClientVersion, profile.ClientPlatform, profile.Architecture,
+			profile.Runtime.ID, profile.Runtime.Version, profile.Runtime.ContentSet, profile.Runtime.CoreID,
+			profile.Runtime.CoreSHA256, profile.EntryFile, profile.CanonicalSet, profile.Status); err != nil {
+			return domain.GameLaunchProfileRebuildResult{}, err
+		}
+		result.ProfilesWritten++
+		for _, file := range profile.Files {
+			if _, err := fileStatement.Exec(profile.GameID, profile.ID, file.Position, file.SourceGameID,
+				file.SourceSHA1, file.SourceName, file.Name, file.Size, file.Role); err != nil {
+				return domain.GameLaunchProfileRebuildResult{}, err
+			}
+			result.FilesWritten++
+		}
+	}
+	updateStatement, err := tx.Prepare(`UPDATE games SET platform = ?, rom_set_name = ?, emulator_hint = ?, catalog_role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+	if err != nil {
+		return domain.GameLaunchProfileRebuildResult{}, err
+	}
+	defer updateStatement.Close()
+	for _, update := range updates {
+		if _, err := updateStatement.Exec(update.Platform, update.ROMSetName, update.EmulatorHint, update.CatalogRole, update.GameID); err != nil {
+			return domain.GameLaunchProfileRebuildResult{}, err
+		}
+		if strings.EqualFold(update.CatalogRole, "game") {
+			result.GamesReady++
+		} else {
+			result.GamesRejected++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.GameLaunchProfileRebuildResult{}, err
+	}
+	return result, nil
+}
+
 func (s *Store) DeleteGameByPath(filePath string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -2472,7 +2608,7 @@ func (s *Store) ListPlayedGamesForProfile(options domain.PlayedGameListOptions, 
 		offset = 0
 	}
 
-	clauses := []string{`ps.profile_id = ?`, `LOWER(TRIM(g.catalog_role)) <> 'dependency'`, `(ps.launch_count > 0 OR ps.total_play_seconds > 0)`}
+	clauses := []string{`ps.profile_id = ?`, `LOWER(TRIM(g.catalog_role)) IN ('', 'game')`, `(ps.launch_count > 0 OR ps.total_play_seconds > 0)`}
 	args := []any{profileID}
 	if query := strings.TrimSpace(options.Query); query != "" {
 		like := "%" + strings.ToLower(query) + "%"
@@ -3021,7 +3157,7 @@ func gameListWhere(options domain.GameListOptions, includeDependencies bool) (st
 	clauses := make([]string, 0, 3)
 	args := make([]any, 0, 8)
 	if options.ClientVisibleOnly {
-		clauses = append(clauses, `LOWER(TRIM(catalog_role)) <> 'dependency'`)
+		clauses = append(clauses, `LOWER(TRIM(catalog_role)) IN ('', 'game')`)
 	} else if !includeDependencies {
 		clauses = append(clauses, `LOWER(TRIM(catalog_role)) <> 'dependency'`)
 	}

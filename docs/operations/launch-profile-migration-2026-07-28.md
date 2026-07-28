@@ -13,7 +13,7 @@ This migration changed SQLite catalog metadata and repaired missing single-file 
 | Strict arcade families (`arcade`, `mame`, `model2`, `cps1`, `cps2`, `cps3`, `neogeo`) | 8,175 | 14 | 3 | 8,158 | 0 |
 | DOS | 1,897 | 1,859 | 0 | 38 | 0 |
 
-The client catalog, search, recent/played shelves, logical platform collections, and facets exclude only `catalogRole=dependency` records. `needs-curation` games remain visible with their audit status, while strict launch resolution continues to reject unaudited runtime tuples.
+The playable client catalog and facets include only `catalogRole=game` records. `needs-curation` games remain in SQLite and administrative views for repair, but are no longer advertised to native clients when strict launch resolution is known to reject them.
 
 Exact audited fingerprints also repair stale catalog metadata. For example, a
 verified `sf2.zip` formerly stored as `platform=arcade, romSetName=FBNeo` is
@@ -45,4 +45,17 @@ Legacy single-file Model 2, Model 3, and NAOMI records missing `game_files` rows
 
 ## Remaining Audit Work
 
-This migration deliberately does not claim that all historical arcade archives are compatible. The remaining 8,158 strict-family rows need a fixed MAME 0.288 or FBNeo DAT audit, dependency-closure verification, and exact runtime profile before they can be promoted from `needs-curation`. macOS MAME/FBNeo binaries must likewise be audited against their actual version or core hash rather than inheriting the Windows allow-list.
+The original migration deliberately did not claim that all historical arcade archives were compatible. The FBNeo addendum below now audits eligible archives against an exact DAT and core fingerprint; unmatched or rejected archives stay in `needs-curation`. Remaining MAME-only rows still need a fixed MAME 0.288 audit, dependency-closure verification, and an exact runtime profile before promotion. macOS MAME/FBNeo binaries must likewise be audited against their actual version or core hash rather than inheriting the Windows allow-list.
+
+## FBNeo Profile Rebuild Addendum
+
+The server now persists audited launch profiles in `game_launch_profiles` and their immutable source-container closure in `game_launch_profile_files`. Resolution reads these tables from the same SQLite database on every request; there is no separate in-memory profile index to become stale after a rebuild.
+
+The official FBNeo Arcade DAT is deployment-supplied rather than bundled in the image. Place it at `/config/policies/fbneo-arcade.dat`, then run:
+
+```sh
+/app/foliospace-rebuild-launch-profiles \
+  --dat=/config/policies/fbneo-arcade.dat
+```
+
+The command is explicit and idempotent. It streams the DAT and opens one ZIP central directory at a time, so it does not perform a full-library audit during normal service startup. It never renames, rewrites, moves, or deletes ROM files. Before production writeback, the 2026-07-28 isolated audit matched 8,322 indexed candidates: 7,714 passed exact ROM and dependency verification, while 608 remained `needs-curation`. The rebuild emitted 13,978 logical entry/dependency file rows and a deterministic profile revision derived from the DAT SHA-256.

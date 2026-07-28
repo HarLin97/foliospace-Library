@@ -282,6 +282,51 @@ type GameLaunchResolution struct {
 	DOSLaunch       *DOSLaunch               `json:"dosLaunch,omitempty"`
 }
 
+// GameLaunchProfile is a persisted, runtime-specific launch decision produced
+// by an explicit catalog audit. It is intentionally separate from games so a
+// ROM can have more than one verified runtime profile.
+type GameLaunchProfile struct {
+	GameID           int64
+	ID               string
+	Revision         int
+	Priority         int
+	Policy           string
+	ClientName       string
+	MinClientVersion string
+	ClientPlatform   string
+	Architecture     string
+	Runtime          GameRuntimeDescriptor
+	EntryFile        string
+	CanonicalSet     string
+	Status           string
+	Files            []GameLaunchProfileFile
+}
+
+type GameLaunchProfileFile struct {
+	Position     int
+	SourceGameID int64
+	SourceSHA1   string
+	SourceName   string
+	Name         string
+	Size         int64
+	Role         string
+}
+
+type GameLaunchCatalogUpdate struct {
+	GameID       int64
+	Platform     string
+	ROMSetName   string
+	EmulatorHint string
+	CatalogRole  string
+}
+
+type GameLaunchProfileRebuildResult struct {
+	ProfilesWritten int `json:"profilesWritten"`
+	FilesWritten    int `json:"filesWritten"`
+	GamesReady      int `json:"gamesReady"`
+	GamesRejected   int `json:"gamesRejected"`
+}
+
 type DOSLaunchCandidate struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`

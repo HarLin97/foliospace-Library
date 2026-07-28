@@ -295,6 +295,42 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 	if len(req.Runtimes) > 0 {
 		requestedRuntime = req.Runtimes[0]
 	}
+	persistedProfiles, err := s.store.GameLaunchProfiles(game.ID)
+	if err != nil {
+		return domain.GameLaunchResolution{}, err
+	}
+	for _, profile := range persistedProfiles {
+		runtime, ok := matchingPersistedRuntime(profile, req)
+		if !ok || len(profile.Files) == 0 {
+			continue
+		}
+		resolvedFiles := make([]domain.GameLaunchResolvedFile, 0, len(profile.Files))
+		var totalSize int64
+		available := true
+		for _, file := range profile.Files {
+			source, sourceErr := s.store.GameByID(file.SourceGameID)
+			if sourceErr != nil || source.Size != file.Size ||
+				!strings.EqualFold(strings.TrimSpace(source.SHA1), file.SourceSHA1) ||
+				!strings.EqualFold(filepath.Base(source.FilePath), file.SourceName) {
+				available = false
+				break
+			}
+			resolvedFiles = append(resolvedFiles, domain.GameLaunchResolvedFile{
+				SourceGameID: source.ID, Name: file.Name, Size: file.Size, Role: file.Role, SHA1: file.SourceSHA1,
+			})
+			totalSize += file.Size
+		}
+		if !available {
+			continue
+		}
+		resolvedGame := game
+		resolvedGame.ROMSetName = profile.CanonicalSet
+		resolvedGame.Size = totalSize
+		return domain.GameLaunchResolution{
+			LaunchProfileID: profile.ID, ProfileRevision: profile.Revision, Runtime: runtime,
+			Game: resolvedGame, EntryFile: profile.EntryFile, Files: resolvedFiles,
+		}, nil
+	}
 	for _, candidate := range matchingAuditedLaunchCandidates(auditedGameLaunchProfiles, game, req) {
 		profile := candidate.Profile
 		resolvedFiles := make([]domain.GameLaunchResolvedFile, 0, len(profile.Files))
@@ -340,6 +376,25 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 	return domain.GameLaunchResolution{}, &RuntimeProfileNotAvailableError{
 		GameID: gameID, RuntimeID: requestedRuntime.ID, RuntimeVersion: requestedRuntime.Version,
 	}
+}
+
+func matchingPersistedRuntime(profile domain.GameLaunchProfile, req domain.GameLaunchResolveRequest) (domain.GameRuntimeDescriptor, bool) {
+	if !strings.EqualFold(strings.TrimSpace(req.Client.Name), profile.ClientName) ||
+		!strings.EqualFold(strings.TrimSpace(req.Client.Platform), profile.ClientPlatform) ||
+		!strings.EqualFold(strings.TrimSpace(req.Client.Architecture), profile.Architecture) ||
+		!versionAtLeast(req.Client.Version, profile.MinClientVersion) {
+		return domain.GameRuntimeDescriptor{}, false
+	}
+	for _, runtime := range req.Runtimes {
+		if strings.EqualFold(strings.TrimSpace(runtime.ID), profile.Runtime.ID) &&
+			strings.TrimSpace(runtime.Version) == profile.Runtime.Version &&
+			strings.TrimSpace(runtime.ContentSet) == profile.Runtime.ContentSet &&
+			strings.TrimSpace(runtime.CoreID) == profile.Runtime.CoreID &&
+			strings.TrimSpace(runtime.CoreSHA256) == profile.Runtime.CoreSHA256 {
+			return runtime, true
+		}
+	}
+	return domain.GameRuntimeDescriptor{}, false
 }
 
 func matchingAuditedLaunchCandidates(profiles []auditedGameLaunchProfile, game domain.GameAsset, req domain.GameLaunchResolveRequest) []auditedGameLaunchCandidate {
@@ -464,7 +519,7 @@ func ordinaryLibretroCoreSupportsPlatform(coreID string, platform string) bool {
 			"nestopia": true, "nestopiaue": true, "mesen": true, "fceumm": true,
 		},
 		"snes": {
-			"snes9x": true, "snes9xcurrent": true, "mesens": true,
+			"snes9x": true, "snes9xcurrent": true, "mesens": true, "bsnes": true, "bsnesmercury": true,
 		},
 		"md": {
 			"genesisplusgx": true, "picodrive": true,
