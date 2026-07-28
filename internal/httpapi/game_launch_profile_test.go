@@ -197,6 +197,39 @@ func TestAPIResolvesAuditedCPSAndMAMECatalogProfiles(t *testing.T) {
 	}
 }
 
+func TestAPISelectsMAMEOrFBNeoFromDualArcadeCapabilities(t *testing.T) {
+	ts, games := catalogLaunchProfileTestServer(t)
+	defer ts.Close()
+
+	mame := domain.GameRuntimeDescriptor{ID: "mame", Version: "0.288", ContentSet: "mame-0.288"}
+	fbneo := domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreSHA256: "6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1"}
+	client := domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"}
+
+	for _, runtimes := range [][]domain.GameRuntimeDescriptor{{mame, fbneo}, {fbneo, mame}} {
+		request := domain.GameLaunchResolveRequest{Client: client, Runtimes: runtimes}
+		for _, test := range []struct {
+			gameID      int64
+			wantRuntime string
+			wantCore    string
+		}{
+			{gameID: games["sf2"].ID, wantRuntime: "libretro", wantCore: "fbneo"},
+			{gameID: games["hypreact"].ID, wantRuntime: "mame"},
+		} {
+			response := postLaunchResolve(t, ts.URL, test.gameID, "secret", request, nil)
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("resolve game=%d status=%d body=%s", test.gameID, response.StatusCode, response.Body)
+			}
+			var resolved clientGameLaunchResolutionResponse
+			if err := json.Unmarshal(response.Body, &resolved); err != nil {
+				t.Fatal(err)
+			}
+			if resolved.Runtime.ID != test.wantRuntime || resolved.Runtime.CoreID != test.wantCore {
+				t.Fatalf("resolve game=%d runtime=%+v, want id=%q core=%q", test.gameID, resolved.Runtime, test.wantRuntime, test.wantCore)
+			}
+		}
+	}
+}
+
 func TestAPIResolvesPragmaticConsoleDiscAndDOSProfiles(t *testing.T) {
 	ts, games := pragmaticLaunchProfileTestServer(t)
 	defer ts.Close()

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,7 @@ func (e *RuntimeProfileNotAvailableError) Error() string {
 type auditedGameLaunchProfile struct {
 	ID               string
 	Revision         int
+	Priority         int
 	ClientName       string
 	MinClientVersion string
 	ClientPlatform   string
@@ -53,13 +55,20 @@ type auditedGameLaunchFile struct {
 	Role       string
 }
 
+type auditedGameLaunchCandidate struct {
+	Profile auditedGameLaunchProfile
+	Runtime domain.GameRuntimeDescriptor
+}
+
 var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var errAuditedLaunchSourceUnavailable = errors.New("audited launch source unavailable")
 
 var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "vstriker-windows-mame0288-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -77,6 +86,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "tektagtc1a-windows-mame0288-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -93,6 +103,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "sf2-windows-fbneo-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -108,6 +119,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "sfa-windows-fbneo-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -123,6 +135,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "sfiii-windows-fbneo-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -138,6 +151,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "hypreact-windows-mame0288-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -153,6 +167,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "hypreac2-windows-mame0288-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -168,6 +183,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "srmp4-windows-mame0288-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -183,6 +199,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "fromancr-windows-mame0288-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -198,6 +215,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "fromanc4-windows-mame0288-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -213,6 +231,7 @@ var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "mcnpshnt-windows-mame0288-v1",
 		Revision:         1,
+		Priority:         100,
 		ClientName:       "SpatialEMU.Windows",
 		MinClientVersion: "1.302",
 		ClientPlatform:   "windows-x64",
@@ -276,22 +295,27 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 	if len(req.Runtimes) > 0 {
 		requestedRuntime = req.Runtimes[0]
 	}
-	for _, profile := range auditedGameLaunchProfiles {
-		runtime, ok := matchingRuntime(profile, req)
-		if !ok || !strings.EqualFold(strings.TrimSpace(game.SHA1), profile.EntrySHA1) || game.Size != profile.Files[0].Size || !strings.EqualFold(filepath.Base(game.FilePath), profile.EntrySourceName) {
-			continue
-		}
+	for _, candidate := range matchingAuditedLaunchCandidates(auditedGameLaunchProfiles, game, req) {
+		profile := candidate.Profile
 		resolvedFiles := make([]domain.GameLaunchResolvedFile, 0, len(profile.Files))
 		var totalSize int64
+		candidateAvailable := true
 		for _, file := range profile.Files {
 			source, sourceErr := s.resolveAuditedLaunchSource(file)
 			if sourceErr != nil {
+				if errors.Is(sourceErr, errAuditedLaunchSourceUnavailable) {
+					candidateAvailable = false
+					break
+				}
 				return domain.GameLaunchResolution{}, sourceErr
 			}
 			resolvedFiles = append(resolvedFiles, domain.GameLaunchResolvedFile{
 				SourceGameID: source.ID, Name: file.Name, Size: file.Size, Role: file.Role, SHA1: file.SourceSHA1,
 			})
 			totalSize += file.Size
+		}
+		if !candidateAvailable {
+			continue
 		}
 		resolvedGame := game
 		if strings.TrimSpace(profile.Title) != "" {
@@ -300,7 +324,7 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 		resolvedGame.ROMSetName = profile.ROMSetName
 		resolvedGame.Size = totalSize
 		return domain.GameLaunchResolution{
-			LaunchProfileID: profile.ID, ProfileRevision: profile.Revision, Runtime: runtime,
+			LaunchProfileID: profile.ID, ProfileRevision: profile.Revision, Runtime: candidate.Runtime,
 			Game: resolvedGame, EntryFile: profile.Files[0].Name, Files: resolvedFiles,
 		}, nil
 	}
@@ -316,6 +340,24 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 	return domain.GameLaunchResolution{}, &RuntimeProfileNotAvailableError{
 		GameID: gameID, RuntimeID: requestedRuntime.ID, RuntimeVersion: requestedRuntime.Version,
 	}
+}
+
+func matchingAuditedLaunchCandidates(profiles []auditedGameLaunchProfile, game domain.GameAsset, req domain.GameLaunchResolveRequest) []auditedGameLaunchCandidate {
+	candidates := make([]auditedGameLaunchCandidate, 0, 2)
+	for _, profile := range profiles {
+		runtime, ok := matchingRuntime(profile, req)
+		if !ok || !strings.EqualFold(strings.TrimSpace(game.SHA1), profile.EntrySHA1) || game.Size != profile.Files[0].Size || !strings.EqualFold(filepath.Base(game.FilePath), profile.EntrySourceName) {
+			continue
+		}
+		candidates = append(candidates, auditedGameLaunchCandidate{Profile: profile, Runtime: runtime})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Profile.Priority != candidates[j].Profile.Priority {
+			return candidates[i].Profile.Priority > candidates[j].Profile.Priority
+		}
+		return candidates[i].Profile.ID < candidates[j].Profile.ID
+	})
+	return candidates
 }
 
 func (s *Service) resolvePragmaticGameLaunch(game domain.GameAsset, runtime domain.GameRuntimeDescriptor, client domain.GameLaunchClient) (domain.GameLaunchResolution, error) {
@@ -662,7 +704,7 @@ func (s *Service) resolveAuditedLaunchSource(file auditedGameLaunchFile) (domain
 			return candidate, nil
 		}
 	}
-	return domain.GameAsset{}, fmt.Errorf("audited launch source %q is unavailable", file.Name)
+	return domain.GameAsset{}, fmt.Errorf("%w: %q", errAuditedLaunchSourceUnavailable, file.Name)
 }
 
 func matchingRuntime(profile auditedGameLaunchProfile, req domain.GameLaunchResolveRequest) (domain.GameRuntimeDescriptor, bool) {
@@ -736,8 +778,8 @@ func numericVersion(value string) ([]int, bool) {
 func validateAuditedGameLaunchProfiles() error {
 	profileIDs := map[string]struct{}{}
 	for _, profile := range auditedGameLaunchProfiles {
-		if strings.TrimSpace(profile.ID) == "" || profile.Revision <= 0 {
-			return errors.New("audited launch profile requires an id and positive revision")
+		if strings.TrimSpace(profile.ID) == "" || profile.Revision <= 0 || profile.Priority <= 0 {
+			return errors.New("audited launch profile requires an id, positive revision, and positive priority")
 		}
 		if _, exists := profileIDs[profile.ID]; exists {
 			return fmt.Errorf("duplicate audited launch profile id %q", profile.ID)

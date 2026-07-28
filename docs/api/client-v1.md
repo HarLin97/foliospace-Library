@@ -869,6 +869,8 @@ Resolution is risk-tiered:
 - Curated DOS packages reuse their existing `dosLaunch` object. An ambiguous or unknown inner executable is not promoted to a launchable profile.
 - MAME and FBNeo remain strict: runtime/content-set or core/hash mismatches return `409`, and every audited dependency must be present.
 
+Clients may report MAME and FBNeo together in `runtimes`. The server evaluates every reported capability against the game's immutable fingerprint and audited profiles, then returns the selected request tuple in `runtime`. Selection is controlled by a stable server-side profile priority and does not depend on the order of `runtimes`. Existing clients that report only one runtime keep the same behavior. If no reported runtime has an audited profile, the endpoint returns `409`.
+
 ```json
 {
   "client": {
@@ -882,6 +884,11 @@ Resolution is risk-tiered:
       "id": "mame",
       "version": "0.288",
       "contentSet": "mame-0.288"
+    },
+    {
+      "id": "libretro",
+      "coreId": "fbneo",
+      "coreSha256": "6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1"
     }
   ]
 }
