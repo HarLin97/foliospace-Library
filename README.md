@@ -226,6 +226,7 @@ Release `0.982` makes audited arcade launch profiles durable and rebuildable for
 - Audited launch profiles and their complete entry/dependency closure are persisted in SQLite instead of being limited to a small hard-coded list.
 - The explicit `foliospace-rebuild-launch-profiles` maintenance command validates existing FBNeo ZIP sets against a deployment-supplied official Arcade DAT without rescanning or rewriting ROM files.
 - The same command can audit selected MAME platforms against an official MAME 0.288 `listxml`; Model 2 uses ZIP stems as canonical set names and publishes only archives whose complete parent/device/BIOS closure is available.
+- The production Model 2 audit retains all 32 indexed game archives: 20 exact MAME 0.288 matches are published with launch profiles, while 12 incomplete sets remain visible to maintenance tooling as `needs-curation`; `segabill.zip` remains a dependency only.
 - Each archive is checked by logical ROM name, uncompressed size, CRC, and its complete parent/BIOS dependency chain before it is published as playable.
 - Windows FBNeo profiles require the exact approved core SHA-256; an incorrect or unknown core continues to return `409 runtime-profile-not-available`.
 - SFC/SNES launch negotiation now recognizes the Windows Libretro bsnes family in addition to the existing Snes9x and Mesen-S routes.
@@ -258,7 +259,7 @@ Release `0.981` adds tiered launch-profile negotiation for native game clients w
 - Ordinary console platforms reuse their validated canonical manifests. Libretro routes match a known platform/core family without requiring a per-build core hash; Dolphin and Supermodel also accept runtimes without a reliable product version.
 - Dreamcast, Saturn, PlayStation, PC-FX, PC-98, PSP, PlayStation 2, GameCube, Nintendo 64, and other ordinary platforms no longer require one manually authored profile per game.
 - Curated DOS entries reuse the existing `dosLaunch` contract and accept Windows DOSBox Staging `0.82.2.0` while preserving the exact selected runtime tuple in the response. Ambiguous DOS entries remain unavailable until curated.
-- Windows MAME 0.288 profiles are available for Virtua Striker and Tekken Tag Tournament; Virtua Striker includes its required `segabill.zip` dependency, while Tekken receives a client-visible logical entry name without renaming the stored ROM.
+- The initial 0.981 seed included Windows MAME 0.288 profiles for Virtua Striker and Tekken Tag Tournament; 0.982 replaces that seed-only behavior with the audited rebuild flow above.
 - CPS1/CPS2/CPS3 sets use pinned MAME 0.288 family classification; audited `sf2`, `sfa`, and `sfiii` profiles require the exact bundled FBNeo core hash.
 - Audited MAME 0.288 profiles cover `hypreact`, `hypreac2`, `srmp4`, `fromancr`, `fromanc4`, and `mcnpshnt`; the latter receives `ym2413.zip` as a logical dependency alias while the physical source remains unchanged.
 - Resolver manifests include stable profile revisions, logical filenames, available checksums, exact selected runtime identity, and the canonical dependency closure.
