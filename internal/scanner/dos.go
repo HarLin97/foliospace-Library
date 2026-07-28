@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"foliospace-reader/internal/domain"
+	"foliospace-reader/internal/launchcatalog"
 )
 
 const (
@@ -120,11 +121,13 @@ func (s *Scanner) indexDOSGameFile(library domain.Library, filePath string, info
 		launch.Candidates = []domain.DOSLaunchCandidate{{Path: filepath.Base(filePath), Kind: strings.TrimPrefix(ext, ".")}}
 	}
 
-	game, err := s.store.UpsertGame(domain.GameAsset{
+	gameAsset := domain.GameAsset{
 		LibraryID: library.ID, Title: title, Platform: "dos", ROMSetName: "DOS", Format: strings.TrimPrefix(ext, "."),
 		FilePath: filePath, RelPath: filepath.ToSlash(relPath), Size: info.Size(), MTime: info.ModTime(),
 		CRC32: checksums.crc32, SHA1: checksums.sha1, EmulatorHint: "dosbox-staging", Compatibility: "unknown", CatalogRole: "game",
-	})
+	}
+	gameAsset.CatalogRole = launchcatalog.CatalogRole(gameAsset, &launch)
+	game, err := s.store.UpsertGame(gameAsset)
 	if err != nil {
 		return err
 	}

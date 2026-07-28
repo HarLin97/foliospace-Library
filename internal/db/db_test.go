@@ -1,0 +1,131 @@
+package db
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestMigrateBackfillsLegacyArcadeSingleFileManifests(t *testing.T) {
+	configDir := t.TempDir()
+	conn, err := Open(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	gamePath := filepath.Join(t.TempDir(), "legacy-model3.zip")
+	if err := os.WriteFile(gamePath, []byte("rom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(gamePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := conn.Exec(`INSERT INTO libraries(name, root_path, asset_type) VALUES('Games', ?, 'game')`, filepath.Dir(gamePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	libraryID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = conn.Exec(`INSERT INTO games(library_id, title, platform, rom_set_name, format, file_path, rel_path, size, mtime, crc32, sha1, emulator_hint)
+		VALUES(?, 'Legacy Model 3', 'model3', 'Model3ROMs', 'zip', ?, 'Model3ROMs/legacy-model3.zip', ?, ?, 'crc', 'sha', 'model3')`,
+		libraryID, gamePath, info.Size(), info.ModTime().Format(time.RFC3339Nano))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gameID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+	var name, filePath, role string
+	var size int64
+	var position int
+	if err := conn.QueryRow(`SELECT name, file_path, size, role, position FROM game_files WHERE game_id = ?`, gameID).
+		Scan(&name, &filePath, &size, &role, &position); err != nil {
+		t.Fatal(err)
+	}
+	if name != filepath.Base(gamePath) || filePath != gamePath || size != info.Size() || role != "entry" || position != 0 {
+		t.Fatalf("backfilled manifest = %q %q %d %q %d", name, filePath, size, role, position)
+	}
+
+	if err := Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM game_files WHERE game_id = ?`, gameID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("manifest rows after repeated migration = %d, want 1", count)
+	}
+}
+
+func TestMigrateReconcilesLaunchCatalogRoles(t *testing.T) {
+	configDir := t.TempDir()
+	conn, err := Open(configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	result, err := conn.Exec(`INSERT INTO libraries(name, root_path, asset_type) VALUES('Games', '/library', 'game')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	libraryID, _ := result.LastInsertId()
+	insertGame := func(title, platform, path string, size int64, sha1, role string) int64 {
+		t.Helper()
+		result, err := conn.Exec(`INSERT INTO games(library_id, title, platform, format, file_path, rel_path, size, mtime, sha1, catalog_role, updated_at)
+			VALUES(?, ?, ?, 'zip', ?, ?, ?, '2026-01-01T00:00:00Z', ?, ?, '2026-01-01T00:00:00Z')`,
+			libraryID, title, platform, path, filepath.Base(path), size, sha1, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := result.LastInsertId()
+		return id
+	}
+
+	readyID := insertGame("Virtua Striker", "model2", "/library/vstriker.zip", 10313686, "8e3518318eeb157ab299b2f284faef176d3f49dd", "needs-curation")
+	unverifiedID := insertGame("Unknown Arcade", "arcade", "/library/unknown.zip", 100, "1111111111111111111111111111111111111111", "game")
+	biosID := insertGame("Neo Geo BIOS", "neogeo", "/library/neogeo.zip", 100, "2222222222222222222222222222222222222222", "game")
+	dosReadyID := insertGame("DOS Ready", "dos", "/library/ready.zip", 100, "3333333333333333333333333333333333333333", "needs-curation")
+	dosUnknownID := insertGame("DOS Unknown", "dos", "/library/unknown-dos.zip", 100, "4444444444444444444444444444444444444444", "game")
+	if _, err := conn.Exec(`INSERT INTO game_dos_launch(game_id, entry_file, entry_source) VALUES(?, 'PLAY.BAT', 'curated')`, dosReadyID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(`INSERT INTO game_dos_launch(game_id, entry_file, entry_source) VALUES(?, '', 'unknown')`, dosUnknownID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[int64]string{
+		readyID: "game", unverifiedID: "needs-curation", biosID: "dependency", dosReadyID: "game", dosUnknownID: "needs-curation",
+	} {
+		var got string
+		if err := conn.QueryRow(`SELECT catalog_role FROM games WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("game %d role = %q, want %q", id, got, want)
+		}
+	}
+	var updatedAt string
+	if err := conn.QueryRow(`SELECT updated_at FROM games WHERE id = ?`, unverifiedID).Scan(&updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if updatedAt != "2026-01-01T00:00:00Z" {
+		t.Fatalf("catalog role migration changed updated_at to %q", updatedAt)
+	}
+	if err := Migrate(conn); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -540,7 +540,7 @@ Response:
 
 Empty results return `items: []` with `total: 0`; the endpoint does not return 404 for an empty catalog. The `items` DTO is the same client-safe game DTO used by `gameShelf`, and never includes NAS paths, local file paths, or Docker volume paths.
 
-Dependency-only packages use additive `catalogRole: "dependency"`. They are excluded from unfiltered catalog pages, recent-game shelves, logical platform collections, and facets, but remain searchable by `q` and downloadable through their normal authenticated file URL. Clients that do not know this field continue to see only launchable games during ordinary browsing.
+The client catalog returns only records whose `catalogRole` is `game` (plus legacy empty roles during migration). Dependency packages and `needs-curation` records are excluded from paginated results, search results, recent/played shelves, logical platform collections, and facets. Their database records and physical assets remain intact for administration and later audit, but native clients do not receive entries that are guaranteed to fail launch-profile resolution.
 
 ### `GET /api/client/games/facets`
 
@@ -583,9 +583,9 @@ Facets contain exactly one entry per normalized `platform`. Its `count` is the n
 
 This is an inventory endpoint, not a declaration of every platform the server could recognize. A platform with no indexed launchable ROMs is omitted. Clients that need to show a static emulator capability catalog should own that catalog locally and use facets only for the library's available filters and counts.
 
-Sega Model 2 scans use `platform: "model2"`, `romSetName: "Model2ROMs"`, `format: "zip"`, `emulatorHint: "model2"`, and `inputProfile: "operatorArcade"`. The ZIP shortname is preserved in `fileName`, while known sets receive their MAME display title. Archive size, CRC32, SHA-1, and download bytes describe the original ZIP container. The `segabill.zip` firmware package is searchable with `q=segabill` and returned as `catalogRole: "dependency"`, but is not counted in the visible Model 2 catalog or facet.
+Sega Model 2 scans use `platform: "model2"`, `romSetName: "Model2ROMs"`, `format: "zip"`, `emulatorHint: "model2"`, and `inputProfile: "operatorArcade"`. The ZIP shortname is preserved in `fileName`, while known sets receive their MAME display title. Archive size, CRC32, SHA-1, and download bytes describe the original ZIP container. The `segabill.zip` firmware package remains stored as `catalogRole: "dependency"` for audited profile dependency closure, but it is not returned by client search, catalog pages, or facets.
 
-CPS sets pinned to the MAME 0.288 driver catalog use canonical `platform: "cps1"`, `"cps2"`, or `"cps3"`, the ZIP stem as `romSetName`, and `emulatorHint: "fbneo"`. Classification uses an explicit versioned allow-list rather than title-prefix guesses. The audited Windows 1.302 profiles for `sf2`, `sfa`, and `sfiii` require Libretro core `fbneo` with SHA-256 `6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1`; other CPS sets remain catalog-visible but return `409` until an exact profile is audited.
+CPS sets pinned to the MAME 0.288 driver catalog use canonical `platform: "cps1"`, `"cps2"`, or `"cps3"`, the ZIP stem as `romSetName`, and `emulatorHint: "fbneo"`. Classification uses an explicit versioned allow-list rather than title-prefix guesses. The audited Windows 1.302 profiles for `sf2`, `sfa`, and `sfiii` require Libretro core `fbneo` with SHA-256 `6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1`; other CPS sets remain indexed as `needs-curation` and are withheld from the client catalog until an exact profile is audited.
 
 Canonical MAME ZIP/7Z records use the physical file stem as `romSetName`, never a collection label such as `MAME`. Windows MAME 0.288 profiles are audited for `hypreact`, `hypreac2`, `srmp4`, `fromancr`, `fromanc4`, and `mcnpshnt`. The physical `ym2413_instruments.zip` asset is stored with `catalogRole: "dependency"`, omitted from ordinary pages and facets, and exposed to `mcnpshnt` only as the logical profile filename `ym2413.zip`; the NAS file is never renamed.
 

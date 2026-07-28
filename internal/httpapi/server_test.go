@@ -952,6 +952,8 @@ func TestAPIClientGamesPage(t *testing.T) {
 		{LibraryID: lib.ID, Title: "Advance Wars", Platform: "gba", ROMSetName: "GBA", Region: "USA", Format: "gba", FilePath: "/library/gba/Advance Wars.gba", RelPath: "gba/Advance Wars.gba", Size: 1024, MTime: time.Unix(31, 0), CRC32: "11111111", SHA1: "1111111111111111111111111111111111111111", EmulatorHint: "gba", Compatibility: "unknown"},
 		{LibraryID: lib.ID, Title: "Metal Slug", Platform: "arcade", ROMSetName: "MAME", Region: "World", Format: "zip", FilePath: "/library/arcade/mslug.zip", RelPath: "arcade/mslug.zip", Size: 2048, MTime: time.Unix(32, 0), CRC32: "22222222", SHA1: "2222222222222222222222222222222222222222", EmulatorHint: "arcade", Compatibility: "unknown"},
 		{LibraryID: lib.ID, Title: "srmp7", Platform: "arcade", ROMSetName: "FBNeo", Region: "World", Format: "zip", FilePath: "/library/arcade/srmp7.zip", RelPath: "arcade/srmp7.zip", Size: 4096, MTime: time.Unix(33, 0), CRC32: "33333333", SHA1: "3333333333333333333333333333333333333333", EmulatorHint: "arcade", Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Hidden Uncurated", Platform: "arcade", ROMSetName: "unknown", Region: "World", Format: "zip", FilePath: "/library/arcade/unknown.zip", RelPath: "arcade/unknown.zip", Size: 512, MTime: time.Unix(34, 0), CRC32: "44444444", SHA1: "4444444444444444444444444444444444444444", EmulatorHint: "arcade", Compatibility: "unknown", CatalogRole: "needs-curation"},
+		{LibraryID: lib.ID, Title: "Neo Geo BIOS", Platform: "neogeo", ROMSetName: "neogeo", Region: "World", Format: "zip", FilePath: "/library/arcade/neogeo.zip", RelPath: "arcade/neogeo.zip", Size: 256, MTime: time.Unix(35, 0), CRC32: "55555555", SHA1: "5555555555555555555555555555555555555555", EmulatorHint: "fbneo", Compatibility: "unknown", CatalogRole: "dependency"},
 	} {
 		if _, err := st.UpsertGame(game); err != nil {
 			t.Fatal(err)
@@ -975,6 +977,12 @@ func TestAPIClientGamesPage(t *testing.T) {
 	}
 	if !strings.Contains(body, `"total":4`) || !strings.Contains(body, `"limit":2`) || !strings.Contains(body, `"hasMore":true`) || !strings.Contains(body, `"title":"Advance Wars"`) {
 		t.Fatalf("client games page %q missing pagination metadata or title sort", body)
+	}
+	if strings.Contains(body, "Hidden Uncurated") || strings.Contains(authGet(t, ts.URL+"/api/client/games?q=Hidden%20Uncurated", "secret"), "Hidden Uncurated") {
+		t.Fatalf("client games exposed a needs-curation entry")
+	}
+	if strings.Contains(authGet(t, ts.URL+"/api/client/games?q=Neo%20Geo%20BIOS", "secret"), "Neo Geo BIOS") {
+		t.Fatalf("client games exposed a dependency entry")
 	}
 	if !strings.Contains(body, `"/api/client/games/`) || !strings.Contains(body, `/manifest"`) {
 		t.Fatalf("client games page %q missing manifestUrl", body)
@@ -2562,9 +2570,16 @@ func TestAPICreatesGameTypedLibraryForZipROMSets(t *testing.T) {
 		jobs, err := st.ListScanJobs()
 		return err == nil && len(jobs) > 0 && jobs[0].Status == "completed"
 	})
+	game, err := st.GameByPath(filepath.Join(root, "Arcade", "mslug.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if game.CatalogRole != "needs-curation" {
+		t.Fatalf("indexed game role = %q, want needs-curation", game.CatalogRole)
+	}
 	gamesBody := get(t, ts.URL+"/api/games/recent")
-	if !strings.Contains(gamesBody, `"title":"mslug"`) || !strings.Contains(gamesBody, `"format":"zip"`) || strings.Contains(gamesBody, root) {
-		t.Fatalf("games response %q is missing safe zip ROM set", gamesBody)
+	if strings.Contains(gamesBody, `"title":"mslug"`) || strings.Contains(gamesBody, root) {
+		t.Fatalf("games response %q exposed an uncurated zip ROM set", gamesBody)
 	}
 }
 

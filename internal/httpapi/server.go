@@ -603,6 +603,7 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 			Platform:   r.URL.Query().Get("platform"),
 			ROMSetName: r.URL.Query().Get("romSetName"),
 			Format:     r.URL.Query().Get("format"),
+			ReadyOnly:  true,
 		})
 		writeJSONOrError(w, facets, err)
 		return
@@ -825,6 +826,7 @@ func (s *Server) handleClientGames(w http.ResponseWriter, r *http.Request) {
 		ROMSetName: r.URL.Query().Get("romSetName"),
 		Format:     r.URL.Query().Get("format"),
 		Sort:       r.URL.Query().Get("sort"),
+		ReadyOnly:  true,
 	}, s.requestProfileID(r))
 	if err != nil {
 		writeJSONOrError(w, nil, err)

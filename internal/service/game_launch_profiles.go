@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"foliospace-reader/internal/domain"
+	"foliospace-reader/internal/launchcatalog"
 )
 
 type RuntimeProfileNotAvailableError struct {
@@ -744,6 +745,9 @@ func validateAuditedGameLaunchProfiles() error {
 		}
 		if profile.Files[0].SourceSHA1 != profile.EntrySHA1 || !strings.EqualFold(profile.Files[0].SourceName, profile.EntrySourceName) {
 			return fmt.Errorf("audited launch profile %q entry identity does not match its first file", profile.ID)
+		}
+		if !launchcatalog.IsAuditedEntryIdentity(profile.EntrySourceName, profile.Files[0].Size, profile.EntrySHA1) {
+			return fmt.Errorf("audited launch profile %q is missing from the shared launch catalog", profile.ID)
 		}
 		entryCount := 0
 		names := map[string]struct{}{}

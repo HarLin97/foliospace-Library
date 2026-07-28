@@ -486,7 +486,7 @@ func collectionListOrderBy(sort string, direction string) string {
 }
 
 func (s *Store) ListGamePlatformCollections() ([]domain.Series, error) {
-	rows, err := s.db.Query(`SELECT platform, COUNT(*) FROM games WHERE LOWER(TRIM(catalog_role)) <> 'dependency' GROUP BY platform`)
+	rows, err := s.db.Query(`SELECT platform, COUNT(*) FROM games WHERE LOWER(TRIM(catalog_role)) IN ('', 'game') GROUP BY platform`)
 	if err != nil {
 		return nil, err
 	}
@@ -2306,7 +2306,7 @@ func (s *Store) GameFileByPosition(gameID int64, position int) (domain.GameFile,
 
 func (s *Store) ListRecentGames(limit int) ([]domain.GameAsset, error) {
 	limit = normalizeShelfLimit(limit)
-	rows, err := s.db.Query(gameSelectSQL()+` WHERE LOWER(TRIM(catalog_role)) <> 'dependency' ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
+	rows, err := s.db.Query(gameSelectSQL()+` WHERE LOWER(TRIM(catalog_role)) IN ('', 'game') ORDER BY updated_at DESC, id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2472,7 +2472,7 @@ func (s *Store) ListPlayedGamesForProfile(options domain.PlayedGameListOptions, 
 		offset = 0
 	}
 
-	clauses := []string{`ps.profile_id = ?`, `LOWER(TRIM(g.catalog_role)) <> 'dependency'`, `(ps.launch_count > 0 OR ps.total_play_seconds > 0)`}
+	clauses := []string{`ps.profile_id = ?`, `LOWER(TRIM(g.catalog_role)) IN ('', 'game')`, `(ps.launch_count > 0 OR ps.total_play_seconds > 0)`}
 	args := []any{profileID}
 	if query := strings.TrimSpace(options.Query); query != "" {
 		like := "%" + strings.ToLower(query) + "%"
@@ -3020,7 +3020,9 @@ func (s *Store) ListVideosPage(options domain.VideoListOptions) (domain.VideoLis
 func gameListWhere(options domain.GameListOptions, includeDependencies bool) (string, []any) {
 	clauses := make([]string, 0, 3)
 	args := make([]any, 0, 8)
-	if !includeDependencies {
+	if options.ReadyOnly {
+		clauses = append(clauses, `LOWER(TRIM(catalog_role)) IN ('', 'game')`)
+	} else if !includeDependencies {
 		clauses = append(clauses, `LOWER(TRIM(catalog_role)) <> 'dependency'`)
 	}
 	if query := strings.TrimSpace(options.Query); query != "" {
@@ -3295,12 +3297,23 @@ func (s *Store) CanSkipGame(path string, size int64, mtime time.Time, platform s
 	if err != nil {
 		return false
 	}
-	return game.Size == size &&
-		game.MTime.Equal(mtime) &&
-		game.Platform == platform &&
-		game.EmulatorHint == expectedGameEmulatorHint(platform) &&
-		game.CRC32 != "" &&
-		game.SHA1 != ""
+	if game.Size != size ||
+		!game.MTime.Equal(mtime) ||
+		game.Platform != platform ||
+		game.EmulatorHint != expectedGameEmulatorHint(platform) ||
+		game.CRC32 == "" ||
+		game.SHA1 == "" {
+		return false
+	}
+	files, err := s.GameFiles(game.ID)
+	return err == nil &&
+		len(files) == 1 &&
+		files[0].Name == filepath.Base(path) &&
+		files[0].FilePath == path &&
+		files[0].Size == size &&
+		files[0].MTime.Equal(mtime) &&
+		files[0].Role == "entry" &&
+		files[0].Position == 0
 }
 
 func (s *Store) CanSkipGameSet(path string, size int64, mtime time.Time, platform string, expected []domain.GameFile) bool {

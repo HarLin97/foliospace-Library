@@ -446,6 +446,7 @@ type GameListOptions struct {
 	Format     string
 	Sort       string
 	BasePath   string
+	ReadyOnly  bool
 }
 
 type GameListPage struct {

@@ -2006,12 +2006,12 @@ func TestScanLibraryTreatsZipAsGameWhenLibraryIsGameTyped(t *testing.T) {
 		t.Fatalf("job = %#v, want zip indexed as game ROM set", job)
 	}
 
-	games, err := st.ListRecentGames(10)
+	game, err := st.GameByPath(filepath.Join(root, "Arcade", "mslug.zip"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(games) != 1 || games[0].Title != "mslug" || games[0].Format != "zip" || games[0].Platform != "arcade" || games[0].ROMSetName != "Arcade" {
-		t.Fatalf("games = %#v, want canonical Arcade zip ROM set", games)
+	if game.Title != "mslug" || game.Format != "zip" || game.Platform != "arcade" || game.ROMSetName != "Arcade" || game.CatalogRole != "needs-curation" {
+		t.Fatalf("game = %#v, want indexed but quarantined Arcade zip ROM set", game)
 	}
 
 	series, err := st.ListSeries()
@@ -2236,7 +2236,7 @@ func TestScanLibraryIndexesModel2CatalogAndHidesDependency(t *testing.T) {
 	byTitle := map[string]domain.GameAsset{}
 	for _, game := range page.Items {
 		byTitle[game.Title] = game
-		if game.Platform != "model2" || game.ROMSetName != "Model2ROMs" || game.EmulatorHint != "model2" || game.Format != "zip" || game.CatalogRole != "game" {
+		if game.Platform != "model2" || game.ROMSetName != "Model2ROMs" || game.EmulatorHint != "model2" || game.Format != "zip" || game.CatalogRole != "needs-curation" {
 			t.Fatalf("game = %#v, want canonical Model 2 metadata", game)
 		}
 	}
@@ -2739,12 +2739,12 @@ func TestScanLibraryTreats7zAsGameWhenLibraryIsGameTyped(t *testing.T) {
 		t.Fatalf("job = %#v, want game 7z ROM set indexed", job)
 	}
 
-	games, err := st.ListRecentGames(10)
+	game, err := st.GameByPath(filepath.Join(root, "Arcade", "romset.7z"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(games) != 1 || games[0].Title != "romset" || games[0].Format != "7z" || games[0].Platform != "arcade" || games[0].ROMSetName != "Arcade" {
-		t.Fatalf("games = %#v, want canonical Arcade 7z ROM set", games)
+	if game.Title != "romset" || game.Format != "7z" || game.Platform != "arcade" || game.ROMSetName != "Arcade" || game.CatalogRole != "needs-curation" {
+		t.Fatalf("game = %#v, want indexed but quarantined Arcade 7z ROM set", game)
 	}
 }
 
@@ -2857,10 +2857,10 @@ func TestScanLibraryCanonicalizesCPSAndMAMECatalog(t *testing.T) {
 		emulator string
 		role     string
 	}{
-		"sf2":        {platform: "cps1", romSet: "sf2", emulator: "fbneo", role: "game"},
-		"sfa":        {platform: "cps2", romSet: "sfa", emulator: "fbneo", role: "game"},
-		"sfiii":      {platform: "cps3", romSet: "sfiii", emulator: "fbneo", role: "game"},
-		"hypreact":   {platform: "mame", romSet: "hypreact", emulator: "mame", role: "game"},
+		"sf2":        {platform: "cps1", romSet: "sf2", emulator: "fbneo", role: "needs-curation"},
+		"sfa":        {platform: "cps2", romSet: "sfa", emulator: "fbneo", role: "needs-curation"},
+		"sfiii":      {platform: "cps3", romSet: "sfiii", emulator: "fbneo", role: "needs-curation"},
+		"hypreact":   {platform: "mame", romSet: "hypreact", emulator: "mame", role: "needs-curation"},
 		"dependency": {platform: "mame", romSet: "ym2413_instruments", emulator: "mame", role: "dependency"},
 	}
 	games := map[string]domain.GameAsset{}

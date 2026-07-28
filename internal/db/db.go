@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"foliospace-reader/internal/domain"
+	"foliospace-reader/internal/launchcatalog"
 	_ "modernc.org/sqlite"
 )
 
@@ -535,7 +538,131 @@ func Migrate(conn *sql.DB) error {
 		  AND (platform <> 'pc98' OR rom_set_name <> 'PC-98' OR emulator_hint <> 'np2kai')`); err != nil {
 		return fmt.Errorf("normalize PC-98 game platform: %w", err)
 	}
+	if err := backfillLegacyArcadeGameFiles(conn); err != nil {
+		return fmt.Errorf("backfill legacy arcade manifests: %w", err)
+	}
+	if err := reconcileGameCatalogRoles(conn); err != nil {
+		return fmt.Errorf("reconcile game catalog roles: %w", err)
+	}
 	return nil
+}
+
+func backfillLegacyArcadeGameFiles(conn *sql.DB) error {
+	type legacyGame struct {
+		id       int64
+		filePath string
+		size     int64
+		mtime    string
+	}
+	rows, err := conn.Query(`SELECT g.id, g.file_path, g.size, g.mtime
+		FROM games g
+		WHERE LOWER(TRIM(g.platform)) IN ('model2', 'model3', 'naomi')
+		  AND LOWER(TRIM(g.format)) IN ('zip', '7z', 'chd')
+		  AND NOT EXISTS (SELECT 1 FROM game_files gf WHERE gf.game_id = g.id)
+		ORDER BY g.id`)
+	if err != nil {
+		return err
+	}
+	games := make([]legacyGame, 0)
+	for rows.Next() {
+		var game legacyGame
+		if err := rows.Scan(&game.id, &game.filePath, &game.size, &game.mtime); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		games = append(games, game)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(games) == 0 {
+		return nil
+	}
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO game_files(game_id, name, file_path, size, mtime, role, position)
+		VALUES(?, ?, ?, ?, ?, 'entry', 0)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, game := range games {
+		info, statErr := os.Stat(game.filePath)
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() != game.size {
+			continue
+		}
+		if _, err := stmt.Exec(game.id, filepath.Base(game.filePath), game.filePath, game.size, game.mtime); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func reconcileGameCatalogRoles(conn *sql.DB) error {
+	rows, err := conn.Query(`SELECT g.id, g.platform, g.file_path, g.size, g.sha1, g.catalog_role,
+		COALESCE(d.entry_file, ''), COALESCE(d.entry_source, '')
+		FROM games g LEFT JOIN game_dos_launch d ON d.game_id = g.id
+		ORDER BY g.id`)
+	if err != nil {
+		return err
+	}
+	type catalogGame struct {
+		id       int64
+		game     domain.GameAsset
+		dos      domain.DOSLaunch
+		hasDOS   bool
+		wantRole string
+	}
+	games := make([]catalogGame, 0)
+	for rows.Next() {
+		var item catalogGame
+		if err := rows.Scan(&item.id, &item.game.Platform, &item.game.FilePath, &item.game.Size, &item.game.SHA1, &item.game.CatalogRole,
+			&item.dos.EntryFile, &item.dos.EntrySource); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		item.hasDOS = strings.EqualFold(strings.TrimSpace(item.game.Platform), "dos") && strings.TrimSpace(item.dos.EntrySource) != ""
+		var dos *domain.DOSLaunch
+		if item.hasDOS {
+			dos = &item.dos
+		}
+		item.wantRole = launchcatalog.CatalogRole(item.game, dos)
+		if !strings.EqualFold(strings.TrimSpace(item.game.CatalogRole), item.wantRole) {
+			games = append(games, item)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(games) == 0 {
+		return nil
+	}
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	stmt, err := tx.Prepare(`UPDATE games SET catalog_role = ? WHERE id = ? AND catalog_role <> ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, item := range games {
+		if _, err := stmt.Exec(item.wantRole, item.id, item.wantRole); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func addColumnIfMissing(conn *sql.DB, table string, column string, definition string) error {

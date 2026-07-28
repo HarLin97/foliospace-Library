@@ -895,6 +895,77 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	}
 }
 
+func TestStoreReadyOnlyGameCatalogHidesUncuratedEntries(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, game := range []domain.GameAsset{
+		{LibraryID: lib.ID, Title: "Ready", Platform: "nes", Format: "nes", FilePath: "/library/ready.nes", RelPath: "ready.nes", MTime: time.Unix(1, 0), CatalogRole: "game"},
+		{LibraryID: lib.ID, Title: "BIOS", Platform: "neogeo", Format: "zip", FilePath: "/library/neogeo.zip", RelPath: "neogeo.zip", MTime: time.Unix(2, 0), CatalogRole: "dependency"},
+		{LibraryID: lib.ID, Title: "Needs Curation", Platform: "arcade", Format: "zip", FilePath: "/library/unknown.zip", RelPath: "unknown.zip", MTime: time.Unix(3, 0), CatalogRole: "needs-curation"},
+	} {
+		if _, err := s.UpsertGame(game); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, ReadyOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].Title != "Ready" {
+		t.Fatalf("ready page = %#v, want only Ready", page)
+	}
+	dependency, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "BIOS"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dependency.Total != 1 || len(dependency.Items) != 1 || dependency.Items[0].CatalogRole != "dependency" {
+		t.Fatalf("dependency search = %#v, want searchable BIOS", dependency)
+	}
+	clientDependency, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "BIOS", ReadyOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clientDependency.Total != 0 {
+		t.Fatalf("ready dependency search = %#v, want dependency hidden from client catalog", clientDependency)
+	}
+	uncurated, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "Needs Curation", ReadyOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uncurated.Total != 0 {
+		t.Fatalf("uncurated search = %#v, want hidden entry", uncurated)
+	}
+	facets, err := s.ListGameFacets(domain.GameListOptions{ReadyOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facets.Total != 1 || len(facets.Platforms) != 1 || facets.Platforms[0].Platform != "nes" {
+		t.Fatalf("ready facets = %#v, want NES only", facets)
+	}
+	recent, err := s.ListRecentGames(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 1 || recent[0].Title != "Ready" {
+		t.Fatalf("recent games = %#v, want Ready only", recent)
+	}
+	collections, err := s.ListGamePlatformCollections()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(collections) != 1 || collections[0].Title != "Games / NES" || collections[0].BookCount != 1 {
+		t.Fatalf("platform collections = %#v, want one ready NES collection", collections)
+	}
+}
+
 func TestStoreListsPlayedGamesByProfileAndPlaytime(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
@@ -914,6 +985,10 @@ func TestStoreListsPlayedGamesByProfileAndPlaytime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	hidden, err := s.UpsertGame(domain.GameAsset{LibraryID: lib.ID, Title: "Hidden", Platform: "arcade", Format: "zip", FilePath: "/library/hidden.zip", RelPath: "hidden.zip", MTime: time.Unix(3, 0), CatalogRole: "needs-curation"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	guest, err := s.CreateProfile("Guest", "game", "violet")
 	if err != nil {
 		t.Fatal(err)
@@ -922,6 +997,9 @@ func TestStoreListsPlayedGamesByProfileAndPlaytime(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := s.ReportGamePlaySessionForProfile(second.ID, 0, domain.GamePlaySessionReport{SessionID: "beta-1", ElapsedSeconds: 120}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReportGamePlaySessionForProfile(hidden.ID, 0, domain.GamePlaySessionReport{SessionID: "hidden-1", ElapsedSeconds: 600}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.ReportGamePlaySessionForProfile(first.ID, guest.ID, domain.GamePlaySessionReport{SessionID: "guest-1", ElapsedSeconds: 300}); err != nil {

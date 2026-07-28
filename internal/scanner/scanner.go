@@ -29,6 +29,7 @@ import (
 
 	"foliospace-reader/internal/archive"
 	"foliospace-reader/internal/domain"
+	"foliospace-reader/internal/launchcatalog"
 	"foliospace-reader/internal/store"
 	"golang.org/x/text/encoding/japanese"
 )
@@ -979,15 +980,18 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 		}
 		return s.store.CanSkipPC98Source(path, info.Size(), info.ModTime()) && samePC98SupportFiles(path, fonts, storedFonts)
 	}
-	if romSetName, emulatorHint, catalogRole, ok := canonicalArcadeCatalogMetadata(platform, path, ext); ok {
+	if romSetName, emulatorHint, _, ok := canonicalArcadeCatalogMetadata(platform, path, ext); ok {
 		game, err := s.store.GameByPath(path)
-		return err == nil &&
-			game.Size == info.Size() &&
+		if err != nil {
+			return false
+		}
+		expectedRole := launchcatalog.CatalogRole(game, nil)
+		return game.Size == info.Size() &&
 			game.MTime.Equal(info.ModTime()) &&
 			game.Platform == platform &&
 			game.ROMSetName == romSetName &&
 			game.EmulatorHint == emulatorHint &&
-			strings.EqualFold(game.CatalogRole, catalogRole) &&
+			strings.EqualFold(game.CatalogRole, expectedRole) &&
 			game.CRC32 != "" &&
 			game.SHA1 != ""
 	}
@@ -1429,6 +1433,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		Compatibility: compatibility,
 		CatalogRole:   catalogRole,
 	}
+	gameAsset.CatalogRole = launchcatalog.CatalogRole(gameAsset, nil)
 	if platform == "model2" {
 		gameAsset.Region = model2Region(strings.ToLower(strings.TrimSuffix(filepath.Base(path), ext)))
 	}
