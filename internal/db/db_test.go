@@ -93,6 +93,10 @@ func TestMigrateReconcilesLaunchCatalogRoles(t *testing.T) {
 	}
 
 	readyID := insertGame("Virtua Striker", "model2", "/library/vstriker.zip", 10313686, "8e3518318eeb157ab299b2f284faef176d3f49dd", "needs-curation")
+	legacySF2ID := insertGame("Street Fighter II", "arcade", "/library/sf2.zip", 3551819, "bd59872a57f14dc492e2fb387727a9402f3d4f97", "game")
+	if _, err := conn.Exec(`UPDATE games SET rom_set_name = 'FBNeo', emulator_hint = 'arcade' WHERE id = ?`, legacySF2ID); err != nil {
+		t.Fatal(err)
+	}
 	unverifiedID := insertGame("Unknown Arcade", "arcade", "/library/unknown.zip", 100, "1111111111111111111111111111111111111111", "game")
 	biosID := insertGame("Neo Geo BIOS", "neogeo", "/library/neogeo.zip", 100, "2222222222222222222222222222222222222222", "game")
 	dosReadyID := insertGame("DOS Ready", "dos", "/library/ready.zip", 100, "3333333333333333333333333333333333333333", "needs-curation")
@@ -108,7 +112,7 @@ func TestMigrateReconcilesLaunchCatalogRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	for id, want := range map[int64]string{
-		readyID: "game", unverifiedID: "needs-curation", biosID: "dependency", dosReadyID: "game", dosUnknownID: "needs-curation",
+		readyID: "game", legacySF2ID: "game", unverifiedID: "needs-curation", biosID: "dependency", dosReadyID: "game", dosUnknownID: "needs-curation",
 	} {
 		var got string
 		if err := conn.QueryRow(`SELECT catalog_role FROM games WHERE id = ?`, id).Scan(&got); err != nil {
@@ -117,6 +121,14 @@ func TestMigrateReconcilesLaunchCatalogRoles(t *testing.T) {
 		if got != want {
 			t.Fatalf("game %d role = %q, want %q", id, got, want)
 		}
+	}
+	var platform, romSetName, emulatorHint string
+	if err := conn.QueryRow(`SELECT platform, rom_set_name, emulator_hint FROM games WHERE id = ?`, legacySF2ID).
+		Scan(&platform, &romSetName, &emulatorHint); err != nil {
+		t.Fatal(err)
+	}
+	if platform != "cps1" || romSetName != "sf2" || emulatorHint != "fbneo" {
+		t.Fatalf("legacy sf2 metadata = %q %q %q, want cps1 sf2 fbneo", platform, romSetName, emulatorHint)
 	}
 	var updatedAt string
 	if err := conn.QueryRow(`SELECT updated_at FROM games WHERE id = ?`, unverifiedID).Scan(&updatedAt); err != nil {

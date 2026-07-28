@@ -606,7 +606,7 @@ func backfillLegacyArcadeGameFiles(conn *sql.DB) error {
 }
 
 func reconcileGameCatalogRoles(conn *sql.DB) error {
-	rows, err := conn.Query(`SELECT g.id, g.platform, g.file_path, g.size, g.sha1, g.catalog_role,
+	rows, err := conn.Query(`SELECT g.id, g.platform, g.rom_set_name, g.emulator_hint, g.file_path, g.size, g.sha1, g.catalog_role,
 		COALESCE(d.entry_file, ''), COALESCE(d.entry_source, '')
 		FROM games g LEFT JOIN game_dos_launch d ON d.game_id = g.id
 		ORDER BY g.id`)
@@ -618,12 +618,14 @@ func reconcileGameCatalogRoles(conn *sql.DB) error {
 		game     domain.GameAsset
 		dos      domain.DOSLaunch
 		hasDOS   bool
+		wantGame domain.GameAsset
 		wantRole string
 	}
 	games := make([]catalogGame, 0)
 	for rows.Next() {
 		var item catalogGame
-		if err := rows.Scan(&item.id, &item.game.Platform, &item.game.FilePath, &item.game.Size, &item.game.SHA1, &item.game.CatalogRole,
+		if err := rows.Scan(&item.id, &item.game.Platform, &item.game.ROMSetName, &item.game.EmulatorHint,
+			&item.game.FilePath, &item.game.Size, &item.game.SHA1, &item.game.CatalogRole,
 			&item.dos.EntryFile, &item.dos.EntrySource); err != nil {
 			_ = rows.Close()
 			return err
@@ -633,8 +635,12 @@ func reconcileGameCatalogRoles(conn *sql.DB) error {
 		if item.hasDOS {
 			dos = &item.dos
 		}
-		item.wantRole = launchcatalog.CatalogRole(item.game, dos)
-		if !strings.EqualFold(strings.TrimSpace(item.game.CatalogRole), item.wantRole) {
+		item.wantGame = launchcatalog.CanonicalizeAuditedGame(item.game)
+		item.wantRole = launchcatalog.CatalogRole(item.wantGame, dos)
+		if !strings.EqualFold(strings.TrimSpace(item.game.Platform), item.wantGame.Platform) ||
+			!strings.EqualFold(strings.TrimSpace(item.game.ROMSetName), item.wantGame.ROMSetName) ||
+			!strings.EqualFold(strings.TrimSpace(item.game.EmulatorHint), item.wantGame.EmulatorHint) ||
+			!strings.EqualFold(strings.TrimSpace(item.game.CatalogRole), item.wantRole) {
 			games = append(games, item)
 		}
 	}
@@ -652,13 +658,16 @@ func reconcileGameCatalogRoles(conn *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare(`UPDATE games SET catalog_role = ? WHERE id = ? AND catalog_role <> ?`)
+	stmt, err := tx.Prepare(`UPDATE games
+		SET platform = ?, rom_set_name = ?, emulator_hint = ?, catalog_role = ?
+		WHERE id = ? AND (platform <> ? OR rom_set_name <> ? OR emulator_hint <> ? OR catalog_role <> ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, item := range games {
-		if _, err := stmt.Exec(item.wantRole, item.id, item.wantRole); err != nil {
+		if _, err := stmt.Exec(item.wantGame.Platform, item.wantGame.ROMSetName, item.wantGame.EmulatorHint, item.wantRole, item.id,
+			item.wantGame.Platform, item.wantGame.ROMSetName, item.wantGame.EmulatorHint, item.wantRole); err != nil {
 			return err
 		}
 	}

@@ -15,6 +15,12 @@ This migration changed SQLite catalog metadata and repaired missing single-file 
 
 The client catalog, search, recent/played shelves, logical platform collections, and facets now publish only `catalogRole=game` records. Dependency and `needs-curation` rows remain available to backend administration and direct ID-based audit flows.
 
+Exact audited fingerprints also repair stale catalog metadata. For example, a
+verified `sf2.zip` formerly stored as `platform=arcade, romSetName=FBNeo` is
+reclassified as `platform=cps1, romSetName=sf2, emulatorHint=fbneo`. This keeps
+the platform filter and the runtime selected by the client aligned with the
+published Resolver profile.
+
 No migration statement failed. `Needs curation` is an intentional quarantine state rather than an execution failure; full per-game identity remains in the production database and is not copied into this public report because it includes private library titles and paths.
 
 ## Manifest Repair

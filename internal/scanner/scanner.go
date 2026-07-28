@@ -1433,6 +1433,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		Compatibility: compatibility,
 		CatalogRole:   catalogRole,
 	}
+	gameAsset = launchcatalog.CanonicalizeAuditedGame(gameAsset)
 	gameAsset.CatalogRole = launchcatalog.CatalogRole(gameAsset, nil)
 	if platform == "model2" {
 		gameAsset.Region = model2Region(strings.ToLower(strings.TrimSuffix(filepath.Base(path), ext)))
