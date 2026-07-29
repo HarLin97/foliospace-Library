@@ -96,6 +96,65 @@ func TestStorePersistsLibraryBookProgressAndErrors(t *testing.T) {
 	}
 }
 
+func TestReplaceGameLaunchProfilesPreservesGameRoleAcrossPolicies(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/games")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := s.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Audited Game", Platform: "arcade", ROMSetName: "game",
+		Format: "zip", FilePath: "/games/game.zip", RelPath: "game.zip", Size: 1,
+		MTime: time.Unix(1, 0), SHA1: "0123456789abcdef0123456789abcdef01234567",
+		EmulatorHint: "mame", Compatibility: "unknown", CatalogRole: "needs-curation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := domain.GameLaunchProfile{
+		GameID: game.ID, ID: "game-windows-mame", Revision: 1, Priority: 1, Status: "ready",
+		ClientName: "SpatialEMU.Windows", MinClientVersion: "1.302", ClientPlatform: "windows-x64", Architecture: "x64",
+		Runtime:   domain.GameRuntimeDescriptor{ID: "mame", Version: "0.288", ContentSet: "mame-0.288"},
+		EntryFile: "game.zip", CanonicalSet: "game",
+	}
+	readyUpdate := domain.GameLaunchCatalogUpdate{
+		GameID: game.ID, Platform: "arcade", ROMSetName: "game", EmulatorHint: "mame", CatalogRole: "game",
+	}
+	if _, err := s.ReplaceGameLaunchProfiles("mame-0.288-listxml", []domain.GameLaunchProfile{profile}, []domain.GameLaunchCatalogUpdate{readyUpdate}); err != nil {
+		t.Fatal(err)
+	}
+
+	rejectedUpdate := readyUpdate
+	rejectedUpdate.CatalogRole = "needs-curation"
+	if _, err := s.ReplaceGameLaunchProfiles("mame-0.287-listxml", nil, []domain.GameLaunchCatalogUpdate{rejectedUpdate}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GameByID(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CatalogRole != "game" {
+		t.Fatalf("catalog role=%q, want game while another ready policy remains", stored.CatalogRole)
+	}
+
+	if _, err := s.ReplaceGameLaunchProfiles("mame-0.288-listxml", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.GameByID(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.CatalogRole != "needs-curation" {
+		t.Fatalf("catalog role=%q, want needs-curation after the last ready policy is removed", stored.CatalogRole)
+	}
+}
+
 func TestStorePersistsWebtoonReadingPositionPerProfile(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

@@ -1644,8 +1644,12 @@ func (s *Store) ReplaceGameLaunchProfiles(policy string, profiles []domain.GameL
 		return domain.GameLaunchProfileRebuildResult{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE games SET catalog_role = 'needs-curation', updated_at = CURRENT_TIMESTAMP
-		WHERE id IN (SELECT game_id FROM game_launch_profiles WHERE policy = ?)`, policy); err != nil {
+	if _, err := tx.Exec(`UPDATE games SET catalog_role = CASE
+			WHEN EXISTS(SELECT 1 FROM game_launch_profiles p
+				WHERE p.game_id = games.id AND p.policy <> ? AND LOWER(TRIM(p.status)) = 'ready') THEN 'game'
+			ELSE 'needs-curation'
+		END, updated_at = CURRENT_TIMESTAMP
+		WHERE id IN (SELECT game_id FROM game_launch_profiles WHERE policy = ?)`, policy, policy); err != nil {
 		return domain.GameLaunchProfileRebuildResult{}, err
 	}
 	if _, err := tx.Exec(`DELETE FROM game_launch_profiles WHERE policy = ?`, policy); err != nil {
@@ -1685,13 +1689,19 @@ func (s *Store) ReplaceGameLaunchProfiles(policy string, profiles []domain.GameL
 			result.FilesWritten++
 		}
 	}
-	updateStatement, err := tx.Prepare(`UPDATE games SET platform = ?, rom_set_name = ?, emulator_hint = ?, catalog_role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+	updateStatement, err := tx.Prepare(`UPDATE games SET platform = ?, rom_set_name = ?, emulator_hint = ?,
+		catalog_role = CASE
+			WHEN LOWER(TRIM(?)) = 'game' OR EXISTS(SELECT 1 FROM game_launch_profiles p
+				WHERE p.game_id = games.id AND LOWER(TRIM(p.status)) = 'ready') THEN 'game'
+			ELSE ?
+		END,
+		updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
 	if err != nil {
 		return domain.GameLaunchProfileRebuildResult{}, err
 	}
 	defer updateStatement.Close()
 	for _, update := range updates {
-		if _, err := updateStatement.Exec(update.Platform, update.ROMSetName, update.EmulatorHint, update.CatalogRole, update.GameID); err != nil {
+		if _, err := updateStatement.Exec(update.Platform, update.ROMSetName, update.EmulatorHint, update.CatalogRole, update.CatalogRole, update.GameID); err != nil {
 			return domain.GameLaunchProfileRebuildResult{}, err
 		}
 		if strings.EqualFold(update.CatalogRole, "game") {

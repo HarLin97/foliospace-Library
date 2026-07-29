@@ -230,6 +230,9 @@ Release `0.982` makes audited arcade launch profiles durable and rebuildable for
 - Each archive is checked by logical ROM name, uncompressed size, CRC, and its complete parent/BIOS dependency chain before it is published as playable.
 - Windows FBNeo profiles require the exact approved core SHA-256; an incorrect or unknown core continues to return `409 runtime-profile-not-available`.
 - SFC/SNES launch negotiation now recognizes the Windows Libretro bsnes family in addition to the existing Snes9x and Mesen-S routes.
+- Pragmatic launch negotiation accepts canonical physical-device identities for iPhone, iPad, Apple Vision Pro, and Apple TV, so supported ordinary runtimes no longer fail solely because the client is not Windows or macOS. Simulator and generic placeholder identities remain rejected.
+- MAME and FBNeo remain target-specific and audited. The rebuild command now accepts deployment-supplied client targets, allowing Apple physical-device profiles to coexist with Windows profiles while preserving exact FBNeo core hashes and separate MAME 0.287/0.288 content-set audits.
+- Rebuilding one MAME version no longer hides a game that still has a ready profile under another audited MAME policy.
 - Client game lists, facets, search, and played shelves no longer advertise dependency or `needs-curation` records as playable games.
 - Existing users do not need to rescan their game libraries. Only records missing stable hashes or rejected by the DAT audit need a targeted rescan or ROM-set repair.
 - Service, Client API, and MCP source metadata report version `0.982`.

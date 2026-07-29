@@ -17,6 +17,14 @@ import (
 
 const MAMEPolicy = "mame-0.288-listxml"
 
+func MAMEPolicyForVersion(version string) string {
+	version = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(version, "v")))
+	if version == "0.288" {
+		return MAMEPolicy
+	}
+	return "mame-" + version + "-listxml"
+}
+
 type MAMECatalog struct {
 	Build    string
 	SHA256   string

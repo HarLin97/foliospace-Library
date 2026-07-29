@@ -870,7 +870,25 @@ Resolution is risk-tiered:
 - MAME and FBNeo remain strict: runtime/content-set or core/hash mismatches return `409`, and every audited dependency must be present.
 - Ordinary SFC/SNES entries accept the known Libretro `bsnes`, `bsnes-mercury`, `snes9x`, `snes9x-current`, and Mesen-S core identifiers. They do not require the per-ROM arcade audit table.
 
+Pragmatic profiles accept these canonical native client identities:
+
+| Client | `client.name` | `client.platform` | `client.architecture` |
+| --- | --- | --- | --- |
+| Windows | `SpatialEMU.Windows` | `windows-x64` | `x64` |
+| macOS Apple silicon | `SpatialEMU.macOS` | `macos-arm64` | `arm64` |
+| macOS Intel | `SpatialEMU.macOS` | `macos-x64` | `x64` |
+| iPhone | `SpatialEMU.iOS` | `ios-arm64` | `arm64` |
+| iPad | `SpatialEMU.iPadOS` | `ipados-arm64` | `arm64` |
+| Apple Vision Pro | `SpatialEMU.visionOS` | `visionos-arm64` | `arm64` |
+| Apple TV | `SpatialEMU.tvOS` | `tvos-arm64` | `arm64` |
+
+Apple mobile identities describe physical-device builds. Simulator identities and generic placeholders such as `SpatialEMU.Apple` are intentionally rejected, because they do not identify a deployable runtime ABI. The client must report only runtimes actually bundled in that target. Ordinary console, computer, and disc platforms can then resolve through the same deterministic manifest-backed route used by desktop clients.
+
+MAME and FBNeo profiles remain target-specific and audited. Adding an Apple client identity does not make a Windows arcade profile portable: each mobile target needs a persisted profile matching its exact client identity and runtime tuple. Current Apple builds report `mame/0.287/mame-0.287`; FBNeo additionally requires the exact client-reported `coreSha256`. The server can persist these alongside Windows MAME 0.288 and FBNeo profiles without replacing or weakening either policy.
+
 Clients may report MAME and FBNeo together in `runtimes`. The server evaluates every reported capability against the game's immutable fingerprint and audited profiles, then returns the selected request tuple in `runtime`. Selection is controlled by a stable server-side profile priority and does not depend on the order of `runtimes`. Existing clients that report only one runtime keep the same behavior. If no reported runtime has an audited profile, the endpoint returns `409`.
+
+For statically linked Apple FBNeo builds, `coreSha256` is currently derived from the application executable and is therefore build-specific. Deployment operators must rebuild the corresponding server profiles when that executable hash changes. Clients must never omit or fabricate this field to bypass strict arcade verification.
 
 ```json
 {

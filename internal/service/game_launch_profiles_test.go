@@ -58,6 +58,32 @@ func TestSFCSupportsWindowsBSNES(t *testing.T) {
 	}
 }
 
+func TestSupportedPragmaticClientPlatforms(t *testing.T) {
+	tests := []struct {
+		name      string
+		client    domain.GameLaunchClient
+		supported bool
+	}{
+		{name: "windows", client: domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"}, supported: true},
+		{name: "macOS arm64", client: domain.GameLaunchClient{Name: "SpatialEMU.macOS", Version: "1.40", Platform: "macos-arm64", Architecture: "arm64"}, supported: true},
+		{name: "iPhone", client: domain.GameLaunchClient{Name: "SpatialEMU.iOS", Version: "1.40", Platform: "ios-arm64", Architecture: "arm64"}, supported: true},
+		{name: "iPad", client: domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.40", Platform: "ipados-arm64", Architecture: "arm64"}, supported: true},
+		{name: "Vision Pro", client: domain.GameLaunchClient{Name: "SpatialEMU.visionOS", Version: "1.40", Platform: "visionos-arm64", Architecture: "arm64"}, supported: true},
+		{name: "Apple TV", client: domain.GameLaunchClient{Name: "SpatialEMU.tvOS", Version: "1.40", Platform: "tvos-arm64", Architecture: "arm64"}, supported: true},
+		{name: "placeholder Apple identity", client: domain.GameLaunchClient{Name: "SpatialEMU.Apple", Version: "1.40", Platform: "apple", Architecture: "unknown"}},
+		{name: "iPad name with iPhone platform", client: domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.40", Platform: "ios-arm64", Architecture: "arm64"}},
+		{name: "iOS simulator", client: domain.GameLaunchClient{Name: "SpatialEMU.iOS", Version: "1.40", Platform: "ios-simulator-arm64", Architecture: "arm64"}},
+		{name: "mobile x64", client: domain.GameLaunchClient{Name: "SpatialEMU.visionOS", Version: "1.40", Platform: "visionos-arm64", Architecture: "x64"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if actual := supportedPragmaticClient(test.client); actual != test.supported {
+				t.Fatalf("supportedPragmaticClient(%+v)=%t, want %t", test.client, actual, test.supported)
+			}
+		})
+	}
+}
+
 func TestPersistedLaunchProfileResolvesFromSQLite(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

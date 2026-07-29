@@ -483,6 +483,14 @@ func supportedPragmaticClient(client domain.GameLaunchClient) bool {
 	case "spatialemu.macos":
 		return (platform == "macos-arm64" && architecture == "arm64") ||
 			(platform == "macos-x64" && architecture == "x64")
+	case "spatialemu.ios":
+		return platform == "ios-arm64" && architecture == "arm64"
+	case "spatialemu.ipados":
+		return platform == "ipados-arm64" && architecture == "arm64"
+	case "spatialemu.visionos":
+		return platform == "visionos-arm64" && architecture == "arm64"
+	case "spatialemu.tvos":
+		return platform == "tvos-arm64" && architecture == "arm64"
 	default:
 		return false
 	}

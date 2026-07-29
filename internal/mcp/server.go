@@ -120,10 +120,10 @@ func tools() []Tool {
 		{Name: "foliospace.resolve_game_launch_profile", Description: "Resolve an immutable, audited game launch profile for an exact client and emulator runtime. Returns logical filenames and dependency closure without changing stored ROM assets.", InputSchema: objectSchema(map[string]any{
 			"gameId": integerSchema("Game asset id."),
 			"client": objectSchema(map[string]any{
-				"name":         stringSchema("Client name, for example SpatialEMU.Windows."),
+				"name":         stringSchema("Client name, for example SpatialEMU.Windows, SpatialEMU.iOS, SpatialEMU.iPadOS, SpatialEMU.visionOS, or SpatialEMU.tvOS."),
 				"version":      stringSchema("Client version, for example 1.302."),
-				"platform":     stringSchema("Client platform, for example windows-x64."),
-				"architecture": stringSchema("Client architecture, for example x64."),
+				"platform":     stringSchema("Client platform, for example windows-x64, ios-arm64, ipados-arm64, visionos-arm64, or tvos-arm64."),
+				"architecture": stringSchema("Client architecture, x64 or arm64 as appropriate for the platform."),
 			}, []string{"name", "version", "platform", "architecture"}),
 			"runtimes": arraySchema("Installed emulator runtime descriptors.", objectSchema(map[string]any{
 				"id":         stringSchema("Runtime id, for example mame or libretro."),

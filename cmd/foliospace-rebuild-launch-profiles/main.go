@@ -38,6 +38,7 @@ func main() {
 	policy := flag.String("policy", "fbneo", "audit policy: fbneo or mame")
 	mameListXML := flag.String("mame-listxml", filepath.Join(cfg.ConfigDir, "policies", "mame0288lx.zip"), "official MAME 0.288 listxml XML or ZIP path")
 	platforms := flag.String("platforms", "model2", "comma-separated platforms to audit with MAME")
+	targetsPath := flag.String("targets", "", "JSON file containing exact client runtime targets; defaults to the Windows release target")
 	dryRun := flag.Bool("dry-run", false, "audit without writing SQLite")
 	failureLimit := flag.Int("failure-limit", 50, "maximum failure details to print")
 	flag.Parse()
@@ -53,15 +54,20 @@ func main() {
 		log.Fatal(err)
 	}
 	var output rebuildOutput
-	switch strings.ToLower(strings.TrimSpace(*policy)) {
+	selectedPolicy := strings.ToLower(strings.TrimSpace(*policy))
+	targets, err := loadLaunchProfileTargets(*targetsPath, selectedPolicy)
+	if err != nil {
+		log.Fatal(err)
+	}
+	switch selectedPolicy {
 	case "fbneo":
 		catalog, err := launchprofile.ParseFBNeoDATFile(*datPath)
 		if err != nil {
 			log.Fatal(err)
 		}
-		output, err = rebuildFBNeoProfiles(appStore, catalog, candidates, *dryRun)
+		output, err = rebuildFBNeoProfiles(appStore, catalog, candidates, targets, *dryRun)
 	case "mame":
-		output, err = rebuildMAMEProfiles(appStore, *mameListXML, parsePlatformSelection(*platforms), candidates, *dryRun)
+		output, err = rebuildMAMEProfiles(appStore, *mameListXML, parsePlatformSelection(*platforms), candidates, targets, *dryRun)
 	default:
 		log.Fatalf("unsupported audit policy %q", *policy)
 	}
@@ -78,7 +84,7 @@ func main() {
 	fmt.Println(string(encoded))
 }
 
-func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCatalog, candidates []domain.GameAsset, dryRun bool) (rebuildOutput, error) {
+func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCatalog, candidates []domain.GameAsset, targets []launchProfileTarget, dryRun bool) (rebuildOutput, error) {
 	bySet := make(map[string][]domain.GameAsset)
 	for _, candidate := range candidates {
 		setName := canonicalSetName(candidate.FilePath)
@@ -104,23 +110,33 @@ func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCata
 			GameID: candidate.ID, Platform: datGame.Platform(), ROMSetName: setName,
 			EmulatorHint: "fbneo", CatalogRole: launchcatalog.RoleNeedsCuration,
 		}
-		profile, auditErr := buildFBNeoProfile(catalog, datGame, candidate, bySet)
+		profile, auditErr := buildFBNeoProfile(catalog, datGame, candidate, bySet, targets[0])
 		if auditErr == nil {
 			profiles = append(profiles, profile)
+			for _, target := range targets[1:] {
+				profiles = append(profiles, applyFBNeoTarget(profile, target, catalog, datGame))
+			}
 			update.CatalogRole = launchcatalog.RoleGame
 		} else {
 			failures = append(failures, fmt.Sprintf("game=%d set=%s: %v", candidate.ID, setName, auditErr))
 		}
 		updates = append(updates, update)
 	}
-	sort.Slice(profiles, func(i, j int) bool { return profiles[i].GameID < profiles[j].GameID })
+	sort.Slice(profiles, func(i, j int) bool {
+		if profiles[i].GameID == profiles[j].GameID {
+			return profiles[i].ID < profiles[j].ID
+		}
+		return profiles[i].GameID < profiles[j].GameID
+	})
 	sort.Slice(updates, func(i, j int) bool { return updates[i].GameID < updates[j].GameID })
 
 	result := domain.GameLaunchProfileRebuildResult{ProfilesWritten: len(profiles)}
+	readyGames := make(map[int64]bool)
 	for _, profile := range profiles {
 		result.FilesWritten += len(profile.Files)
-		result.GamesReady++
+		readyGames[profile.GameID] = true
 	}
+	result.GamesReady = len(readyGames)
 	result.GamesRejected = len(updates) - result.GamesReady
 	if !dryRun {
 		written, err := appStore.ReplaceGameLaunchProfiles(launchprofile.FBNeoPolicy, profiles, updates)
@@ -136,7 +152,7 @@ func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCata
 	}, nil
 }
 
-func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms map[string]bool, candidates []domain.GameAsset, dryRun bool) (rebuildOutput, error) {
+func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms map[string]bool, candidates []domain.GameAsset, targets []launchProfileTarget, dryRun bool) (rebuildOutput, error) {
 	if len(platforms) == 0 {
 		return rebuildOutput{}, fmt.Errorf("MAME platform selection is empty")
 	}
@@ -158,9 +174,10 @@ func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms ma
 		return rebuildOutput{}, err
 	}
 	version := mameBuildVersion(catalog.Build)
-	if version != "0.288" {
-		return rebuildOutput{}, fmt.Errorf("MAME listxml build %q is not the required 0.288 catalog", catalog.Build)
+	if version == "" {
+		return rebuildOutput{}, fmt.Errorf("MAME listxml build %q has no usable version", catalog.Build)
 	}
+	policy := launchprofile.MAMEPolicyForVersion(version)
 
 	profiles := make([]domain.GameLaunchProfile, 0, len(scoped))
 	updates := make([]domain.GameLaunchCatalogUpdate, 0, len(scoped))
@@ -174,43 +191,53 @@ func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms ma
 		}
 		machine, ok := catalog.Machines[setName]
 		if !ok {
-			failures = append(failures, fmt.Sprintf("game=%d set=%s: set is absent from MAME 0.288 listxml", candidate.ID, setName))
+			failures = append(failures, fmt.Sprintf("game=%d set=%s: set is absent from MAME %s listxml", candidate.ID, setName, version))
 			updates = append(updates, update)
 			continue
 		}
 		matched++
-		profile, auditErr := buildMAMEProfile(catalog, machine, candidate, bySet)
+		profile, auditErr := buildMAMEProfile(catalog, machine, candidate, bySet, targets[0], policy)
 		if auditErr == nil {
 			profiles = append(profiles, profile)
+			for _, target := range targets[1:] {
+				profiles = append(profiles, applyMAMETarget(profile, target, catalog, machine, policy))
+			}
 			update.CatalogRole = launchcatalog.RoleGame
 		} else {
 			failures = append(failures, fmt.Sprintf("game=%d set=%s: %v", candidate.ID, setName, auditErr))
 		}
 		updates = append(updates, update)
 	}
-	sort.Slice(profiles, func(i, j int) bool { return profiles[i].GameID < profiles[j].GameID })
+	sort.Slice(profiles, func(i, j int) bool {
+		if profiles[i].GameID == profiles[j].GameID {
+			return profiles[i].ID < profiles[j].ID
+		}
+		return profiles[i].GameID < profiles[j].GameID
+	})
 	sort.Slice(updates, func(i, j int) bool { return updates[i].GameID < updates[j].GameID })
 
 	result := domain.GameLaunchProfileRebuildResult{ProfilesWritten: len(profiles)}
+	readyGames := make(map[int64]bool)
 	for _, profile := range profiles {
 		result.FilesWritten += len(profile.Files)
-		result.GamesReady++
+		readyGames[profile.GameID] = true
 	}
+	result.GamesReady = len(readyGames)
 	result.GamesRejected = len(updates) - result.GamesReady
 	if !dryRun {
-		result, err = appStore.ReplaceGameLaunchProfiles(launchprofile.MAMEPolicy, profiles, updates)
+		result, err = appStore.ReplaceGameLaunchProfiles(policy, profiles, updates)
 		if err != nil {
 			return rebuildOutput{}, err
 		}
 	}
 	return rebuildOutput{
-		Policy: launchprofile.MAMEPolicy, DATName: "MAME", DATVersion: version,
+		Policy: policy, DATName: "MAME", DATVersion: version,
 		DATSHA256: catalog.SHA256, ProfileRevision: catalog.Revision,
 		Candidates: len(scoped), Matched: matched, Result: result, Failures: failures, DryRun: dryRun,
 	}, nil
 }
 
-func buildFBNeoProfile(catalog launchprofile.FBNeoCatalog, datGame launchprofile.FBNeoGame, entry domain.GameAsset, bySet map[string][]domain.GameAsset) (domain.GameLaunchProfile, error) {
+func buildFBNeoProfile(catalog launchprofile.FBNeoCatalog, datGame launchprofile.FBNeoGame, entry domain.GameAsset, bySet map[string][]domain.GameAsset, target launchProfileTarget) (domain.GameLaunchProfile, error) {
 	if !validContainerIdentity(entry) {
 		return domain.GameLaunchProfile{}, fmt.Errorf("entry container has no stable SHA-1 identity")
 	}
@@ -235,17 +262,15 @@ func buildFBNeoProfile(catalog launchprofile.FBNeoCatalog, datGame launchprofile
 			SourceName: filepath.Base(source.FilePath), Name: dependency.Name + ".zip", Size: source.Size, Role: "dependency",
 		})
 	}
-	version := profileVersion(catalog.Version)
-	return domain.GameLaunchProfile{
-		GameID: entry.ID, ID: fmt.Sprintf("%s-windows-fbneo-%s-%s", datGame.Name, version, catalog.SHA256[:8]),
+	profile := domain.GameLaunchProfile{
+		GameID:   entry.ID,
 		Revision: catalog.Revision, Priority: 200, Policy: launchprofile.FBNeoPolicy,
-		ClientName: "SpatialEMU.Windows", MinClientVersion: "1.302", ClientPlatform: "windows-x64", Architecture: "x64",
-		Runtime:   domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreSHA256: fbNeoCoreSHA256},
 		EntryFile: datGame.Name + ".zip", CanonicalSet: datGame.Name, Status: "ready", Files: files,
-	}, nil
+	}
+	return applyFBNeoTarget(profile, target, catalog, datGame), nil
 }
 
-func buildMAMEProfile(catalog launchprofile.MAMECatalog, machine launchprofile.MAMEMachine, entry domain.GameAsset, bySet map[string][]domain.GameAsset) (domain.GameLaunchProfile, error) {
+func buildMAMEProfile(catalog launchprofile.MAMECatalog, machine launchprofile.MAMEMachine, entry domain.GameAsset, bySet map[string][]domain.GameAsset, target launchProfileTarget, policy string) (domain.GameLaunchProfile, error) {
 	if !validContainerIdentity(entry) {
 		return domain.GameLaunchProfile{}, fmt.Errorf("entry container has no stable SHA-1 identity")
 	}
@@ -273,14 +298,33 @@ func buildMAMEProfile(catalog launchprofile.MAMECatalog, machine launchprofile.M
 			SourceName: filepath.Base(source.FilePath), Name: dependency.Name + ".zip", Size: source.Size, Role: "dependency",
 		})
 	}
-	version := mameBuildVersion(catalog.Build)
-	return domain.GameLaunchProfile{
-		GameID: entry.ID, ID: fmt.Sprintf("%s-windows-mame-%s-%s", machine.Name, profileVersion(version), catalog.SHA256[:8]),
-		Revision: catalog.Revision, Priority: 200, Policy: launchprofile.MAMEPolicy,
-		ClientName: "SpatialEMU.Windows", MinClientVersion: "1.302", ClientPlatform: "windows-x64", Architecture: "x64",
-		Runtime:   domain.GameRuntimeDescriptor{ID: "mame", Version: version, ContentSet: "mame-" + version},
+	profile := domain.GameLaunchProfile{
+		GameID: entry.ID, Revision: catalog.Revision, Priority: 200, Policy: policy,
 		EntryFile: machine.Name + ".zip", CanonicalSet: machine.Name, Status: "ready", Files: files,
-	}, nil
+	}
+	return applyMAMETarget(profile, target, catalog, machine, policy), nil
+}
+
+func applyFBNeoTarget(profile domain.GameLaunchProfile, target launchProfileTarget, catalog launchprofile.FBNeoCatalog, game launchprofile.FBNeoGame) domain.GameLaunchProfile {
+	profile.ID = fmt.Sprintf("%s-%s-fbneo-%s-%s", game.Name, target.ID, profileVersion(catalog.Version), catalog.SHA256[:8])
+	profile.ClientName = target.ClientName
+	profile.MinClientVersion = target.MinClientVersion
+	profile.ClientPlatform = target.ClientPlatform
+	profile.Architecture = target.Architecture
+	profile.Runtime = domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreSHA256: target.CoreSHA256}
+	return profile
+}
+
+func applyMAMETarget(profile domain.GameLaunchProfile, target launchProfileTarget, catalog launchprofile.MAMECatalog, machine launchprofile.MAMEMachine, policy string) domain.GameLaunchProfile {
+	version := mameBuildVersion(catalog.Build)
+	profile.ID = fmt.Sprintf("%s-%s-mame-%s-%s", machine.Name, target.ID, profileVersion(version), catalog.SHA256[:8])
+	profile.Policy = policy
+	profile.ClientName = target.ClientName
+	profile.MinClientVersion = target.MinClientVersion
+	profile.ClientPlatform = target.ClientPlatform
+	profile.Architecture = target.Architecture
+	profile.Runtime = domain.GameRuntimeDescriptor{ID: "mame", Version: version, ContentSet: "mame-" + version}
+	return profile
 }
 
 func selectDependencySource(entry domain.GameAsset, dependency launchprofile.FBNeoGame, candidates []domain.GameAsset) (domain.GameAsset, error) {

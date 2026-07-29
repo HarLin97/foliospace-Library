@@ -230,6 +230,46 @@ func TestAPISelectsMAMEOrFBNeoFromDualArcadeCapabilities(t *testing.T) {
 	}
 }
 
+func TestAPIResolvesStrictMobileArcadeProfilesWithExactRuntimeIdentity(t *testing.T) {
+	ts, games := catalogLaunchProfileTestServer(t)
+	defer ts.Close()
+
+	requests := []struct {
+		name    string
+		gameID  int64
+		request domain.GameLaunchResolveRequest
+	}{
+		{
+			name: "iPadOS FBNeo", gameID: games["sf2"].ID,
+			request: domain.GameLaunchResolveRequest{
+				Client:   domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.300", Platform: "ipados-arm64", Architecture: "arm64"},
+				Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "fbneo", CoreSHA256: strings.Repeat("1", 64)}},
+			},
+		},
+		{
+			name: "visionOS MAME", gameID: games["hypreact"].ID,
+			request: domain.GameLaunchResolveRequest{
+				Client:   domain.GameLaunchClient{Name: "SpatialEMU.visionOS", Version: "1.300", Platform: "visionos-arm64", Architecture: "arm64"},
+				Runtimes: []domain.GameRuntimeDescriptor{{ID: "mame", Version: "0.287", ContentSet: "mame-0.287"}},
+			},
+		},
+	}
+	for _, test := range requests {
+		response := postLaunchResolve(t, ts.URL, test.gameID, "secret", test.request, nil)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", test.name, response.StatusCode, response.Body)
+		}
+	}
+
+	wrongHash := requests[0].request
+	wrongHash.Runtimes = append([]domain.GameRuntimeDescriptor{}, wrongHash.Runtimes...)
+	wrongHash.Runtimes[0].CoreSHA256 = strings.Repeat("2", 64)
+	response := postLaunchResolve(t, ts.URL, games["sf2"].ID, "secret", wrongHash, nil)
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"runtime-profile-not-available"`) {
+		t.Fatalf("wrong mobile FBNeo hash status=%d body=%s", response.StatusCode, response.Body)
+	}
+}
+
 func TestAPIResolvesPragmaticConsoleDiscAndDOSProfiles(t *testing.T) {
 	ts, games := pragmaticLaunchProfileTestServer(t)
 	defer ts.Close()
@@ -303,6 +343,43 @@ func TestAPIResolvesPragmaticConsoleDiscAndDOSProfiles(t *testing.T) {
 	}
 	if len(pc98Resolved.Manifest.Files) != 2 || pc98Resolved.Manifest.Files[0].Role != "entry" || pc98Resolved.Manifest.Files[0].DiskIndex == nil || *pc98Resolved.Manifest.Files[0].DiskIndex != 0 || pc98Resolved.Manifest.Files[0].DriveHint != "FDD1" || pc98Resolved.Manifest.Files[1].Role != "disk" || pc98Resolved.Manifest.Files[1].DiskIndex == nil || *pc98Resolved.Manifest.Files[1].DiskIndex != 1 {
 		t.Fatalf("PC-98 disk metadata=%+v", pc98Resolved.Manifest.Files)
+	}
+}
+
+func TestAPIResolvesPragmaticProfilesForAppleMobileClients(t *testing.T) {
+	ts, games := pragmaticLaunchProfileTestServer(t)
+	defer ts.Close()
+
+	clients := []domain.GameLaunchClient{
+		{Name: "SpatialEMU.iOS", Version: "1.40", Platform: "ios-arm64", Architecture: "arm64"},
+		{Name: "SpatialEMU.iPadOS", Version: "1.40", Platform: "ipados-arm64", Architecture: "arm64"},
+		{Name: "SpatialEMU.visionOS", Version: "1.40", Platform: "visionos-arm64", Architecture: "arm64"},
+		{Name: "SpatialEMU.tvOS", Version: "1.40", Platform: "tvos-arm64", Architecture: "arm64"},
+	}
+	runtime := domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "nestopia"}
+	profileIDs := make(map[string]struct{}, len(clients))
+	for _, client := range clients {
+		t.Run(client.Platform, func(t *testing.T) {
+			request := domain.GameLaunchResolveRequest{Client: client, Runtimes: []domain.GameRuntimeDescriptor{runtime}}
+			response := postLaunchResolve(t, ts.URL, games["nes"].ID, "secret", request, nil)
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("resolve status=%d body=%s", response.StatusCode, response.Body)
+			}
+			var resolved clientGameLaunchResolutionResponse
+			if err := json.Unmarshal(response.Body, &resolved); err != nil {
+				t.Fatal(err)
+			}
+			if resolved.Runtime != runtime || !strings.HasPrefix(resolved.LaunchProfileID, "auto-") || resolved.ProfileRevision <= 0 {
+				t.Fatalf("resolution=%+v", resolved)
+			}
+			if resolved.Manifest.EntryFile == nil || *resolved.Manifest.EntryFile != "mario.nes" || len(resolved.Manifest.Files) != 1 {
+				t.Fatalf("manifest=%+v", resolved.Manifest)
+			}
+			if _, exists := profileIDs[resolved.LaunchProfileID]; exists {
+				t.Fatalf("profile id %q was reused across client platforms", resolved.LaunchProfileID)
+			}
+			profileIDs[resolved.LaunchProfileID] = struct{}{}
+		})
 	}
 }
 
@@ -511,6 +588,35 @@ func catalogLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[string]
 			t.Fatal(err)
 		}
 		games[item.name] = game
+	}
+	mobileProfiles := []domain.GameLaunchProfile{
+		{
+			GameID: games["sf2"].ID, ID: "sf2-ipados-fbneo-test", Revision: 1, Priority: 200,
+			ClientName: "SpatialEMU.iPadOS", MinClientVersion: "1.300", ClientPlatform: "ipados-arm64", Architecture: "arm64",
+			Runtime:   domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreSHA256: strings.Repeat("1", 64)},
+			EntryFile: "sf2.zip", CanonicalSet: "sf2", Status: "ready",
+			Files: []domain.GameLaunchProfileFile{{
+				Position: 0, SourceGameID: games["sf2"].ID, SourceSHA1: games["sf2"].SHA1,
+				SourceName: "sf2.zip", Name: "sf2.zip", Size: games["sf2"].Size, Role: "entry",
+			}},
+		},
+		{
+			GameID: games["hypreact"].ID, ID: "hypreact-visionos-mame0287-test", Revision: 1, Priority: 200,
+			ClientName: "SpatialEMU.visionOS", MinClientVersion: "1.300", ClientPlatform: "visionos-arm64", Architecture: "arm64",
+			Runtime:   domain.GameRuntimeDescriptor{ID: "mame", Version: "0.287", ContentSet: "mame-0.287"},
+			EntryFile: "hypreact.zip", CanonicalSet: "hypreact", Status: "ready",
+			Files: []domain.GameLaunchProfileFile{{
+				Position: 0, SourceGameID: games["hypreact"].ID, SourceSHA1: games["hypreact"].SHA1,
+				SourceName: "hypreact.zip", Name: "hypreact.zip", Size: games["hypreact"].Size, Role: "entry",
+			}},
+		},
+	}
+	mobileUpdates := []domain.GameLaunchCatalogUpdate{
+		{GameID: games["sf2"].ID, Platform: "cps1", ROMSetName: "sf2", EmulatorHint: "fbneo", CatalogRole: "game"},
+		{GameID: games["hypreact"].ID, Platform: "mame", ROMSetName: "hypreact", EmulatorHint: "mame", CatalogRole: "game"},
+	}
+	if _, err := st.ReplaceGameLaunchProfiles("test-mobile-arcade", mobileProfiles, mobileUpdates); err != nil {
+		t.Fatal(err)
 	}
 	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
 	return ts, games

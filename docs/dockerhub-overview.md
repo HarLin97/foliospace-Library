@@ -13,6 +13,7 @@ Release `0.982` makes audited arcade launch profiles durable and rebuildable for
 - It also supports an official MAME 0.288 `listxml` audit for selected platforms. Model 2 archives are matched by ZIP stem and promoted only when their complete parent, device, and BIOS closure validates.
 - Every published FBNeo game passes logical ROM name, uncompressed size, CRC, and parent/BIOS dependency checks.
 - Windows FBNeo profiles require the exact approved core SHA-256; unknown or mismatched cores return `409 runtime-profile-not-available`.
+- Deployment-supplied target files can publish the same audited FBNeo closure to Apple physical-device builds using their exact reported core SHA-256, while mobile MAME 0.287 and Windows MAME 0.288 profiles remain separate.
 - SFC/SNES profile negotiation recognizes Libretro bsnes alongside Snes9x and Mesen-S.
 - Client lists, facets, search, and played shelves hide dependency and `needs-curation` records instead of advertising games that cannot launch.
 - Existing users do not need to rescan their game libraries. Only missing hashes or rejected ROM sets need a targeted rescan or repair.

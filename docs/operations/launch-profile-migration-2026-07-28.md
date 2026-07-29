@@ -58,6 +58,33 @@ The official FBNeo Arcade DAT is deployment-supplied rather than bundled in the 
   --dat=/config/policies/fbneo-arcade.dat
 ```
 
+The default invocation retains the Windows release target. To publish the same audited set closure to physical Apple devices, provide an explicit target document with the exact runtime identity reported by each client build:
+
+```json
+{
+  "targets": [
+    {
+      "id": "ipados",
+      "clientName": "SpatialEMU.iPadOS",
+      "minClientVersion": "1.300",
+      "clientPlatform": "ipados-arm64",
+      "architecture": "arm64",
+      "coreSha256": "REPLACE_WITH_THE_64_CHARACTER_CLIENT_REPORTED_FBNEO_SHA256"
+    },
+    {
+      "id": "visionos",
+      "clientName": "SpatialEMU.visionOS",
+      "minClientVersion": "1.300",
+      "clientPlatform": "visionos-arm64",
+      "architecture": "arm64",
+      "coreSha256": "REPLACE_WITH_THE_64_CHARACTER_CLIENT_REPORTED_FBNEO_SHA256"
+    }
+  ]
+}
+```
+
+Store this deployment-specific file under `/config/policies`; do not commit release hashes to source. Then run the rebuild with `--targets=/config/policies/fbneo-mobile-targets.json`. The command rejects unknown client identities, ABI mismatches, duplicate target IDs, and missing or malformed FBNeo hashes. The current Apple client reports the signed application executable SHA-256 for its statically linked FBNeo runtime, so this value is build-specific and profiles must be rebuilt after that executable changes.
+
 The command is explicit and idempotent. It streams the DAT and opens one ZIP central directory at a time, so it does not perform a full-library audit during normal service startup. It never renames, rewrites, moves, or deletes ROM files. Before production writeback, the 2026-07-28 isolated audit matched 8,322 indexed candidates: 7,714 passed exact ROM and dependency verification, while 608 remained `needs-curation`. The rebuild emitted 13,978 logical entry/dependency file rows and a deterministic profile revision derived from the DAT SHA-256.
 
 ## MAME 0.288 Profile Rebuild Addendum
@@ -77,3 +104,20 @@ When the dry-run counts and failures are understood, omit `--dry-run` to write t
 The 2026-07-28 production Model 2 rebuild audited all 32 indexed game archives. Twenty archives passed MAME 0.288 verification and produced 20 ready profiles with 35 entry/dependency file rows. Twelve archives remained `needs-curation`: `daytona`, `desert`, `doa`, `hotd`, `manxtt`, `manxttc`, `overrev`, `rchase2`, `srallyc`, `stcc`, `vcop`, and `von`. Each rejection names its missing ROM or dependency; no archive was deleted. The separate `segabill.zip` record remains a dependency and is excluded from the 32-game count.
 
 After writeback, verify that the profile revision changed, `GET /api/client/games?platform=model2` returns the ready count, `/api/client/games/facets` reports the same count, and representative ready games resolve with the exact `mame/0.288/mame-0.288` runtime tuple. Also verify that a rejected set still returns `409 runtime-profile-not-available`.
+
+## Mobile MAME 0.287 Profiles
+
+Apple mobile builds report `mame/0.287/mame-0.287`, so they must be audited against the official MAME 0.287 listxml rather than inheriting Windows MAME 0.288 results. Place the listxml ZIP and a mobile target document in `/config/policies`, then run:
+
+```sh
+/app/foliospace-rebuild-launch-profiles \
+  --policy=mame \
+  --mame-listxml=/config/policies/mame0287lx.zip \
+  --platforms=arcade,mame,model2,cps1,cps2,cps3,neogeo \
+  --targets=/config/policies/mame-mobile-targets.json \
+  --dry-run
+```
+
+The MAME target document uses the same identity fields as the FBNeo document but omits `coreSha256`. After reviewing the dry-run, repeat without `--dry-run`. MAME 0.287 profiles are stored under policy `mame-0.287-listxml`, while Windows profiles remain under `mame-0.288-listxml`. Rebuilding or rejecting one policy cannot hide a game that still has a ready profile under the other policy.
+
+Post-write verification must include a successful mobile resolver request using exactly `mame/0.287/mame-0.287`, a successful FBNeo request with the configured client-reported SHA-256, and a `409` response for the same request with a different SHA-256.
