@@ -3,7 +3,7 @@ import type { CSSProperties, FormEvent, MouseEvent, ReactNode, SyntheticEvent, T
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, GameCatalogSettings, GameCatalogTaskStatus, GameCurationItem, GameCurationSummary, GameDetails, GameMetadata, GamePrivateState, getActiveProfileId, getAuthToken, JobEvent, Library, ManualCollection, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, ThumbnailWorkerStatus, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, GameCatalogSettings, GameCatalogTaskStatus, GameCurationItem, GameCurationSummary, GameDetails, GameMetadata, GamePlatformFacet, GamePrivateState, getActiveProfileId, getAuthToken, JobEvent, Library, ManualCollection, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, ThumbnailWorkerStatus, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
 import {
   DEFAULT_WEBTOON_ANCHOR_RATIO,
   WEBTOON_POSITION_SCHEMA,
@@ -23,7 +23,7 @@ import {
   type ReaderImageDisplayMode,
 } from "./reader-layout";
 import { resolveEpubOpenPosition, type EpubChapterOpenPosition } from "./epub-navigation";
-import { gamePlatformFilterOptions } from "./game-platform-options";
+import { gamePlatformFilterOptions, gamePlatformFilterOptionsFromFacets } from "./game-platform-options";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -73,6 +73,7 @@ export function App() {
   const [videoShelf, setVideoShelf] = useState<VideoAsset[]>([]);
   const [manualCollections, setManualCollections] = useState<ManualCollection[]>([]);
   const [gameCatalog, setGameCatalog] = useState<GameAsset[]>([]);
+  const [gamePlatformFacets, setGamePlatformFacets] = useState<GamePlatformFacet[]>([]);
   const [videoCatalog, setVideoCatalog] = useState<VideoAsset[]>([]);
   const [gameCatalogTotal, setGameCatalogTotal] = useState(0);
   const [videoCatalogTotal, setVideoCatalogTotal] = useState(0);
@@ -278,8 +279,18 @@ export function App() {
 
   async function openGameCatalog() {
     setView("games");
+    void loadGamePlatformFacets();
     if (gameCatalog.length > 0 || gameCatalogLoading) return;
     await loadGameCatalogPage(0, true);
+  }
+
+  async function loadGamePlatformFacets() {
+    try {
+      const facets = await api.clientGameFacets();
+      setGamePlatformFacets(arrayOrEmpty(facets.platforms));
+    } catch {
+      // Older servers do not expose facets; keep the legacy collection fallback.
+    }
   }
 
   async function openGameCuration() {
@@ -2075,7 +2086,12 @@ export function App() {
   const likedCollections = useMemo(() => series.filter((item) => item.liked), [series]);
   const favoritePageItemCount = favoriteCollections.length + likedCollections.length + favoriteBooks.length;
   const gameCatalogSections = useMemo(() => groupGamesByPlatform(gameCatalog), [gameCatalog]);
-  const gamePlatformOptions = useMemo(() => gamePlatformFilterOptions(series), [series]);
+  const gamePlatformOptions = useMemo(
+    () => gamePlatformFacets.length > 0
+      ? gamePlatformFilterOptionsFromFacets(gamePlatformFacets)
+      : gamePlatformFilterOptions(series),
+    [gamePlatformFacets, series],
+  );
 
   useEffect(() => {
     const node = collectionSectionsRef.current;

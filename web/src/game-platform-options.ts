@@ -11,6 +11,22 @@ export type GamePlatformFilterOption = {
   count: number;
 };
 
+type GamePlatformFacet = {
+  platform: string;
+  title?: string;
+  count: number;
+};
+
+export function gamePlatformFilterOptionsFromFacets(facets: GamePlatformFacet[]): GamePlatformFilterOption[] {
+  return facets
+    .map((item) => ({
+      value: item.platform.trim().toLowerCase(),
+      label: item.title?.trim() || item.platform.trim(),
+      count: item.count,
+    }))
+    .filter((item) => item.value !== "");
+}
+
 export function gamePlatformFilterOptions(collections: GamePlatformCollection[]): GamePlatformFilterOption[] {
   return collections
     .filter((item) => item.collectionType === "game_platform" && item.primaryType === "game")
@@ -35,6 +51,12 @@ function gamePlatformValueFromLabel(label: string) {
       return "md";
     case "neo geo":
       return "neogeo";
+    case "cps-1":
+      return "cps1";
+    case "cps-2":
+      return "cps2";
+    case "cps-3":
+      return "cps3";
     case "model 2":
       return "model2";
     case "model 3":

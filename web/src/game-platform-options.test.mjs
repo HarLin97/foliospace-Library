@@ -25,6 +25,9 @@ test("game platform filter options come from game platform collections", async (
     { id: -1010, title: "Games / NES", collectionType: "game_platform", primaryType: "game", bookCount: 10 },
     { id: -1060, title: "Games / Mega Drive", collectionType: "game_platform", primaryType: "game", bookCount: 12 },
     { id: -1080, title: "Games / Neo Geo", collectionType: "game_platform", primaryType: "game", bookCount: 7 },
+    { id: -1081, title: "Games / CPS-1", collectionType: "game_platform", primaryType: "game", bookCount: 14 },
+    { id: -1082, title: "Games / CPS-2", collectionType: "game_platform", primaryType: "game", bookCount: 15 },
+    { id: -1083, title: "Games / CPS-3", collectionType: "game_platform", primaryType: "game", bookCount: 16 },
     { id: -1077, title: "Games / NEC PC-98", collectionType: "game_platform", primaryType: "game", bookCount: 42 },
     { id: -1086, title: "Games / NAOMI 2", collectionType: "game_platform", primaryType: "game", bookCount: 43 },
     { id: -1087, title: "Games / PSP", collectionType: "game_platform", primaryType: "game", bookCount: 8 },
@@ -37,10 +40,25 @@ test("game platform filter options come from game platform collections", async (
     { value: "nes", label: "NES", count: 10 },
     { value: "md", label: "Mega Drive", count: 12 },
     { value: "neogeo", label: "Neo Geo", count: 7 },
+    { value: "cps1", label: "CPS-1", count: 14 },
+    { value: "cps2", label: "CPS-2", count: 15 },
+    { value: "cps3", label: "CPS-3", count: 16 },
     { value: "pc98", label: "NEC PC-98", count: 42 },
     { value: "naomi2", label: "NAOMI 2", count: 43 },
     { value: "psp", label: "PSP", count: 8 },
     { value: "ngc", label: "Nintendo GameCube", count: 9 },
     { value: "ps2", label: "PlayStation 2", count: 10 },
+  ]);
+});
+
+test("game platform filter options prefer canonical client facets", async () => {
+  const { gamePlatformFilterOptionsFromFacets } = await loadGamePlatformOptionsModule();
+
+  assert.deepEqual(gamePlatformFilterOptionsFromFacets([
+    { platform: "cps1", title: "CPS-1", count: 414 },
+    { platform: "cps2", title: "CPS-2", count: 390 },
+  ]), [
+    { value: "cps1", label: "CPS-1", count: 414 },
+    { value: "cps2", label: "CPS-2", count: 390 },
   ]);
 });

@@ -260,6 +260,20 @@ export type GameListPage = {
   hasMore: boolean;
 };
 
+export type GamePlatformFacet = {
+  platform: string;
+  title: string;
+  romSetName?: string;
+  format?: string;
+  emulatorHint?: string;
+  count: number;
+};
+
+export type GameListFacets = {
+  total: number;
+  platforms: GamePlatformFacet[];
+};
+
 export type GameCatalogSettings = {
   autoAnalyzeAfterScan: boolean;
   enableLibretroCovers: boolean;
@@ -782,6 +796,7 @@ export const api = {
     if (options.direction) params.set("direction", options.direction);
     return request<GameListPage>(`/api/client/games?${params.toString()}`);
   },
+  clientGameFacets: () => request<GameListFacets>("/api/client/games/facets"),
   gamePrivateState: (gameId: number, state: GamePrivateState) =>
     request<GameAsset>(`/api/client/games/${gameId}/private-state`, {
       method: "PUT",
