@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.990`.
+Current release branch: `0.991`.
 
 ## Screenshots
 
@@ -223,6 +223,16 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.991
+
+Release `0.991` is a focused web catalog hotfix for CPS libraries:
+
+- CPS-1, CPS-2, and CPS-3 collection labels now map to the canonical `cps1`, `cps2`, and `cps3` platform values used by the server.
+- The game shelf builds platform filters from the full client facets endpoint, so displayed counts match the launchable catalog returned by `/api/client/games`.
+- Dependency archives and `needs-curation` records no longer inflate platform counts that lead to empty filtered pages.
+- Existing API response shapes and native-client behavior remain backward compatible.
+- Service, Client API, Web, and MCP metadata report version `0.991`.
+
 ## Release 0.990
 
 Release `0.990` introduces the Game Curation Center, a complete post-scan workflow for turning raw ROM imports into a clean, client-safe game catalog:
@@ -350,7 +360,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.990 ./scripts/build-mcp-release.sh
+VERSION=0.991 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -370,10 +380,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.990` image tag:
+Release `0.991` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.990
+docker pull funland/foliospace-library:0.991
 ```
 
 For local verification:
@@ -392,7 +402,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.990
+  funland/foliospace-library:0.991
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -407,11 +417,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.990
-git push github v0.990
+git tag v0.991
+git push github v0.991
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.990` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.991` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

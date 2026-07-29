@@ -4,6 +4,16 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.991 Release: CPS Catalog Filter Hotfix
+
+Release `0.991` fixes CPS platform browsing in the web game catalog while preserving existing Client API behavior.
+
+- CPS-1, CPS-2, and CPS-3 labels map to the canonical `cps1`, `cps2`, and `cps3` platform identifiers.
+- Platform filters and counts come from the full client facets endpoint instead of legacy collection totals.
+- Counts now match the launchable records returned by `/api/client/games`; dependency and `needs-curation` entries do not lead users to empty shelves.
+- Existing native clients remain compatible because API response shapes are unchanged.
+- Service, Client API, Web, and MCP metadata report version `0.991`.
+
 ## 0.990 Release: Game Curation Center
 
 Release `0.990` adds a complete game-library preparation workflow for new and existing self-hosted installations.
@@ -210,7 +220,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.990
+docker pull funland/foliospace-library:0.991
 ```
 
 ```bash
@@ -220,7 +230,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.990
+  funland/foliospace-library:0.991
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.
