@@ -20,7 +20,7 @@ import (
 	"foliospace-reader/internal/store"
 )
 
-func TestAPIResolvesAuditedMAMEProfilesWithoutChangingLegacyManifest(t *testing.T) {
+func TestAPIResolvesAuditedMAMEProfilesAndEnrichesLegacyManifestDependencies(t *testing.T) {
 	ts, vstriker, segabill, tekken := launchProfileTestServer(t)
 	defer ts.Close()
 	info := authGet(t, ts.URL+"/api/client/info", "secret")
@@ -60,8 +60,21 @@ func TestAPIResolvesAuditedMAMEProfilesWithoutChangingLegacyManifest(t *testing.
 	}
 
 	legacy := authGet(t, ts.URL+"/api/client/games/"+itoa(vstriker.ID)+"/manifest", "secret")
-	if !strings.Contains(legacy, `"romSetName":"Model2ROMs"`) || strings.Contains(legacy, "launchProfileId") || strings.Contains(legacy, "segabill.zip") {
-		t.Fatalf("legacy manifest changed: %s", legacy)
+	if !strings.Contains(legacy, `"romSetName":"vstriker"`) || strings.Contains(legacy, "launchProfileId") {
+		t.Fatalf("legacy manifest contract changed: %s", legacy)
+	}
+	var legacyManifest clientGameManifestResponse
+	if err := json.Unmarshal([]byte(legacy), &legacyManifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacyManifest.Files) != 2 || legacyManifest.Files[0].Name != "vstriker.zip" {
+		t.Fatalf("legacy manifest files=%+v", legacyManifest.Files)
+	}
+	legacyDependency := legacyManifest.Files[1]
+	if legacyDependency.Name != "segabill.zip" || legacyDependency.Role != "dependency" ||
+		legacyDependency.URL != "/api/client/games/"+itoa(segabill.ID)+"/file" ||
+		legacyDependency.Checksum != "sha1:4631db7f7f5160a3a6591d3102722be869710f66" {
+		t.Fatalf("legacy dependency=%+v", legacyDependency)
 	}
 
 	tekkenResponse := postLaunchResolve(t, ts.URL, tekken.ID, "secret", request, nil)
@@ -102,7 +115,7 @@ func TestAPICanDisableLaunchResolverWithoutChangingLegacyManifest(t *testing.T) 
 	}
 
 	legacy := authGet(t, ts.URL+"/api/client/games/"+itoa(vstriker.ID)+"/manifest", "secret")
-	if !strings.Contains(legacy, `"romSetName":"Model2ROMs"`) || strings.Contains(legacy, "launchProfileId") {
+	if !strings.Contains(legacy, `"romSetName":"vstriker"`) || strings.Contains(legacy, "launchProfileId") || !strings.Contains(legacy, "segabill.zip") {
 		t.Fatalf("legacy manifest changed while resolver disabled: %s", legacy)
 	}
 }
@@ -675,6 +688,21 @@ func launchProfileTestServerWithOptions(t *testing.T, options Options) (*httptes
 	vstriker := upsert("vstriker", "model2", "Model2ROMs", "vstriker.zip", 10313686, "8e3518318eeb157ab299b2f284faef176d3f49dd", "game")
 	segabill := upsert("segabill", "model2", "Model2ROMs", "segabill.zip", 3117, "4631db7f7f5160a3a6591d3102722be869710f66", "dependency")
 	tekken := upsert("tektagtac1", "arcade", "Namco System 12", "tektagtac1.zip", 120980600, "d6615a3a70ea9941b61ccd608054a0044d3d6ab3", "game")
+	if _, err := st.ReplaceGameLaunchProfiles("test-mame", []domain.GameLaunchProfile{{
+		GameID: vstriker.ID, ID: "vstriker-windows-mame0288-v1", Revision: 1, Priority: 200,
+		Policy: "test-mame", ClientName: "SpatialEMU.Windows", MinClientVersion: "1.302",
+		ClientPlatform: "windows-x64", Architecture: "x64",
+		Runtime:   domain.GameRuntimeDescriptor{ID: "mame", Version: "0.288", ContentSet: "mame-0.288"},
+		EntryFile: "vstriker.zip", CanonicalSet: "vstriker", Status: "ready",
+		Files: []domain.GameLaunchProfileFile{
+			{Position: 0, SourceGameID: vstriker.ID, SourceSHA1: vstriker.SHA1, SourceName: "vstriker.zip", Name: "vstriker.zip", Size: vstriker.Size, Role: "entry"},
+			{Position: 1, SourceGameID: segabill.ID, SourceSHA1: segabill.SHA1, SourceName: "segabill.zip", Name: "segabill.zip", Size: segabill.Size, Role: "dependency"},
+		},
+	}}, []domain.GameLaunchCatalogUpdate{{
+		GameID: vstriker.ID, Platform: "model2", ROMSetName: "vstriker", EmulatorHint: "mame", CatalogRole: "game",
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, options).Routes())
 	return ts, vstriker, segabill, tekken
 }

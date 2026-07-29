@@ -822,8 +822,14 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 				dosLaunch = &launch
 			}
 		}
+		launchDependencies, err := s.service.LegacyGameLaunchDependencies(id)
+		if err != nil {
+			writeJSONOrError(w, nil, err)
+			return
+		}
 		w.Header().Set("Cache-Control", "private, no-store")
-		writeJSON(w, clientGameManifest(game, files, dosLaunch))
+		manifest := clientGameManifest(game, files, dosLaunch)
+		writeJSON(w, appendLegacyLaunchDependencies(manifest, launchDependencies))
 		return
 	}
 	if tail == "details" && r.Method == http.MethodGet {
@@ -2872,6 +2878,35 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunc
 			DOSBoxConfig:     nullableString(dosLaunch.DOSBoxConfig), Arguments: dosLaunch.Arguments,
 			Candidates: dosLaunch.Candidates, KeymapHints: dosLaunch.KeymapHints,
 		}
+	}
+	return manifest
+}
+
+func appendLegacyLaunchDependencies(manifest clientGameManifestResponse, dependencies []domain.GameLaunchResolvedFile) clientGameManifestResponse {
+	knownNames := make(map[string]struct{}, len(manifest.Files)+len(dependencies))
+	for _, file := range manifest.Files {
+		knownNames[strings.ToLower(strings.TrimSpace(file.Name))] = struct{}{}
+	}
+	for _, dependency := range dependencies {
+		if !strings.EqualFold(strings.TrimSpace(dependency.Role), "dependency") || dependency.SourceGameID <= 0 {
+			continue
+		}
+		nameKey := strings.ToLower(strings.TrimSpace(dependency.Name))
+		if nameKey == "" {
+			continue
+		}
+		if _, exists := knownNames[nameKey]; exists {
+			continue
+		}
+		file := clientGameFile{
+			Name: dependency.Name, Size: dependency.Size, Role: "dependency",
+			URL: fmt.Sprintf("/api/client/games/%d/file", dependency.SourceGameID),
+		}
+		if sha1 := strings.TrimSpace(dependency.SHA1); sha1 != "" {
+			file.Checksum = "sha1:" + sha1
+		}
+		manifest.Files = append(manifest.Files, file)
+		knownNames[nameKey] = struct{}{}
 	}
 	return manifest
 }

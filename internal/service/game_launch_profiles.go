@@ -412,6 +412,78 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 	return domain.GameLaunchResolution{}, classifyLaunchResolveFailure(game, req, persistedProfiles, requestedRuntime)
 }
 
+// LegacyGameLaunchDependencies returns audited dependency archives for clients
+// that still consume the manifest endpoint instead of the launch resolver.
+func (s *Service) LegacyGameLaunchDependencies(gameID int64) ([]domain.GameLaunchResolvedFile, error) {
+	game, err := s.store.GameByID(gameID)
+	if err != nil {
+		return nil, err
+	}
+	profiles, err := s.store.GameLaunchProfiles(gameID)
+	if err != nil {
+		return nil, err
+	}
+	for _, profile := range legacyLaunchProfilesByPreference(profiles, game.EmulatorHint) {
+		files, available := s.availablePersistedLaunchProfileFiles(profile)
+		if !available {
+			continue
+		}
+		dependencies := make([]domain.GameLaunchResolvedFile, 0, len(files))
+		for _, file := range files {
+			if strings.EqualFold(strings.TrimSpace(file.Role), "dependency") {
+				dependencies = append(dependencies, file)
+			}
+		}
+		if len(dependencies) > 0 {
+			return dependencies, nil
+		}
+	}
+	return nil, nil
+}
+
+func legacyLaunchProfilesByPreference(profiles []domain.GameLaunchProfile, emulatorHint string) []domain.GameLaunchProfile {
+	preferred := make([]domain.GameLaunchProfile, 0, len(profiles))
+	fallback := make([]domain.GameLaunchProfile, 0, len(profiles))
+	hint := strings.ToLower(strings.TrimSpace(emulatorHint))
+	for _, profile := range profiles {
+		runtimeID := strings.ToLower(strings.TrimSpace(profile.Runtime.ID))
+		coreID := strings.ToLower(strings.TrimSpace(profile.Runtime.CoreID))
+		if hint != "" && (runtimeID == hint || coreID == hint) {
+			preferred = append(preferred, profile)
+		} else {
+			fallback = append(fallback, profile)
+		}
+	}
+	return append(preferred, fallback...)
+}
+
+func (s *Service) availablePersistedLaunchProfileFiles(profile domain.GameLaunchProfile) ([]domain.GameLaunchResolvedFile, bool) {
+	if len(profile.Files) == 0 {
+		return nil, false
+	}
+	resolved := make([]domain.GameLaunchResolvedFile, 0, len(profile.Files))
+	for _, file := range profile.Files {
+		source, err := s.store.GameByID(file.SourceGameID)
+		if err != nil || source.Size != file.Size ||
+			!strings.EqualFold(strings.TrimSpace(source.SHA1), strings.TrimSpace(file.SourceSHA1)) ||
+			!strings.EqualFold(filepath.Base(source.FilePath), file.SourceName) {
+			return nil, false
+		}
+		info, err := os.Stat(source.FilePath)
+		if err != nil || !info.Mode().IsRegular() || info.Size() != source.Size {
+			return nil, false
+		}
+		resolved = append(resolved, domain.GameLaunchResolvedFile{
+			SourceGameID: source.ID,
+			Name:         file.Name,
+			Size:         file.Size,
+			Role:         file.Role,
+			SHA1:         file.SourceSHA1,
+		})
+	}
+	return resolved, true
+}
+
 func matchingPersistedRuntime(profile domain.GameLaunchProfile, req domain.GameLaunchResolveRequest) (domain.GameRuntimeDescriptor, bool) {
 	if !strings.EqualFold(strings.TrimSpace(req.Client.Name), profile.ClientName) ||
 		!strings.EqualFold(strings.TrimSpace(req.Client.Platform), profile.ClientPlatform) ||
