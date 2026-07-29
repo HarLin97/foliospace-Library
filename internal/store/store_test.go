@@ -1059,7 +1059,7 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	}
 }
 
-func TestStoreClientCatalogShowsOnlyLaunchReadyGames(t *testing.T) {
+func TestStoreClientCatalogSeparatesDiscoveryFromLaunchReadiness(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -1083,8 +1083,8 @@ func TestStoreClientCatalogShowsOnlyLaunchReadyGames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].Title != "Ready" {
-		t.Fatalf("client page = %#v, want launch-ready game only", page)
+	if page.Total != 2 || len(page.Items) != 2 {
+		t.Fatalf("client page = %#v, want ready and needs-curation games", page)
 	}
 	dependency, err := s.ListGamesPage(domain.GameListOptions{Limit: 20, Query: "BIOS"})
 	if err != nil {
@@ -1104,15 +1104,15 @@ func TestStoreClientCatalogShowsOnlyLaunchReadyGames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uncurated.Total != 0 {
-		t.Fatalf("uncurated search = %#v, want needs-curation hidden from client catalog", uncurated)
+	if uncurated.Total != 1 || len(uncurated.Items) != 1 || uncurated.Items[0].CatalogRole != "needs-curation" {
+		t.Fatalf("uncurated search = %#v, want discoverable needs-curation game", uncurated)
 	}
 	facets, err := s.ListGameFacets(domain.GameListOptions{ClientVisibleOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if facets.Total != 1 || len(facets.Platforms) != 1 || facets.Platforms[0].Platform != "nes" {
-		t.Fatalf("client facets = %#v, want launch-ready NES only", facets)
+	if facets.Total != 2 || len(facets.Platforms) != 2 {
+		t.Fatalf("client facets = %#v, want NES and arcade discovery counts", facets)
 	}
 	recent, err := s.ListRecentGames(20)
 	if err != nil {

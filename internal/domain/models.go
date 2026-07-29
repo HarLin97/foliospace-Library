@@ -252,11 +252,12 @@ type GameLaunchClient struct {
 }
 
 type GameRuntimeDescriptor struct {
-	ID         string `json:"id"`
-	Version    string `json:"version,omitempty"`
-	ContentSet string `json:"contentSet,omitempty"`
-	CoreID     string `json:"coreId,omitempty"`
-	CoreSHA256 string `json:"coreSha256,omitempty"`
+	ID          string `json:"id"`
+	Version     string `json:"version,omitempty"`
+	ContentSet  string `json:"contentSet,omitempty"`
+	CoreID      string `json:"coreId,omitempty"`
+	CoreBuildID string `json:"coreBuildId,omitempty"`
+	CoreSHA256  string `json:"coreSha256,omitempty"`
 }
 
 type GameLaunchResolveRequest struct {

@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,8 +38,42 @@ func TestValidateGameLaunchResolveRequestRejectsInvalidCoreHash(t *testing.T) {
 		t.Fatal("expected invalid core hash to be rejected")
 	}
 	req.Runtimes[0].CoreSHA256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	req.Runtimes[0].CoreBuildID = "fbneo:4f7c3a1:patch-v2:arm64:release"
 	if err := ValidateGameLaunchResolveRequest(req); err != nil {
 		t.Fatalf("valid request rejected: %v", err)
+	}
+	req.Runtimes[0].CoreBuildID = strings.Repeat("x", 257)
+	if err := ValidateGameLaunchResolveRequest(req); err == nil {
+		t.Fatal("expected an oversized core build id to be rejected")
+	}
+}
+
+func TestRuntimeIdentityPrefersStableBuildIDWithLegacyHashFallback(t *testing.T) {
+	legacyHash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	otherHash := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	approved := domain.GameRuntimeDescriptor{CoreBuildID: "fbneo:4f7c3a1:arm64:release", CoreSHA256: legacyHash}
+
+	if !runtimeIdentityMatches(domain.GameRuntimeDescriptor{CoreBuildID: approved.CoreBuildID, CoreSHA256: otherHash}, approved) {
+		t.Fatal("matching stable build ids should take precedence over legacy hashes")
+	}
+	if runtimeIdentityMatches(domain.GameRuntimeDescriptor{CoreBuildID: "fbneo:other:arm64:release", CoreSHA256: legacyHash}, approved) {
+		t.Fatal("different stable build ids must not match even when legacy hashes match")
+	}
+	if !runtimeIdentityMatches(domain.GameRuntimeDescriptor{CoreSHA256: legacyHash}, domain.GameRuntimeDescriptor{CoreSHA256: legacyHash}) {
+		t.Fatal("legacy clients and profiles should continue matching by core hash")
+	}
+}
+
+func TestAppleMobileOrdinaryLibretroDoesNotRequireCoreFingerprint(t *testing.T) {
+	client := domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.40", Platform: "ipados-arm64", Architecture: "arm64"}
+	if !pragmaticRuntimeAllowedForClient(domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "nestopia"}, "nes", client) {
+		t.Fatal("ordinary console cores should not require an application-build fingerprint")
+	}
+	if pragmaticRuntimeAllowedForClient(domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo"}, "cps1", client) {
+		t.Fatal("FBNeo must retain strict runtime identity checks")
+	}
+	if !pragmaticRuntimeAllowedForClient(domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreBuildID: "fbneo:4f7c3a1:arm64:release"}, "cps1", client) {
+		t.Fatal("FBNeo should accept a stable core build id")
 	}
 }
 
@@ -109,7 +144,10 @@ func TestPersistedLaunchProfileResolvesFromSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	runtime := domain.GameRuntimeDescriptor{
+		ID: "libretro", CoreID: "fbneo", CoreBuildID: "fbneo:4f7c3a1:windows-x64:release",
+		CoreSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
 	profile := domain.GameLaunchProfile{
 		GameID: game.ID, ID: "clone-windows-fbneo-test", Revision: 42, Priority: 200, Policy: "test",
 		ClientName: "SpatialEMU.Windows", MinClientVersion: "1.302", ClientPlatform: "windows-x64", Architecture: "x64",
@@ -121,9 +159,11 @@ func TestPersistedLaunchProfileResolvesFromSQLite(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
+	requestedRuntime := runtime
+	requestedRuntime.CoreSHA256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 	request := domain.GameLaunchResolveRequest{
 		Client:   domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"},
-		Runtimes: []domain.GameRuntimeDescriptor{runtime},
+		Runtimes: []domain.GameRuntimeDescriptor{requestedRuntime},
 	}
 	resolved, err := New(st).ResolveGameLaunchProfile(game.ID, request)
 	if err != nil {
@@ -131,6 +171,9 @@ func TestPersistedLaunchProfileResolvesFromSQLite(t *testing.T) {
 	}
 	if resolved.LaunchProfileID != profile.ID || resolved.ProfileRevision != 42 || len(resolved.Files) != 1 {
 		t.Fatalf("resolution=%+v", resolved)
+	}
+	if resolved.Runtime.CoreBuildID != requestedRuntime.CoreBuildID || resolved.Runtime.CoreSHA256 != requestedRuntime.CoreSHA256 {
+		t.Fatalf("resolved runtime=%+v, want exact request tuple %+v", resolved.Runtime, requestedRuntime)
 	}
 }
 

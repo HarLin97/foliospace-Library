@@ -540,11 +540,11 @@ Response:
 
 Empty results return `items: []` with `total: 0`; the endpoint does not return 404 for an empty catalog. The `items` DTO is the same client-safe game DTO used by `gameShelf`, and never includes NAS paths, local file paths, or Docker volume paths.
 
-The client catalog (`/api/client/games`, `/api/client/games/facets`, client search, and played-game lists) publishes only records whose `catalogRole` is `game` (or the legacy empty value). Records marked `needs-curation` or `dependency` remain in the server database and administrative views, but they are not advertised as playable assets. This prevents a catalog item from appearing in a native client when launch-profile resolution is guaranteed to return `409 runtime-profile-not-available`.
+The client catalog (`/api/client/games`, `/api/client/games/facets`, client search, and played-game lists) separates discovery from runtime certification. Records marked `needs-curation` remain visible and retain that `catalogRole`, so a missing launch profile does not make a user's game disappear. Records marked `dependency` remain hidden because they are not independently launchable. Clients must not interpret catalog visibility as proof that a strict runtime profile exists.
 
 ### `GET /api/client/games/facets`
 
-Returns the canonical full-catalog list of **currently indexed, launchable game platforms** for native ROM browsers. Use this endpoint to build system filters before or alongside paged `/api/client/games` loading; do not derive filter options from a single page of results.
+Returns the canonical full-catalog list of **currently indexed, discoverable game platforms** for native ROM browsers. Use this endpoint to build system filters before or alongside paged `/api/client/games` loading; do not derive filter options from a single page of results. Facet counts can include `needs-curation` records and therefore describe discovery, not resolver certification.
 
 Query:
 
@@ -583,9 +583,9 @@ Facets contain exactly one entry per normalized `platform`. Its `count` is the n
 
 This is an inventory endpoint, not a declaration of every platform the server could recognize. A platform with no indexed launchable ROMs is omitted. Clients that need to show a static emulator capability catalog should own that catalog locally and use facets only for the library's available filters and counts.
 
-Sega Model 2 scans use `platform: "model2"`, the ZIP filename stem as `romSetName`, `format: "zip"`, `emulatorHint: "model2"`, and `inputProfile: "operatorArcade"`. Known sets receive their MAME display title. Archive size, CRC32, SHA-1, and download bytes describe the original ZIP container. The `segabill.zip` firmware package remains stored as `catalogRole: "dependency"` for audited profile dependency closure, but it is not returned by client search, catalog pages, or facets. Client-visible Model 2 entries are promoted only after an exact MAME 0.288 listxml audit; failed parent/device/BIOS closures remain `needs-curation` without being deleted.
+Sega Model 2 scans use `platform: "model2"`, the ZIP filename stem as `romSetName`, `format: "zip"`, `emulatorHint: "model2"`, and `inputProfile: "operatorArcade"`. Known sets receive their MAME display title. Archive size, CRC32, SHA-1, and download bytes describe the original ZIP container. The `segabill.zip` firmware package remains stored as `catalogRole: "dependency"` for audited profile dependency closure, but it is not returned by client search, catalog pages, or facets. An exact MAME 0.288 listxml audit promotes compatible entries to `game`; failed parent/device/BIOS closures remain discoverable as `needs-curation` without being deleted or falsely certified.
 
-CPS and Neo Geo sets verified against the configured official FBNeo Arcade DAT use canonical `platform: "cps1"`, `"cps2"`, `"cps3"`, or `"neogeo"`, the DAT set name as `romSetName`, and `emulatorHint: "fbneo"`. The audit checks every non-merged ROM entry by logical name, uncompressed size, and CRC, then verifies the complete `romof` parent/BIOS closure. Ready Windows 1.302 profiles require Libretro core `fbneo` with SHA-256 `6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1`. Rejected archives remain `needs-curation` and are hidden from client catalog endpoints until a matching profile is rebuilt.
+CPS and Neo Geo sets verified against the configured official FBNeo Arcade DAT use canonical `platform: "cps1"`, `"cps2"`, `"cps3"`, or `"neogeo"`, the DAT set name as `romSetName`, and `emulatorHint: "fbneo"`. The audit checks every non-merged ROM entry by logical name, uncompressed size, and CRC, then verifies the complete `romof` parent/BIOS closure. Ready Windows 1.302 profiles require Libretro core `fbneo` with SHA-256 `6ebc2675c272c8d654935647ac336d45bbd97452c4d5943290d5ffc75678d9f1`. Rejected archives remain `needs-curation` and discoverable, but they are not promoted to an audited launch profile until a matching profile is rebuilt.
 
 Canonical MAME ZIP/7Z records use the physical file stem as `romSetName`, never a collection label such as `MAME`. Windows MAME 0.288 profiles are audited for `hypreact`, `hypreac2`, `srmp4`, `fromancr`, `fromanc4`, and `mcnpshnt`. The physical `ym2413_instruments.zip` asset is stored with `catalogRole: "dependency"`, omitted from ordinary pages and facets, and exposed to `mcnpshnt` only as the logical profile filename `ym2413.zip`; the NAS file is never renamed.
 
@@ -918,7 +918,7 @@ Resolves a stable launch profile for the exact client and emulator runtime inven
 Resolution is risk-tiered:
 
 - Ordinary console and computer platforms reuse the existing validated canonical manifest. Every returned launch file has a persisted SHA-1; the resolver never computes large-file hashes synchronously.
-- Physical iPhone, iPad, Apple Vision Pro, and Apple TV clients must report the SHA-256 of every Libretro core they offer. PSP uses normalized core id `ppsspp`; DOS uses `dosboxpure` (the input alias `dosbox-pure` is accepted). Desktop standalone PPSSPP 1.20.4+ and DOSBox Staging 0.82.2+ remain supported.
+- Ordinary console and computer runtimes do not require a hash of the containing application. PSP uses normalized core id `ppsspp`; DOS uses `dosboxpure` (the input alias `dosbox-pure` is accepted). Desktop standalone PPSSPP 1.20.4+ and DOSBox Staging 0.82.2+ remain supported.
 - Curated DOS packages reuse their existing `dosLaunch` object. An ambiguous or unknown inner executable is not promoted to a launchable profile.
 - MAME and FBNeo remain strict: runtime/content-set or core/hash mismatches return `409`, and every audited dependency must be present.
 - Ordinary SFC/SNES entries accept the known Libretro `bsnes`, `bsnes-mercury`, `snes9x`, `snes9x-current`, and Mesen-S core identifiers. They do not require the per-ROM arcade audit table.
@@ -937,13 +937,15 @@ Pragmatic profiles accept these canonical native client identities:
 
 Apple mobile identities describe physical-device builds. Simulator identities and generic placeholders such as `SpatialEMU.Apple` are intentionally rejected, because they do not identify a deployable runtime ABI. The client must report only runtimes actually bundled in that target. Ordinary console, computer, and disc platforms can then resolve through the same deterministic manifest-backed route used by desktop clients.
 
-For Apple mobile Libretro requests, `coreSha256` must be 64 lowercase hexadecimal characters and must describe the actual bundled core. This requirement applies to ordinary console cores as well as PSP and DOS. It prevents simulator, placeholder, or stale builds from receiving a profile intended for a different binary.
+Runtime descriptors accept the optional additive `coreBuildId` field. When both the request and an approved profile contain it, the server prefers that stable identity; otherwise it preserves legacy `coreSha256` matching. Ordinary console and computer platforms do not require an application-build SHA. FBNeo remains strict and requires either an approved stable build ID or the exact legacy core hash. MAME remains strict through its audited runtime version and `contentSet`.
+
+`coreBuildId` must identify the core source revision, compatibility-affecting patch/configuration digest, ABI, and build configuration. It must not include the application version, signature, or unrelated UI object code. The server intentionally does not advertise `stableRuntimeIdentityV1` yet, so deployed clients must continue supporting `coreSha256` and legacy manifest fallback.
 
 MAME and FBNeo profiles remain target-specific and audited. Adding an Apple client identity does not make a Windows arcade profile portable: each mobile target needs a persisted profile matching its exact client identity and runtime tuple. Current Apple builds report `mame/0.287/mame-0.287`; FBNeo additionally requires the exact client-reported `coreSha256`. The server can persist these alongside Windows MAME 0.288 and FBNeo profiles without replacing or weakening either policy.
 
 Clients may report MAME and FBNeo together in `runtimes`. The server evaluates every reported capability against the game's immutable fingerprint and audited profiles, then returns the selected request tuple in `runtime`. Selection is controlled by a stable server-side profile priority and does not depend on the order of `runtimes`. Existing clients that report only one runtime keep the same behavior. If no reported runtime has an audited profile, the endpoint returns `409`.
 
-For statically linked Apple FBNeo builds, `coreSha256` is currently derived from the application executable and is therefore build-specific. Deployment operators must rebuild the corresponding server profiles when that executable hash changes. Clients must never omit or fabricate this field to bypass strict arcade verification.
+Legacy statically linked Apple FBNeo builds may still report an application-derived `coreSha256`. New profiles may additionally store `coreBuildId` so UI-only application rebuilds do not invalidate the core identity. Clients must never omit or fabricate either field to bypass strict arcade verification.
 
 ```json
 {
@@ -1042,7 +1044,7 @@ Current error codes are:
 - `manifest-checksum-unavailable`: a required file has no persisted SHA-1 or changed after it was checksummed.
 - `content-set-mismatch`: a MAME content set does not match an installed audited profile.
 
-Clients must not fall back after `409`, `422`, authentication failures, or server errors. Only `404`, `405`, or `501` indicate that the resolver itself is unavailable and permit legacy manifest fallback. Cache identity is `gameId + launchProfileId + profileRevision + runtime.id + runtime.version + runtime.contentSet + runtime.coreId + runtime.coreSha256`.
+Clients must not fall back after `409`, `422`, authentication failures, or server errors. Only `404`, `405`, or `501` indicate that the resolver itself is unavailable and permit legacy manifest fallback. Cache identity is `gameId + launchProfileId + profileRevision + runtime.id + runtime.version + runtime.contentSet + runtime.coreId + runtime.coreBuildId + runtime.coreSha256`. Clients talking to older servers preserve the legacy identity without `coreBuildId`.
 
 ### `GET /api/client/games/{gameId}/manifest`
 

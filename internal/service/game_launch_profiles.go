@@ -290,6 +290,9 @@ func ValidateGameLaunchResolveRequest(req domain.GameLaunchResolveRequest) error
 		if runtime.CoreSHA256 != "" && !sha256Pattern.MatchString(runtime.CoreSHA256) {
 			return fmt.Errorf("runtimes[%d].coreSha256 must be 64 lowercase hexadecimal characters", index)
 		}
+		if len(strings.TrimSpace(runtime.CoreBuildID)) > 256 {
+			return fmt.Errorf("runtimes[%d].coreBuildId must not exceed 256 characters", index)
+		}
 	}
 	return nil
 }
@@ -417,11 +420,7 @@ func matchingPersistedRuntime(profile domain.GameLaunchProfile, req domain.GameL
 		return domain.GameRuntimeDescriptor{}, false
 	}
 	for _, runtime := range req.Runtimes {
-		if strings.EqualFold(strings.TrimSpace(runtime.ID), profile.Runtime.ID) &&
-			strings.TrimSpace(runtime.Version) == profile.Runtime.Version &&
-			strings.TrimSpace(runtime.ContentSet) == profile.Runtime.ContentSet &&
-			strings.TrimSpace(runtime.CoreID) == profile.Runtime.CoreID &&
-			strings.TrimSpace(runtime.CoreSHA256) == profile.Runtime.CoreSHA256 {
+		if runtimeDescriptorMatches(runtime, profile.Runtime) {
 			return runtime, true
 		}
 	}
@@ -585,7 +584,8 @@ func pragmaticRuntimeAllowedForClient(runtime domain.GameRuntimeDescriptor, plat
 		if (platform == "psp" || platform == "dos") && runtimeID != "libretro" {
 			return false
 		}
-		if runtimeID == "libretro" && !sha256Pattern.MatchString(strings.ToLower(strings.TrimSpace(runtime.CoreSHA256))) {
+		if runtimeID == "libretro" && normalizeLaunchCoreID(runtime.CoreID) == "fbneo" &&
+			!runtimeHasStableIdentity(runtime) {
 			return false
 		}
 	}
@@ -854,9 +854,9 @@ func validLaunchRelativePath(name string) bool {
 }
 
 func pragmaticLaunchProfileID(game domain.GameAsset, runtime domain.GameRuntimeDescriptor, client domain.GameLaunchClient) string {
-	key := fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s", game.ID,
+	key := fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s", game.ID,
 		strings.ToLower(strings.TrimSpace(runtime.ID)), strings.TrimSpace(runtime.Version), strings.TrimSpace(runtime.ContentSet),
-		strings.ToLower(strings.TrimSpace(runtime.CoreID)), strings.ToLower(strings.TrimSpace(runtime.CoreSHA256)),
+		strings.ToLower(strings.TrimSpace(runtime.CoreID)), strings.TrimSpace(runtime.CoreBuildID), strings.ToLower(strings.TrimSpace(runtime.CoreSHA256)),
 		normalizeLaunchPlatform(game.Platform), strings.ToLower(strings.TrimSpace(client.Name)),
 		strings.ToLower(strings.TrimSpace(client.Platform)), strings.ToLower(strings.TrimSpace(client.Architecture)))
 	digest := sha256.Sum256([]byte(key))
@@ -891,12 +891,12 @@ func classifyLaunchResolveFailure(game domain.GameAsset, req domain.GameLaunchRe
 		platform := normalizeLaunchPlatform(game.Platform)
 		coreMatchesPlatform := ordinaryLibretroCoreSupportsPlatform(core, platform) ||
 			(platform == "psp" && core == "ppsspp") || (platform == "dos" && core == "dosboxpure") || core == "fbneo"
-		if coreMatchesPlatform && !sha256Pattern.MatchString(strings.ToLower(strings.TrimSpace(runtime.CoreSHA256))) && isAppleMobileClient(req.Client) {
+		if core == "fbneo" && coreMatchesPlatform && !runtimeHasStableIdentity(runtime) && isAppleMobileClient(req.Client) {
 			details["coreId"] = runtime.CoreID
 			return launchResolveError("core-fingerprint-unknown", "The client did not provide a recognized core fingerprint.", details)
 		}
 		for _, profile := range profiles {
-			if persistedProfileClientMatches(profile, req.Client) && strings.EqualFold(profile.Runtime.ID, runtime.ID) && strings.EqualFold(profile.Runtime.CoreID, runtime.CoreID) && profile.Runtime.CoreSHA256 != runtime.CoreSHA256 {
+			if persistedProfileClientMatches(profile, req.Client) && strings.EqualFold(profile.Runtime.ID, runtime.ID) && strings.EqualFold(profile.Runtime.CoreID, runtime.CoreID) && !runtimeIdentityMatches(runtime, profile.Runtime) {
 				details["coreId"] = runtime.CoreID
 				return launchResolveError("core-fingerprint-unknown", "The supplied core fingerprint is not present in the launch policy.", details)
 			}
@@ -904,7 +904,7 @@ func classifyLaunchResolveFailure(game domain.GameAsset, req domain.GameLaunchRe
 		for _, profile := range auditedGameLaunchProfiles {
 			if auditedProfileSourceMatchesGame(profile, game) && auditedProfileClientMatches(profile, req.Client) &&
 				strings.EqualFold(profile.Runtime.ID, runtime.ID) && strings.EqualFold(profile.Runtime.CoreID, runtime.CoreID) &&
-				profile.Runtime.CoreSHA256 != runtime.CoreSHA256 {
+				!runtimeIdentityMatches(runtime, profile.Runtime) {
 				details["coreId"] = runtime.CoreID
 				return launchResolveError("core-fingerprint-unknown", "The supplied core fingerprint is not present in the launch policy.", details)
 			}
@@ -977,17 +977,35 @@ func matchingRuntime(profile auditedGameLaunchProfile, req domain.GameLaunchReso
 		return domain.GameRuntimeDescriptor{}, false
 	}
 	for _, runtime := range req.Runtimes {
-		if strings.EqualFold(strings.TrimSpace(runtime.ID), profile.Runtime.ID) &&
-			strings.TrimSpace(runtime.Version) == profile.Runtime.Version &&
-			strings.TrimSpace(runtime.ContentSet) == profile.Runtime.ContentSet &&
-			strings.TrimSpace(runtime.CoreID) == profile.Runtime.CoreID &&
-			strings.TrimSpace(runtime.CoreSHA256) == profile.Runtime.CoreSHA256 {
+		if runtimeDescriptorMatches(runtime, profile.Runtime) {
 			// Windows 1.302 verifies the response tuple against the selected
 			// request tuple field by field, so preserve the request verbatim.
 			return runtime, true
 		}
 	}
 	return domain.GameRuntimeDescriptor{}, false
+}
+
+func runtimeDescriptorMatches(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor) bool {
+	return strings.EqualFold(strings.TrimSpace(requested.ID), strings.TrimSpace(approved.ID)) &&
+		strings.TrimSpace(requested.Version) == strings.TrimSpace(approved.Version) &&
+		strings.TrimSpace(requested.ContentSet) == strings.TrimSpace(approved.ContentSet) &&
+		strings.EqualFold(strings.TrimSpace(requested.CoreID), strings.TrimSpace(approved.CoreID)) &&
+		runtimeIdentityMatches(requested, approved)
+}
+
+func runtimeIdentityMatches(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor) bool {
+	requestedBuildID := strings.TrimSpace(requested.CoreBuildID)
+	approvedBuildID := strings.TrimSpace(approved.CoreBuildID)
+	if requestedBuildID != "" && approvedBuildID != "" {
+		return requestedBuildID == approvedBuildID
+	}
+	return strings.EqualFold(strings.TrimSpace(requested.CoreSHA256), strings.TrimSpace(approved.CoreSHA256))
+}
+
+func runtimeHasStableIdentity(runtime domain.GameRuntimeDescriptor) bool {
+	return strings.TrimSpace(runtime.CoreBuildID) != "" ||
+		sha256Pattern.MatchString(strings.ToLower(strings.TrimSpace(runtime.CoreSHA256)))
 }
 
 func versionAtLeast(actual string, minimum string) bool {

@@ -1583,7 +1583,7 @@ func (s *Store) ListGameLaunchAuditCandidates() ([]domain.GameAsset, error) {
 func (s *Store) GameLaunchProfiles(gameID int64) ([]domain.GameLaunchProfile, error) {
 	rows, err := s.db.Query(`SELECT game_id, profile_id, profile_revision, priority, policy,
 		client_name, min_client_version, client_platform, architecture,
-		runtime_id, runtime_version, content_set, core_id, core_sha256,
+		runtime_id, runtime_version, content_set, core_id, core_build_id, core_sha256,
 		entry_file, canonical_set, status
 		FROM game_launch_profiles
 		WHERE game_id = ? AND LOWER(TRIM(status)) = 'ready'
@@ -1596,7 +1596,7 @@ func (s *Store) GameLaunchProfiles(gameID int64) ([]domain.GameLaunchProfile, er
 		var profile domain.GameLaunchProfile
 		if err := rows.Scan(&profile.GameID, &profile.ID, &profile.Revision, &profile.Priority, &profile.Policy,
 			&profile.ClientName, &profile.MinClientVersion, &profile.ClientPlatform, &profile.Architecture,
-			&profile.Runtime.ID, &profile.Runtime.Version, &profile.Runtime.ContentSet, &profile.Runtime.CoreID,
+			&profile.Runtime.ID, &profile.Runtime.Version, &profile.Runtime.ContentSet, &profile.Runtime.CoreID, &profile.Runtime.CoreBuildID,
 			&profile.Runtime.CoreSHA256, &profile.EntryFile, &profile.CanonicalSet, &profile.Status); err != nil {
 			_ = rows.Close()
 			return nil, err
@@ -1659,9 +1659,9 @@ func (s *Store) ReplaceGameLaunchProfiles(policy string, profiles []domain.GameL
 	profileStatement, err := tx.Prepare(`INSERT INTO game_launch_profiles(
 		game_id, profile_id, profile_revision, priority, policy,
 		client_name, min_client_version, client_platform, architecture,
-		runtime_id, runtime_version, content_set, core_id, core_sha256,
+		runtime_id, runtime_version, content_set, core_id, core_build_id, core_sha256,
 		entry_file, canonical_set, status, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
 	if err != nil {
 		return domain.GameLaunchProfileRebuildResult{}, err
 	}
@@ -1678,7 +1678,7 @@ func (s *Store) ReplaceGameLaunchProfiles(policy string, profiles []domain.GameL
 		if _, err := profileStatement.Exec(profile.GameID, profile.ID, profile.Revision, profile.Priority, policy,
 			profile.ClientName, profile.MinClientVersion, profile.ClientPlatform, profile.Architecture,
 			profile.Runtime.ID, profile.Runtime.Version, profile.Runtime.ContentSet, profile.Runtime.CoreID,
-			profile.Runtime.CoreSHA256, profile.EntryFile, profile.CanonicalSet, profile.Status); err != nil {
+			profile.Runtime.CoreBuildID, profile.Runtime.CoreSHA256, profile.EntryFile, profile.CanonicalSet, profile.Status); err != nil {
 			return domain.GameLaunchProfileRebuildResult{}, err
 		}
 		result.ProfilesWritten++
@@ -3316,7 +3316,7 @@ func gameListWhere(options domain.GameListOptions, includeDependencies bool) (st
 	clauses := make([]string, 0, 3)
 	args := make([]any, 0, 8)
 	if options.ClientVisibleOnly {
-		clauses = append(clauses, `LOWER(TRIM(catalog_role)) IN ('', 'game')`)
+		clauses = append(clauses, `LOWER(TRIM(catalog_role)) <> 'dependency'`)
 	} else if !includeDependencies {
 		clauses = append(clauses, `LOWER(TRIM(catalog_role)) <> 'dependency'`)
 	}

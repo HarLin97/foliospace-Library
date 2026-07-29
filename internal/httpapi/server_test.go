@@ -975,11 +975,12 @@ func TestAPIClientGamesPage(t *testing.T) {
 	if strings.Contains(body, "/library") || strings.Contains(body, "filePath") || strings.Contains(body, "relPath") {
 		t.Fatalf("client games leaked internal path: %q", body)
 	}
-	if !strings.Contains(body, `"total":4`) || !strings.Contains(body, `"limit":2`) || !strings.Contains(body, `"hasMore":true`) || !strings.Contains(body, `"title":"Advance Wars"`) {
+	if !strings.Contains(body, `"total":5`) || !strings.Contains(body, `"limit":2`) || !strings.Contains(body, `"hasMore":true`) || !strings.Contains(body, `"title":"Advance Wars"`) {
 		t.Fatalf("client games page %q missing pagination metadata or title sort", body)
 	}
-	if strings.Contains(authGet(t, ts.URL+"/api/client/games?q=Hidden%20Uncurated", "secret"), "Hidden Uncurated") {
-		t.Fatalf("client games exposed a needs-curation entry")
+	uncuratedBody := authGet(t, ts.URL+"/api/client/games?q=Hidden%20Uncurated", "secret")
+	if !strings.Contains(uncuratedBody, `"title":"Hidden Uncurated"`) || !strings.Contains(uncuratedBody, `"catalogRole":"needs-curation"`) {
+		t.Fatalf("client games page %q did not preserve discoverable needs-curation entry", uncuratedBody)
 	}
 	if strings.Contains(authGet(t, ts.URL+"/api/client/games?q=Neo%20Geo%20BIOS", "secret"), "Neo Geo BIOS") {
 		t.Fatalf("client games exposed a dependency entry")

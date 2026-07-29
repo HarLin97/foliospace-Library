@@ -156,6 +156,15 @@ The recovery branch implements this switch as
 `POST /api/client/games/{gameId}/resolve` returns `404`. The legacy manifest
 endpoint remains unchanged.
 
+The manifest-first recovery phase also keeps `needs-curation` games visible in
+client lists, search, and facets while excluding dependency-only records.
+Catalog visibility no longer implies runtime certification. Runtime request,
+response, and persisted profile models accept an optional `coreBuildId` and
+prefer it when both sides provide it, with legacy `coreSha256` matching retained
+for existing clients. The `stableRuntimeIdentityV1` capability remains
+unadvertised until official runtime catalogs and cross-target acceptance are in
+place.
+
 ## Game Curation UI
 
 Extend Game Curation with:

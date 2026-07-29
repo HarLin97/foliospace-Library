@@ -1,12 +1,12 @@
 # Game Catalog Curation
 
-FolioSpace separates file discovery from client publication. Scanning proves that a file exists and records stable identity where possible. Catalog curation then decides whether it is a launchable game, a dependency, or an item that still needs review. Native clients receive only launchable `game` records.
+FolioSpace separates file discovery from runtime certification. Scanning proves that a file exists and records stable identity where possible. Catalog curation then decides whether it is a certified game, a dependency, or an item that still needs review. Native clients can discover `game` and `needs-curation` records, while dependency-only files remain hidden.
 
 ## 1. Automatic Post-Scan Analysis
 
 Enable **Analyze after game scans** during first-run setup or under **Game Curation**. After a game or mixed library scan completes, FolioSpace starts one background catalog task. A second task is not created while the first one is running.
 
-The base pass identifies ordinary launch entries and known dependency files. Strict arcade families remain `needs-curation` until an installed compatibility policy verifies the ROM set and creates at least one target-specific Launch Profile. This avoids advertising a game that every client would reject with `409 runtime-profile-not-available`.
+The base pass identifies ordinary launch entries and known dependency files. Strict arcade families remain `needs-curation` until an installed compatibility policy verifies the ROM set and creates at least one target-specific Launch Profile. These records remain discoverable but must not be presented as certified launchable.
 
 Automatic analysis is saved only after setup explicitly writes game settings. Upgraded installations therefore do not unexpectedly start a full arcade audit on their first scan.
 
@@ -49,7 +49,7 @@ The default container paths are:
 
 The FBNeo DAT and MAME listxml are not bundled with FolioSpace. Administrators must supply policy files that match the exact runtime/core versions used by their clients. The two target JSON files supply the client/runtime fingerprints for each policy family; they must remain separate because FBNeo requires a build-specific core fingerprint while MAME target declarations use a different contract. Paths are configurable in setup and Game Curation for installations with a different `/config` layout. The older `/config/policies/targets.json` setting is retained only as a compatibility fallback.
 
-If policy files are absent, ordinary console and disc games can still be indexed. Strict arcade records remain visible to administrators as `needs-curation` and stay out of native-client facets until audited.
+If policy files are absent, ordinary console and disc games can still be indexed. Strict arcade records remain `needs-curation` and are included in native-client discovery and facets without being promoted to a ready launch profile.
 
 ## 4. Cover Matching
 

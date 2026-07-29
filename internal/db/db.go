@@ -153,6 +153,7 @@ func Migrate(conn *sql.DB) error {
 			runtime_version TEXT NOT NULL DEFAULT '',
 			content_set TEXT NOT NULL DEFAULT '',
 			core_id TEXT NOT NULL DEFAULT '',
+			core_build_id TEXT NOT NULL DEFAULT '',
 			core_sha256 TEXT NOT NULL DEFAULT '',
 			entry_file TEXT NOT NULL,
 			canonical_set TEXT NOT NULL DEFAULT '',
@@ -547,6 +548,9 @@ func Migrate(conn *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "game_files", "sha1", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "game_launch_profiles", "core_build_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "game_dos_launch", "install_directory", "TEXT NOT NULL DEFAULT ''"); err != nil {
