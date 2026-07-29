@@ -1,6 +1,6 @@
 # FolioSpace Library
 
-[Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md)
+[Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md) · [Game curation](docs/operations/game-catalog-curation.md)
 
 ![FolioSpace Library hero](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/hero.png)
 
@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.982`.
+Current release branch: `0.990`.
 
 ## Screenshots
 
@@ -78,6 +78,10 @@ First-run setup helpers:
 - `GET /api/setup/status`: returns whether the service has an access token and at least one library.
 - `POST /api/setup/initialize`: creates the first access token and first library.
 - `GET /api/config/directory-roots`: returns container-visible root directories for the setup picker.
+
+Fresh installations can also configure the game catalog pipeline during setup. FolioSpace classifies new game files after scanning, keeps unverified archives in `needs-curation`, and publishes only records that are safe for native clients to launch. The setup page can enable automatic post-scan analysis, local/Libretro cover matching, optional Hasheous hash metadata, and explicit FBNeo/MAME compatibility policy paths under `/config/policies`.
+
+After setup, open **Game Curation** in the web sidebar to inspect ready games, dependencies, and records that need attention. The page reports missing identity, missing policy packs, and failed launch-profile audits; it can re-run catalog analysis, batch-match local covers, optionally try Libretro artwork, and edit metadata without moving the source ROM. See [`docs/operations/game-catalog-curation.md`](docs/operations/game-catalog-curation.md) for the complete workflow.
 
 ## Client API v1
 
@@ -219,6 +223,23 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.990
+
+Release `0.990` introduces the Game Curation Center, a complete post-scan workflow for turning raw ROM imports into a clean, client-safe game catalog:
+
+- A dedicated **Game Curation** page separates published games, dependencies, and `needs-curation` records with actionable issue messages.
+- Fresh installations enable automatic post-scan analysis by default, while administrators can change the behavior at any time under compatibility and metadata settings.
+- Compatibility analysis classifies scan results and rebuilds audited FBNeo/MAME launch profiles from deployment-supplied policy files without moving or rewriting ROMs.
+- Client catalogs publish only launchable game records, preventing incomplete archives and unresolved dependencies from surfacing as broken entries.
+- Bounded background tasks provide visible progress and prevent duplicate compatibility, cover, or metadata jobs from running concurrently.
+- Local artwork matching supports common sidecars, cover folders, and `media/<ROM name>/boxFront.*`; optional Libretro matching can fill remaining artwork.
+- Administrators can edit titles, descriptions, genres, developers, publishers, dates, regions, and external metadata choices directly from the web interface.
+- Optional Hasheous metadata lookup is hash-based and opt-in. Local-only mode remains the default and network failures never block scanning or client manifests.
+- First-run setup now includes game-catalog automation and advanced policy paths, so new NAS installations can establish the workflow before their first game scan.
+- Service, Client API, Web, and MCP metadata report version `0.990`.
+
+See [`docs/operations/game-catalog-curation.md`](docs/operations/game-catalog-curation.md) for setup, policy, and recovery details.
+
 ## Release 0.982
 
 Release `0.982` makes audited arcade launch profiles durable and rebuildable for existing libraries:
@@ -329,7 +350,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.982 ./scripts/build-mcp-release.sh
+VERSION=0.990 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -349,10 +370,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.982` image tag:
+Release `0.990` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.982
+docker pull funland/foliospace-library:0.990
 ```
 
 For local verification:
@@ -371,7 +392,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.982
+  funland/foliospace-library:0.990
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -386,11 +407,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.982
-git push github v0.982
+git tag v0.990
+git push github v0.990
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.982` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.990` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

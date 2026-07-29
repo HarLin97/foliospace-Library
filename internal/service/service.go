@@ -48,10 +48,14 @@ type Service struct {
 	thumbnailEnqueue         chan domain.ThumbnailJobInput
 	thumbnailEnqueueMu       sync.Mutex
 	thumbnailEnqueued        map[string]struct{}
+	gameCatalogMu            sync.Mutex
+	gameCatalogTask          domain.GameCatalogTaskStatus
 }
 
 const adminTokenHashSetting = "admin_token_sha256"
 const scanWorkersSetting = "scan_workers"
+const gameCatalogSettingsSetting = "game_catalog_settings"
+const gameCatalogTaskSetting = "game_catalog_last_task"
 
 var errVideoTranscodeBusy = errors.New("another video transcode is running")
 
@@ -91,21 +95,23 @@ func IsVideoTranscodeBusy(err error) bool {
 }
 
 type SetupStatus struct {
-	Initialized     bool                    `json:"initialized"`
-	AuthEnabled     bool                    `json:"authEnabled"`
-	HasLibraries    bool                    `json:"hasLibraries"`
-	TokenConfigured bool                    `json:"tokenConfigured"`
-	DirectoryRoots  []domain.DirectoryEntry `json:"directoryRoots"`
-	ScanWorkers     int                     `json:"scanWorkers"`
+	Initialized     bool                       `json:"initialized"`
+	AuthEnabled     bool                       `json:"authEnabled"`
+	HasLibraries    bool                       `json:"hasLibraries"`
+	TokenConfigured bool                       `json:"tokenConfigured"`
+	DirectoryRoots  []domain.DirectoryEntry    `json:"directoryRoots"`
+	ScanWorkers     int                        `json:"scanWorkers"`
+	GameCatalog     domain.GameCatalogSettings `json:"gameCatalog"`
 }
 
 type SetupInput struct {
-	Token           string   `json:"token"`
-	Name            string   `json:"name"`
-	RootPath        string   `json:"rootPath"`
-	AssetType       string   `json:"assetType"`
-	ExcludePatterns []string `json:"excludePatterns"`
-	ScanWorkers     int      `json:"scanWorkers"`
+	Token           string                      `json:"token"`
+	Name            string                      `json:"name"`
+	RootPath        string                      `json:"rootPath"`
+	AssetType       string                      `json:"assetType"`
+	ExcludePatterns []string                    `json:"excludePatterns"`
+	ScanWorkers     int                         `json:"scanWorkers"`
+	GameCatalog     *domain.GameCatalogSettings `json:"gameCatalog,omitempty"`
 }
 
 type ScanSettings struct {
@@ -139,6 +145,7 @@ func NewWithConfig(store *store.Store, configDir string) *Service {
 	}
 	_, _ = store.ResetRunningThumbnailJobs()
 	svc.thumbnailWorker = newThumbnailWorker(svc)
+	svc.scanner.SetCompletionHook(svc.handleCompletedScan)
 	go svc.thumbnailEnqueueLoop()
 	svc.thumbnailWorker.start()
 	return svc
@@ -166,6 +173,7 @@ func (s *Service) SetupStatus(envTokenConfigured bool) (SetupStatus, error) {
 		TokenConfigured: tokenConfigured,
 		DirectoryRoots:  roots,
 		ScanWorkers:     s.ScanWorkerCount(),
+		GameCatalog:     s.GameCatalogSettings(),
 	}, nil
 }
 
@@ -181,6 +189,11 @@ func (s *Service) InitializeSetup(input SetupInput, tokenAlreadyConfigured bool)
 	}
 	if input.ScanWorkers > 0 {
 		if err := s.SaveScanSettings(ScanSettings{ScanWorkers: input.ScanWorkers}); err != nil {
+			return domain.Library{}, err
+		}
+	}
+	if input.GameCatalog != nil {
+		if err := s.SaveGameCatalogSettings(*input.GameCatalog); err != nil {
 			return domain.Library{}, err
 		}
 	}
@@ -1050,11 +1063,18 @@ func (s *Service) RefreshGameMetadata(id int64) (domain.GameMetadataActionResult
 	if err != nil {
 		return domain.GameMetadataActionResult{}, err
 	}
+	if s.GameCatalogSettings().MetadataProvider == "hasheous" {
+		return s.refreshGameMetadataFromHasheous(details)
+	}
+	message := "Local metadata refresh completed."
+	if s.GameCatalogSettings().MetadataProvider == "disabled" {
+		message = "Online metadata matching is disabled. Existing local metadata was kept."
+	}
 	return domain.GameMetadataActionResult{
 		GameID:         id,
 		Action:         "refresh",
 		Status:         "completed",
-		Message:        "Built-in local providers are available; credentialed network providers are reported but not called unless configured.",
+		Message:        message,
 		MetadataStatus: details.MetadataStatus,
 		Sources:        details.Sources,
 		Providers:      s.GameMetadataProviders(),
@@ -1085,6 +1105,11 @@ func (s *Service) SelectGameMetadataMatch(id int64, source string, sourceID stri
 	selected.Confidence = 1
 	if _, err := s.store.UpsertGameMetadataSource(selected); err != nil {
 		return domain.GameMetadataActionResult{}, err
+	}
+	if selected.Source == "hasheous" {
+		if err := s.applyHasheousMetadata(details, selected.RawJSON); err != nil {
+			return domain.GameMetadataActionResult{}, err
+		}
 	}
 	details, err = s.store.GameDetails(id)
 	if err != nil {
@@ -1236,8 +1261,18 @@ func localGameCoverCandidates(gamePath string) []string {
 	if parent := filepath.Dir(dir); parent != dir {
 		mediaDirs = append(mediaDirs, parent)
 	}
-	candidates := make([]string, 0, len(names)*len(mediaBases)*len(mediaDirs))
+	candidates := make([]string, 0, len(names)*len(mediaBases)*len(mediaDirs)+32)
 	seen := map[string]bool{}
+	imageExtensions := []string{".jpg", ".jpeg", ".png", ".webp"}
+	for _, coverDir := range []string{dir, filepath.Join(dir, "covers"), filepath.Join(dir, "boxarts"), filepath.Join(dir, "images")} {
+		for _, extension := range imageExtensions {
+			path := filepath.Join(coverDir, base+extension)
+			if !seen[path] {
+				seen[path] = true
+				candidates = append(candidates, path)
+			}
+		}
+	}
 	for _, mediaDir := range mediaDirs {
 		for _, mediaBase := range mediaBases {
 			for _, name := range names {

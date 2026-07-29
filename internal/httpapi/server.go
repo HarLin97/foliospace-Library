@@ -32,7 +32,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.982"
+const serviceVersion = "0.990"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -53,6 +53,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/profiles", s.handleProfiles)
 	mux.HandleFunc("/api/profiles/", s.handleProfileAction)
 	mux.HandleFunc("/api/settings/scan", s.handleScanSettings)
+	mux.HandleFunc("/api/settings/game-catalog", s.handleGameCatalogSettings)
 	mux.HandleFunc("/api/client/info", s.handleClientInfo)
 	mux.HandleFunc("/api/client/preferences", s.handleClientPreferences)
 	mux.HandleFunc("/api/client/home", s.handleClientHome)
@@ -82,6 +83,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/books/", s.handleBookAction)
 	mux.HandleFunc("/api/games/metadata/providers", s.handleGameMetadataProviders)
 	mux.HandleFunc("/api/games/gamelist.xml", s.handleGameGamelistExport)
+	mux.HandleFunc("/api/games/curation", s.handleGameCuration)
+	mux.HandleFunc("/api/games/curation/task", s.handleGameCurationTask)
+	mux.HandleFunc("/api/games/curation/analyze", s.handleGameCurationAnalyze)
+	mux.HandleFunc("/api/games/curation/covers", s.handleGameCurationCovers)
 	mux.HandleFunc("/api/games/", s.handleGameAction)
 	mux.HandleFunc("/api/games/recent", s.handleRecentGames)
 	mux.HandleFunc("/api/videos/", s.handleVideoAction)
@@ -252,6 +257,88 @@ func (s *Server) handleGameMetadataProviders(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, map[string]any{"providers": s.service.GameMetadataProviders()})
+}
+
+func (s *Server) handleGameCatalogSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, s.service.GameCatalogSettings())
+	case http.MethodPut:
+		var settings domain.GameCatalogSettings
+		if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := s.service.SaveGameCatalogSettings(settings); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, s.service.GameCatalogSettings())
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleGameCuration(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Query().Get("summary") == "1" {
+		summary, err := s.service.GameCurationSummary()
+		writeJSONOrError(w, summary, err)
+		return
+	}
+	page, err := s.service.ListGameCurationPage(domain.GameListOptions{
+		Limit:       queryInt(r, "limit", 60, 200),
+		Offset:      queryInt(r, "offset", 0, 0),
+		Query:       r.URL.Query().Get("q"),
+		Platform:    r.URL.Query().Get("platform"),
+		CatalogRole: r.URL.Query().Get("state"),
+		Sort:        r.URL.Query().Get("sort"),
+	})
+	writeJSONOrError(w, page, err)
+}
+
+func (s *Server) handleGameCurationTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, s.service.GameCatalogTaskStatus())
+}
+
+func (s *Server) handleGameCurationAnalyze(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	task, err := s.service.StartGameCatalogAnalysis()
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSONStatus(w, http.StatusAccepted, task)
+}
+
+func (s *Server) handleGameCurationCovers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		IncludeNetwork bool `json:"includeNetwork"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	task, err := s.service.StartGameCoverMatch(req.IncludeNetwork)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSONStatus(w, http.StatusAccepted, task)
 }
 
 func (s *Server) handleGameGamelistExport(w http.ResponseWriter, r *http.Request) {
@@ -967,6 +1054,11 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if tail == "" && r.Method == http.MethodGet {
+		details, err := s.service.GameDetails(id)
+		writeJSONOrError(w, details, err)
+		return
+	}
 	if tail == "cover" && r.Method == http.MethodGet {
 		s.streamGameCover(w, id)
 		return
@@ -998,6 +1090,16 @@ func (s *Server) handleGameAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, gameMetadataActionResponseFromResult(result))
+		return
+	}
+	if tail == "metadata" && r.Method == http.MethodPut {
+		var req domain.GameMetadata
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		details, err := s.service.UpdateGameMetadata(id, req)
+		writeJSONOrError(w, details, err)
 		return
 	}
 	http.NotFound(w, r)
@@ -2112,6 +2214,12 @@ func writeJSONOrError(w http.ResponseWriter, value any, err error) {
 
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeJSONStatus(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 

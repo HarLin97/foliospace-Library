@@ -3,7 +3,7 @@ import type { CSSProperties, FormEvent, MouseEvent, ReactNode, SyntheticEvent, T
 import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import pdfWorkerURL from "pdfjs-dist/build/pdf.worker.mjs?url";
-import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, GamePrivateState, getActiveProfileId, getAuthToken, JobEvent, Library, ManualCollection, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, ThumbnailWorkerStatus, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
+import { api, Book, BookPrivateState, clearAuthToken, ClientInfo, ClientPreferences, CollectionPrivateState, DirectoryEntry, DirectoryListing, EpubManifest, EpubTocItem, FileError, GameAsset, GameCatalogSettings, GameCatalogTaskStatus, GameCurationItem, GameCurationSummary, GameDetails, GameMetadata, GamePrivateState, getActiveProfileId, getAuthToken, JobEvent, Library, ManualCollection, Page, Profile, ScanJob, Series, setActiveProfileId as persistActiveProfileId, setAuthToken, SetupStatus, ScanSettings, ThumbnailWorkerStatus, VideoAsset, VideoTranscodeQueueStatus, VideoTranscodeStatus } from "./api";
 import {
   DEFAULT_WEBTOON_ANCHOR_RATIO,
   WEBTOON_POSITION_SCHEMA,
@@ -27,7 +27,7 @@ import { gamePlatformFilterOptions } from "./game-platform-options";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
-type View = "library" | "favorites" | "reader" | "games" | "videos" | "jobs" | "errors" | "about";
+type View = "library" | "favorites" | "reader" | "games" | "game-curation" | "videos" | "jobs" | "errors" | "about";
 type ReaderPageMode = "single" | "double" | "webtoon";
 type EpubPageMode = "single" | "double";
 type EpubTheme = "light" | "sepia" | "dark";
@@ -48,6 +48,15 @@ type ReaderImageSize = { width: number; height: number };
 const bookPageSize = 30;
 const catalogPageSize = 200;
 const gameCatalogPageSize = 80;
+const defaultGameCatalogSettings: GameCatalogSettings = {
+  autoAnalyzeAfterScan: true,
+  enableLibretroCovers: true,
+  fbneoDatPath: "/config/policies/fbneo-arcade.dat",
+  mameListXmlPath: "/config/policies/mame0288lx.zip",
+  launchTargetsPath: "/config/policies/targets.json",
+  mamePlatforms: "arcade,mame,model2,cps,cps1,cps2,cps3,neogeo",
+  metadataProvider: "local",
+};
 
 export function App() {
   const initialPreferences = useRef(readLocalPreferences()).current;
@@ -70,6 +79,17 @@ export function App() {
   const [gameCatalogHasMore, setGameCatalogHasMore] = useState(false);
   const [videoCatalogHasMore, setVideoCatalogHasMore] = useState(false);
   const [gameCatalogLoading, setGameCatalogLoading] = useState(false);
+  const [gameCurationSummary, setGameCurationSummary] = useState<GameCurationSummary | null>(null);
+  const [gameCurationItems, setGameCurationItems] = useState<GameCurationItem[]>([]);
+  const [gameCurationTotal, setGameCurationTotal] = useState(0);
+  const [gameCurationHasMore, setGameCurationHasMore] = useState(false);
+  const [gameCurationLoading, setGameCurationLoading] = useState(false);
+  const [gameCurationState, setGameCurationState] = useState("needs-curation");
+  const [gameCatalogTask, setGameCatalogTask] = useState<GameCatalogTaskStatus | null>(null);
+  const [gameCatalogSettings, setGameCatalogSettings] = useState<GameCatalogSettings>(defaultGameCatalogSettings);
+  const [gameCatalogSettingsSaving, setGameCatalogSettingsSaving] = useState(false);
+  const [editingGameDetails, setEditingGameDetails] = useState<GameDetails | null>(null);
+  const [gameMetadataDraft, setGameMetadataDraft] = useState<GameMetadata | null>(null);
   const [videoCatalogLoading, setVideoCatalogLoading] = useState(false);
   const [clientInfo, setClientInfo] = useState<ClientInfo | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<VideoAsset | null>(null);
@@ -116,6 +136,7 @@ export function App() {
   const [setupPath, setSetupPath] = useState("");
   const [setupAssetType, setSetupAssetType] = useState<LibraryAssetType>("mixed");
   const [setupScanWorkers, setSetupScanWorkers] = useState(2);
+  const [setupGameCatalog, setSetupGameCatalog] = useState<GameCatalogSettings>(defaultGameCatalogSettings);
   const [setupError, setSetupError] = useState("");
   const [scanSettings, setScanSettings] = useState<ScanSettings>({ scanWorkers: 1 });
   const [scanWorkerDraft, setScanWorkerDraft] = useState(1);
@@ -261,6 +282,150 @@ export function App() {
     await loadGameCatalogPage(0, true);
   }
 
+  async function openGameCuration() {
+    setView("game-curation");
+    await refreshGameCuration(gameCurationState);
+  }
+
+  async function refreshGameCuration(state = gameCurationState) {
+    if (gameCurationLoading) return;
+    setGameCurationLoading(true);
+    try {
+      const [summary, page, settings, task] = await Promise.all([
+        api.gameCurationSummary(),
+        api.gameCurationPage({ limit: 120, state }),
+        api.gameCatalogSettings(),
+        api.gameCurationTask(),
+      ]);
+      setGameCurationSummary(summary);
+      setGameCurationItems(arrayOrEmpty(page.items));
+      setGameCurationTotal(page.total);
+      setGameCurationHasMore(page.hasMore);
+      setGameCatalogSettings(settings);
+      setGameCatalogTask(task);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load game curation");
+    } finally {
+      setGameCurationLoading(false);
+    }
+  }
+
+  async function loadMoreGameCuration() {
+    if (gameCurationLoading || !gameCurationHasMore) return;
+    setGameCurationLoading(true);
+    try {
+      const page = await api.gameCurationPage({ limit: 120, offset: gameCurationItems.length, state: gameCurationState });
+      setGameCurationItems((current) => mergeCurationByID(current, arrayOrEmpty(page.items)));
+      setGameCurationTotal(page.total);
+      setGameCurationHasMore(page.hasMore);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load more curation entries");
+    } finally {
+      setGameCurationLoading(false);
+    }
+  }
+
+  async function changeGameCurationState(state: string) {
+    setGameCurationState(state);
+    await refreshGameCuration(state);
+  }
+
+  async function runGameCatalogAnalysis() {
+    try {
+      const task = await api.analyzeGameCatalog();
+      setGameCatalogTask(task);
+      setStatus("Game compatibility analysis started");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to start analysis");
+    }
+  }
+
+  async function runGameCoverMatch(includeNetwork: boolean) {
+    try {
+      const task = await api.matchGameCovers(includeNetwork);
+      setGameCatalogTask(task);
+      setStatus(includeNetwork ? "Libretro cover matching started" : "Local cover matching started");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to start cover matching");
+    }
+  }
+
+  async function saveGameCatalogSettings() {
+    setGameCatalogSettingsSaving(true);
+    try {
+      const saved = await api.saveGameCatalogSettings(gameCatalogSettings);
+      setGameCatalogSettings(saved);
+      setStatus("Game catalog settings saved");
+      await refreshGameCuration(gameCurationState);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to save game catalog settings");
+    } finally {
+      setGameCatalogSettingsSaving(false);
+    }
+  }
+
+  async function editGameMetadata(gameId: number) {
+    try {
+      const details = await api.gameDetails(gameId);
+      setEditingGameDetails(details);
+      setGameMetadataDraft({
+        ...details.metadata,
+        gameId,
+        displayTitle: details.metadata.displayTitle || details.game.title,
+        genres: arrayOrEmpty(details.metadata.genres),
+        developers: arrayOrEmpty(details.metadata.developers),
+        publishers: arrayOrEmpty(details.metadata.publishers),
+        externalLinks: arrayOrEmpty(details.metadata.externalLinks),
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load game metadata");
+    }
+  }
+
+  async function saveManualGameMetadata(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingGameDetails || !gameMetadataDraft) return;
+    try {
+      await api.saveGameMetadata(editingGameDetails.game.id, gameMetadataDraft);
+      setEditingGameDetails(null);
+      setGameMetadataDraft(null);
+      setStatus("Game metadata saved");
+      await refreshGameCuration(gameCurationState);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to save game metadata");
+    }
+  }
+
+  async function refreshEditingGameMetadata() {
+    if (!editingGameDetails) return;
+    setActiveTask("Matching game metadata");
+    try {
+      const result = await api.refreshGameMetadata(editingGameDetails.game.id);
+      setStatus(result.message);
+      await editGameMetadata(editingGameDetails.game.id);
+      await refreshGameCuration(gameCurationState);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Metadata matching failed");
+    } finally {
+      setActiveTask(null);
+    }
+  }
+
+  async function selectEditingGameMetadataSource(source: string, sourceId: string) {
+    if (!editingGameDetails) return;
+    setActiveTask("Applying game metadata");
+    try {
+      const result = await api.selectGameMetadataMatch(editingGameDetails.game.id, source, sourceId);
+      setStatus(result.message);
+      await editGameMetadata(editingGameDetails.game.id);
+      await refreshGameCuration(gameCurationState);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Metadata selection failed");
+    } finally {
+      setActiveTask(null);
+    }
+  }
+
   async function loadGameCatalogPage(offset: number, reset = false) {
     if (gameCatalogLoading) return;
     setGameCatalogLoading(true);
@@ -373,6 +538,7 @@ export function App() {
           setSetupRequired(true);
           setAuthEnabled(setup.authEnabled);
           setSetupScanWorkers(setup.scanWorkers || 2);
+          setSetupGameCatalog(setup.gameCatalog || defaultGameCatalogSettings);
           const firstRoot = setup.directoryRoots[0];
           if (firstRoot) {
             setSetupPath(firstRoot.path);
@@ -529,6 +695,22 @@ export function App() {
     });
   }, [libraries]);
 
+  useEffect(() => {
+    if (view !== "game-curation" || gameCatalogTask?.status !== "running") return;
+    const timer = window.setInterval(async () => {
+      try {
+        const task = await api.gameCurationTask();
+        setGameCatalogTask(task);
+        if (task.status !== "running") {
+          await refreshGameCuration(gameCurationState);
+        }
+      } catch {
+        // Keep the current task snapshot; the next poll can recover.
+      }
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [view, gameCatalogTask?.status, gameCurationState]);
+
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const token = authInput.trim();
@@ -572,6 +754,7 @@ export function App() {
         assetType: setupAssetType,
         excludePatterns: parseExcludePatterns(defaultExcludePatternsText()),
         scanWorkers: setupScanWorkers,
+        gameCatalog: setupGameCatalog,
       });
       if (!setupStatus?.authEnabled) {
         setAuthToken(token);
@@ -1935,6 +2118,9 @@ export function App() {
         <button className={view === "games" ? "active" : ""} onClick={openGameCatalog}>
           {t.gameShelf}
         </button>
+        <button className={view === "game-curation" ? "active" : ""} onClick={openGameCuration}>
+          {locale === "zh" || locale === "zht" ? "游戏整理" : "Game Curation"}
+        </button>
         <button className={view === "videos" ? "active" : ""} onClick={openVideoCatalog}>
           {t.videoShelf}
         </button>
@@ -2531,6 +2717,127 @@ export function App() {
               )}
             </div>
           </CatalogPage>
+        )}
+
+        {view === "game-curation" && (
+          <section className="catalogPage gameCurationPage">
+            <div className="catalogHeader gameCurationHeader">
+              <div>
+                <h1>{locale === "zh" || locale === "zht" ? "游戏整理中心" : "Game Curation"}</h1>
+                <small>{locale === "zh" || locale === "zht" ? "扫描结果、兼容性审计、封面和元数据在这里统一处理。" : "Review scan results, compatibility audits, covers, and metadata."}</small>
+              </div>
+              <div className="curationActions">
+                <button type="button" disabled={gameCatalogTask?.status === "running"} onClick={runGameCatalogAnalysis}>
+                  {locale === "zh" || locale === "zht" ? "重新分析兼容性" : "Analyze compatibility"}
+                </button>
+                <button type="button" disabled={gameCatalogTask?.status === "running"} onClick={() => runGameCoverMatch(false)}>
+                  {locale === "zh" || locale === "zht" ? "匹配本地封面" : "Match local covers"}
+                </button>
+                <button type="button" disabled={gameCatalogTask?.status === "running" || !gameCatalogSettings.enableLibretroCovers} onClick={() => runGameCoverMatch(true)}>
+                  {locale === "zh" || locale === "zht" ? "补全 Libretro 封面" : "Match Libretro covers"}
+                </button>
+              </div>
+            </div>
+
+            {gameCurationSummary && (
+              <div className="curationSummaryGrid">
+                <button type="button" className={gameCurationState === "" ? "active" : ""} onClick={() => changeGameCurationState("")}><strong>{gameCurationSummary.total}</strong><span>{locale === "zh" || locale === "zht" ? "全部" : "All"}</span></button>
+                <button type="button" className={gameCurationState === "game" ? "active" : ""} onClick={() => changeGameCurationState("game")}><strong>{gameCurationSummary.ready}</strong><span>{locale === "zh" || locale === "zht" ? "已发布" : "Ready"}</span></button>
+                <button type="button" className={gameCurationState === "needs-curation" ? "active warning" : "warning"} onClick={() => changeGameCurationState("needs-curation")}><strong>{gameCurationSummary.needsCuration}</strong><span>{locale === "zh" || locale === "zht" ? "待整理" : "Needs curation"}</span></button>
+                <button type="button" className={gameCurationState === "dependency" ? "active" : ""} onClick={() => changeGameCurationState("dependency")}><strong>{gameCurationSummary.dependencies}</strong><span>{locale === "zh" || locale === "zht" ? "依赖文件" : "Dependencies"}</span></button>
+                <div><strong>{gameCurationSummary.artworkReady}</strong><span>{locale === "zh" || locale === "zht" ? "已有封面" : "With artwork"}</span></div>
+                <div><strong>{gameCurationSummary.metadataReady}</strong><span>{locale === "zh" || locale === "zht" ? "已有元数据" : "With metadata"}</span></div>
+              </div>
+            )}
+
+            {gameCatalogTask?.status && (
+              <div className={`curationTask ${gameCatalogTask.status}`}>
+                <div>
+                  <strong>{gameCatalogTask.action || "task"}</strong>
+                  <span>{gameCatalogTask.message}</span>
+                </div>
+                <small>{gameCatalogTask.processed} checked · {gameCatalogTask.matched} matched · {gameCatalogTask.failed} failed</small>
+                {gameCatalogTask.status === "running" && <div className="curationTaskProgress"><span /></div>}
+              </div>
+            )}
+
+            <section className="curationSettings">
+              <div className="curationSettingsTitle">
+                <div><strong>{locale === "zh" || locale === "zht" ? "兼容性与元数据设置" : "Compatibility and metadata settings"}</strong><small>{locale === "zh" || locale === "zht" ? "策略文件只读取，不会修改 ROM。" : "Policy files are read-only; ROM files are never modified."}</small></div>
+                <button type="button" disabled={gameCatalogSettingsSaving} onClick={saveGameCatalogSettings}>{gameCatalogSettingsSaving ? "Saving…" : (locale === "zh" || locale === "zht" ? "保存" : "Save")}</button>
+              </div>
+              <div className="curationSettingsGrid">
+                <label><span>FBNeo DAT</span><input value={gameCatalogSettings.fbneoDatPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, fbneoDatPath: event.target.value }))} /></label>
+                <label><span>MAME listxml</span><input value={gameCatalogSettings.mameListXmlPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, mameListXmlPath: event.target.value }))} /></label>
+                <label><span>Runtime targets</span><input value={gameCatalogSettings.launchTargetsPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, launchTargetsPath: event.target.value }))} /></label>
+                <label><span>{locale === "zh" || locale === "zht" ? "在线元数据" : "Online metadata"}</span><select value={gameCatalogSettings.metadataProvider} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, metadataProvider: event.target.value as GameCatalogSettings["metadataProvider"] }))}><option value="local">Local only</option><option value="hasheous">Hasheous (optional)</option><option value="disabled">Disabled</option></select></label>
+              </div>
+              <div className="curationToggles">
+                <label><input type="checkbox" checked={gameCatalogSettings.autoAnalyzeAfterScan} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, autoAnalyzeAfterScan: event.target.checked }))} />{locale === "zh" || locale === "zht" ? "扫描完成后自动分析" : "Analyze after scans"}</label>
+                <label><input type="checkbox" checked={gameCatalogSettings.enableLibretroCovers} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, enableLibretroCovers: event.target.checked }))} />{locale === "zh" || locale === "zht" ? "允许 Libretro 封面匹配" : "Allow Libretro cover matching"}</label>
+              </div>
+              <div className="policyStatusList">
+                {gameCurationSummary?.policies.map((policy) => <span className={policy.available ? "ready" : "missing"} key={policy.id}><strong>{policy.id}</strong>{policy.available ? "Ready" : "Missing"}<code>{policy.path}</code></span>)}
+              </div>
+            </section>
+
+            <div className="curationList">
+              {gameCurationLoading && gameCurationItems.length === 0 && <div className="coverEmpty compact">Loading…</div>}
+              {gameCurationItems.map((item) => (
+                <article className="curationRow" key={`curation-${item.game.id}`}>
+                  <img src={`/api/games/${item.game.id}/cover`} alt="" loading="lazy" />
+                  <div className="curationIdentity"><strong>{item.game.title}</strong><small>{item.game.platform || "unknown"} · {item.game.romSetName || item.game.format} · {item.game.catalogRole || "game"}</small><code>{item.game.sha1 ? item.game.sha1.slice(0, 12) : "no sha1"}</code></div>
+                  <div className="curationState"><span className={item.readyProfiles > 0 ? "ready" : "muted"}>{item.readyProfiles} profile(s)</span><span>{item.artworkStatus} cover</span><span>{item.metadataStatus} metadata</span></div>
+                  <div className="curationIssue"><strong>{item.issueCode || "ready"}</strong><small>{item.issueMessage || (locale === "zh" || locale === "zht" ? "可供客户端使用" : "Available to clients")}</small></div>
+                  <button type="button" onClick={() => editGameMetadata(item.game.id)}>{locale === "zh" || locale === "zht" ? "编辑" : "Edit"}</button>
+                </article>
+              ))}
+              {!gameCurationLoading && gameCurationItems.length === 0 && <div className="coverEmpty compact"><strong>{locale === "zh" || locale === "zht" ? "没有符合条件的条目" : "No matching entries"}</strong></div>}
+            </div>
+            <div className="curationListFooter">
+              <small>{gameCurationItems.length} / {gameCurationTotal}</small>
+              {gameCurationHasMore && <button type="button" disabled={gameCurationLoading} onClick={loadMoreGameCuration}>{gameCurationLoading ? "Loading…" : (locale === "zh" || locale === "zht" ? "加载更多" : "Load more")}</button>}
+            </div>
+          </section>
+        )}
+
+        {editingGameDetails && gameMetadataDraft && (
+          <section className="modalOverlay" role="dialog" aria-modal="true" aria-label="Edit game metadata">
+            <form className="gameMetadataEditor" onSubmit={saveManualGameMetadata}>
+              <div className="gameMetadataEditorHeader"><div><h2>{editingGameDetails.game.title}</h2><small>{editingGameDetails.game.platform} · {editingGameDetails.game.romSetName}</small></div><button type="button" onClick={() => { setEditingGameDetails(null); setGameMetadataDraft(null); }}>×</button></div>
+              <label><span>{locale === "zh" || locale === "zht" ? "显示名称" : "Display title"}</span><input value={gameMetadataDraft.displayTitle} onChange={(event) => setGameMetadataDraft((value) => value ? ({ ...value, displayTitle: event.target.value }) : value)} /></label>
+              <label><span>{locale === "zh" || locale === "zht" ? "简介" : "Summary"}</span><textarea rows={5} value={gameMetadataDraft.summary} onChange={(event) => setGameMetadataDraft((value) => value ? ({ ...value, summary: event.target.value }) : value)} /></label>
+              <div className="gameMetadataEditorGrid">
+                <label><span>{locale === "zh" || locale === "zht" ? "发布日期" : "Release date"}</span><input value={gameMetadataDraft.releaseDate} onChange={(event) => setGameMetadataDraft((value) => value ? ({ ...value, releaseDate: event.target.value }) : value)} /></label>
+                <label><span>{locale === "zh" || locale === "zht" ? "玩家数" : "Players"}</span><input value={gameMetadataDraft.players} onChange={(event) => setGameMetadataDraft((value) => value ? ({ ...value, players: event.target.value }) : value)} /></label>
+                <label><span>{locale === "zh" || locale === "zht" ? "类型（逗号分隔）" : "Genres"}</span><input value={gameMetadataDraft.genres.join(", ")} onChange={(event) => setGameMetadataDraft((value) => value ? ({ ...value, genres: splitCommaList(event.target.value) }) : value)} /></label>
+                <label><span>{locale === "zh" || locale === "zht" ? "开发商（逗号分隔）" : "Developers"}</span><input value={gameMetadataDraft.developers.join(", ")} onChange={(event) => setGameMetadataDraft((value) => value ? ({ ...value, developers: splitCommaList(event.target.value) }) : value)} /></label>
+                <label><span>{locale === "zh" || locale === "zht" ? "发行商（逗号分隔）" : "Publishers"}</span><input value={gameMetadataDraft.publishers.join(", ")} onChange={(event) => setGameMetadataDraft((value) => value ? ({ ...value, publishers: splitCommaList(event.target.value) }) : value)} /></label>
+                <label><span>{locale === "zh" || locale === "zht" ? "外部链接（逗号分隔）" : "External links"}</span><input value={gameMetadataDraft.externalLinks.join(", ")} onChange={(event) => setGameMetadataDraft((value) => value ? ({ ...value, externalLinks: splitCommaList(event.target.value) }) : value)} /></label>
+                <label><span>{locale === "zh" || locale === "zht" ? "评分（0-5）" : "Rating (0-5)"}</span><input type="number" min="0" max="5" step="0.1" value={gameMetadataDraft.rating} onChange={(event) => setGameMetadataDraft((value) => value ? ({ ...value, rating: Number(event.target.value) }) : value)} /></label>
+              </div>
+              {editingGameDetails.sources.length > 0 && (
+                <div className="gameMetadataSources">
+                  <strong>{locale === "zh" || locale === "zht" ? "匹配候选" : "Metadata matches"}</strong>
+                  {editingGameDetails.sources.map((source) => (
+                    <div key={`${source.source}-${source.sourceId}`}>
+                      <span>{source.source} · {source.sourceId}</span>
+                      <small>{Math.round(source.confidence * 100)}%</small>
+                      <button type="button" onClick={() => selectEditingGameMetadataSource(source.source, source.sourceId)}>{locale === "zh" || locale === "zht" ? "采用" : "Use"}</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="gameMetadataEditorActions">
+                <button type="button" onClick={refreshEditingGameMetadata} disabled={gameCatalogSettings.metadataProvider === "disabled"}>
+                  {gameCatalogSettings.metadataProvider === "hasheous"
+                    ? (locale === "zh" || locale === "zht" ? "按哈希在线匹配" : "Match by hash")
+                    : (locale === "zh" || locale === "zht" ? "刷新本地元数据" : "Refresh local metadata")}
+                </button>
+                <button type="submit">{locale === "zh" || locale === "zht" ? "保存元数据" : "Save metadata"}</button>
+              </div>
+            </form>
+          </section>
         )}
 
         {view === "videos" && (
@@ -3192,7 +3499,7 @@ export function App() {
         <div className="authOverlay setupOverlay" role="dialog" aria-modal="true" aria-labelledby="setup-title">
           <form className="authPanel setupPanel" onSubmit={submitSetup}>
             <div>
-              <h1 id="setup-title">FolioSpace Library 0.82 Setup</h1>
+              <h1 id="setup-title">FolioSpace Library Setup</h1>
               <small>
                 {setupStatus?.hasLibraries
                   ? "设置访问密钥，沿用当前数据库里的资源目录。"
@@ -3252,6 +3559,23 @@ export function App() {
                 onChange={(event) => setSetupScanWorkers(clampScanWorkers(Number(event.target.value)))}
               />
             </label>
+            <fieldset className="setupCatalogOptions">
+              <legend>游戏兼容性整理</legend>
+              <label className="setupCheck">
+                <input type="checkbox" checked={setupGameCatalog.autoAnalyzeAfterScan} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, autoAnalyzeAfterScan: event.target.checked }))} />
+                <span>扫描完成后自动分类并生成可用的启动配置</span>
+              </label>
+              <label className="setupCheck">
+                <input type="checkbox" checked={setupGameCatalog.enableLibretroCovers} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, enableLibretroCovers: event.target.checked }))} />
+                <span>允许从 Libretro Thumbnails 补全缺失封面</span>
+              </label>
+              <details>
+                <summary>高级策略文件</summary>
+                <label><span>FBNeo DAT</span><input value={setupGameCatalog.fbneoDatPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, fbneoDatPath: event.target.value }))} /></label>
+                <label><span>MAME listxml</span><input value={setupGameCatalog.mameListXmlPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, mameListXmlPath: event.target.value }))} /></label>
+                <label><span>Runtime targets</span><input value={setupGameCatalog.launchTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, launchTargetsPath: event.target.value }))} /></label>
+              </details>
+            </fieldset>
             <p className="setupHint">
               如果没有看到 NAS 目录，请先在 Docker compose 里把宿主机路径挂载到容器路径，例如 <code>/volume2/Books:/books:ro</code>。
             </p>
@@ -6107,6 +6431,14 @@ function mergeByID<T extends { id: number }>(current: T[], incoming: T[]) {
   });
 }
 
+function mergeCurationByID(current: GameCurationItem[], incoming: GameCurationItem[]) {
+  const items = new Map(current.map((item) => [item.game.id, item]));
+  for (const item of incoming) {
+    items.set(item.game.id, item);
+  }
+  return Array.from(items.values());
+}
+
 function emptyPrivateState(): BookPrivateState {
   return { status: "", favorite: false, rating: 0, tags: [], summary: "" };
 }
@@ -6304,6 +6636,18 @@ function parseExcludePatterns(value: string) {
     out.push(normalized);
   }
   return out;
+}
+
+function splitCommaList(value: string) {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const part of value.split(",")) {
+    const normalized = part.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    items.push(normalized);
+  }
+  return items;
 }
 
 function recentMeta(book: Book, t: Translation) {

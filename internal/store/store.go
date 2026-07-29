@@ -2477,7 +2477,8 @@ func (s *Store) ListGamesPageForProfile(options domain.GameListOptions, profileI
 		offset = 0
 	}
 
-	where, args := gameListWhere(options, strings.TrimSpace(options.Query) != "")
+	includeDependencies := options.IncludeDependencies || strings.TrimSpace(options.Query) != "" || strings.EqualFold(strings.TrimSpace(options.CatalogRole), "dependency")
+	where, args := gameListWhere(options, includeDependencies)
 	var total int64
 	countQuery := `SELECT COUNT(*) FROM games` + where
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
@@ -3171,6 +3172,10 @@ func gameListWhere(options domain.GameListOptions, includeDependencies bool) (st
 	} else if !includeDependencies {
 		clauses = append(clauses, `LOWER(TRIM(catalog_role)) <> 'dependency'`)
 	}
+	if role := strings.ToLower(strings.TrimSpace(options.CatalogRole)); role != "" {
+		clauses = append(clauses, `LOWER(TRIM(catalog_role)) = ?`)
+		args = append(args, role)
+	}
 	if query := strings.TrimSpace(options.Query); query != "" {
 		like := "%" + strings.ToLower(query) + "%"
 		clauses = append(clauses, `(LOWER(title) LIKE ? OR LOWER(rel_path) LIKE ? OR LOWER(rom_set_name) LIKE ? OR LOWER(region) LIKE ? OR LOWER(platform) LIKE ? OR LOWER(format) LIKE ?)`)
@@ -3201,6 +3206,31 @@ func gameListWhere(options domain.GameListOptions, includeDependencies bool) (st
 		return "", args
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func (s *Store) GameCatalogRoleCounts() (total, ready, needsCuration, dependencies int64, err error) {
+	err = s.db.QueryRow(`SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN LOWER(TRIM(catalog_role)) IN ('', 'game') THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN LOWER(TRIM(catalog_role)) = 'needs-curation' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN LOWER(TRIM(catalog_role)) = 'dependency' THEN 1 ELSE 0 END), 0)
+		FROM games`).Scan(&total, &ready, &needsCuration, &dependencies)
+	return
+}
+
+func (s *Store) GameCatalogEnrichmentCounts() (metadataReady, artworkReady int64, err error) {
+	err = s.db.QueryRow(`SELECT
+		(SELECT COUNT(DISTINCT game_id) FROM game_metadata),
+		(SELECT COUNT(DISTINCT game_id) FROM game_artwork WHERE selected = 1 AND kind = 'cover')`).Scan(&metadataReady, &artworkReady)
+	return
+}
+
+func (s *Store) UpdateGameCatalogRole(gameID int64, role string) error {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role != "game" && role != "needs-curation" && role != "dependency" {
+		return fmt.Errorf("unsupported game catalog role %q", role)
+	}
+	_, err := s.db.Exec(`UPDATE games SET catalog_role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, role, gameID)
+	return err
 }
 
 func splitFilterValues(value string) []string {

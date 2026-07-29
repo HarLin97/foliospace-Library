@@ -4,6 +4,23 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.990 Release: Game Curation Center
+
+Release `0.990` adds a complete game-library preparation workflow for new and existing self-hosted installations.
+
+- The new **Game Curation Center** separates published games, dependencies, and records that still need attention.
+- Automatic post-scan analysis is enabled by default for fresh installations and can be configured from the web UI.
+- Compatibility analysis rebuilds audited FBNeo/MAME launch profiles from administrator-supplied policy files without modifying source ROMs.
+- Only launchable records are published to native clients; incomplete archives and unresolved dependencies remain visible to administrators as `needs-curation`.
+- Background analysis, artwork, and metadata tasks are bounded, observable, and protected against duplicate concurrent runs.
+- Batch artwork matching supports local sidecars, cover folders, `media/<ROM name>/boxFront.*`, and optional Libretro fallback.
+- Web metadata editing covers titles, descriptions, genres, developers, publishers, dates, regions, and explicit source selection.
+- Optional Hasheous lookup is hash-based and opt-in. Local-only operation remains the default, and metadata outages never block scanning.
+- First-run setup includes game-catalog automation and advanced FBNeo/MAME/runtime policy paths.
+- Service, Client API, Web, and MCP metadata report version `0.990`.
+
+Detailed setup and recovery guidance is available in the [Game Curation documentation](https://github.com/funland/foliospace-Library/blob/main/docs/operations/game-catalog-curation.md).
+
 ## 0.982 Release: Durable Audited Arcade Profiles
 
 Release `0.982` makes audited arcade launch profiles durable and rebuildable for existing libraries.
@@ -193,7 +210,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.982
+docker pull funland/foliospace-library:0.990
 ```
 
 ```bash
@@ -203,7 +220,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.982
+  funland/foliospace-library:0.990
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

@@ -611,6 +611,52 @@ The scanner computes CRC32 and SHA-1 over the raw image, not the ZIP container. 
 
 A same-directory `FONT.bmp` or `PC98_CN.bmp` is packaged only when it is a valid uncompressed 2048 x 2048 1-bit BMP. It is returned as `role: "font"`, contributes to package `size`, remains beside the downloaded entry image, and never receives `diskIndex` or `driveHint`. Invalid bitmaps and fonts under firmware, emulator, tools, cache, or DOS roots remain excluded. Firmware, emulator binaries, DOS support roots, unsafe archive paths, symlinks, encrypted entries, and archive-bomb patterns are rejected or excluded. RAR, `.7z`, and TAR containers remain outside the PC-98 contract.
 
+## Game Catalog Administration
+
+The following authenticated routes back the web game-curation workflow. They are administration APIs, not native-client catalog routes. Native clients should continue to use `/api/client/games`, `/api/client/games/facets`, manifests, and launch resolution; they never need NAS policy paths or curation records.
+
+### `GET` / `PUT /api/settings/game-catalog`
+
+Reads or replaces the instance-level catalog pipeline configuration:
+
+```json
+{
+  "autoAnalyzeAfterScan": true,
+  "enableLibretroCovers": true,
+  "fbneoDatPath": "/config/policies/fbneo-arcade.dat",
+  "mameListXmlPath": "/config/policies/mame0288lx.zip",
+  "launchTargetsPath": "/config/policies/targets.json",
+  "mamePlatforms": "arcade,mame,model2,cps,cps1,cps2,cps3,neogeo",
+  "metadataProvider": "local"
+}
+```
+
+`metadataProvider` is `local`, `hasheous`, or `disabled`. `local` is the default and performs no Internet requests. Hasheous is opt-in and uses stable ROM hashes; it is never required for scanning or launch-profile resolution. A missing policy file is reported in curation status rather than causing the service to fail startup.
+
+### `GET /api/games/curation`
+
+Returns all administrative game records, including dependencies and `needs-curation` entries. Query parameters are `limit`, `offset`, `q`, `platform`, `state`, and `sort`. `state` accepts catalog roles such as `game`, `needs-curation`, or `dependency`. Each item includes metadata/artwork state, ready profile count, and an actionable issue code such as `identity-missing`, `policy-pack-missing`, or `launch-profile-missing`.
+
+Use `GET /api/games/curation?summary=1` for aggregate counts, installed-policy status, and the latest background task. `GET /api/games/curation/task` returns the persisted task status directly.
+
+### `POST /api/games/curation/analyze`
+
+Starts one exclusive background classification and compatibility-analysis task. It normalizes dependency and curation roles, then runs the installed FBNeo DAT and MAME listxml policies through the packaged launch-profile rebuild tool. It returns `202 Accepted`; a concurrent request returns `409 Conflict` instead of creating duplicate workers.
+
+### `POST /api/games/curation/covers`
+
+Starts bounded batch artwork matching:
+
+```json
+{"includeNetwork": false}
+```
+
+Local matching checks same-name sidecars, common `covers`/`boxarts`/`images` directories, and `media/<ROM name>/boxFront.*`. Set `includeNetwork` only when the administrator has enabled Libretro fallback and accepts network requests. The task does not modify ROM files.
+
+### `GET /api/games/{gameId}` and `PUT /api/games/{gameId}/metadata`
+
+The first route returns the administrative game record, normalized metadata, metadata sources, and artwork candidates. The second stores a manual correction using the existing metadata model. `POST /api/games/{gameId}/metadata/refresh` invokes the configured provider; `POST /api/games/{gameId}/metadata/select-match` selects one ambiguous source candidate. Manual data remains usable when all network providers are disabled.
+
 ### `GET /api/client/videos`
 
 Returns a paginated client-safe video catalog. FolioSpace keeps NAS paths hidden, probes codecs with `ffprobe` when available, and marks each video as direct-playable or HLS-transcode playback.

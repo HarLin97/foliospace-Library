@@ -260,6 +260,94 @@ export type GameListPage = {
   hasMore: boolean;
 };
 
+export type GameCatalogSettings = {
+  autoAnalyzeAfterScan: boolean;
+  enableLibretroCovers: boolean;
+  fbneoDatPath: string;
+  mameListXmlPath: string;
+  launchTargetsPath: string;
+  mamePlatforms: string;
+  metadataProvider: "local" | "hasheous" | "disabled";
+};
+
+export type GameCatalogTaskStatus = {
+  id?: string;
+  action?: string;
+  status?: "running" | "completed" | "failed" | "interrupted";
+  message?: string;
+  processed: number;
+  matched: number;
+  failed: number;
+  startedAt?: string;
+  endedAt?: string;
+  details?: Record<string, unknown>;
+};
+
+export type GameCatalogPolicyStatus = {
+  id: string;
+  path: string;
+  available: boolean;
+  message?: string;
+};
+
+export type GameCurationSummary = {
+  total: number;
+  ready: number;
+  needsCuration: number;
+  dependencies: number;
+  metadataReady: number;
+  artworkReady: number;
+  policies: GameCatalogPolicyStatus[];
+  lastTask: GameCatalogTaskStatus;
+};
+
+export type GameCurationItem = {
+  game: GameAsset;
+  metadataStatus: string;
+  artworkStatus: string;
+  readyProfiles: number;
+  issueCode?: string;
+  issueMessage?: string;
+};
+
+export type GameCurationPage = {
+  items: GameCurationItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
+export type GameMetadata = {
+  gameId: number;
+  displayTitle: string;
+  summary: string;
+  releaseDate: string;
+  genres: string[];
+  developers: string[];
+  publishers: string[];
+  players: string;
+  rating: number;
+  externalLinks: string[];
+};
+
+export type GameDetails = {
+  game: GameAsset;
+  metadataStatus: string;
+  metadata: GameMetadata;
+  sources: Array<{ source: string; sourceId: string; matchedBy: string; confidence: number }>;
+  artwork: Array<{ source: string; kind: string; selected: boolean; url?: string; cachePath?: string }>;
+};
+
+export type GameMetadataActionResult = {
+  gameId: number;
+  action: string;
+  status: string;
+  message: string;
+  metadataStatus: string;
+  sources: Array<{ source: string; sourceId: string; matchedBy: string; confidence: number }>;
+};
+
 export type VideoListPage = {
   items: VideoAsset[];
   total: number;
@@ -395,6 +483,7 @@ export type SetupStatus = {
   tokenConfigured: boolean;
   directoryRoots: DirectoryEntry[];
   scanWorkers: number;
+  gameCatalog: GameCatalogSettings;
 };
 
 export type ClientInfo = {
@@ -412,6 +501,7 @@ export type SetupInput = {
   assetType: Library["assetType"];
   excludePatterns?: string[];
   scanWorkers?: number;
+  gameCatalog?: GameCatalogSettings;
 };
 
 export type ScanSettings = {
@@ -571,6 +661,42 @@ export const api = {
     request<ScanSettings>("/api/settings/scan", {
       method: "PUT",
       body: JSON.stringify(settings),
+    }),
+  gameCatalogSettings: () => request<GameCatalogSettings>("/api/settings/game-catalog"),
+  saveGameCatalogSettings: (settings: GameCatalogSettings) =>
+    request<GameCatalogSettings>("/api/settings/game-catalog", {
+      method: "PUT",
+      body: JSON.stringify(settings),
+    }),
+  gameCurationSummary: () => request<GameCurationSummary>("/api/games/curation?summary=1"),
+  gameCurationPage: (options: { limit?: number; offset?: number; q?: string; state?: string; platform?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (options.limit) params.set("limit", String(options.limit));
+    if (options.offset) params.set("offset", String(options.offset));
+    if (options.q) params.set("q", options.q);
+    if (options.state) params.set("state", options.state);
+    if (options.platform) params.set("platform", options.platform);
+    return request<GameCurationPage>(`/api/games/curation?${params.toString()}`);
+  },
+  gameCurationTask: () => request<GameCatalogTaskStatus>("/api/games/curation/task"),
+  analyzeGameCatalog: () => request<GameCatalogTaskStatus>("/api/games/curation/analyze", { method: "POST" }),
+  matchGameCovers: (includeNetwork: boolean) =>
+    request<GameCatalogTaskStatus>("/api/games/curation/covers", {
+      method: "POST",
+      body: JSON.stringify({ includeNetwork }),
+    }),
+  gameDetails: (gameId: number) => request<GameDetails>(`/api/games/${gameId}`),
+  refreshGameMetadata: (gameId: number) =>
+    request<GameMetadataActionResult>(`/api/games/${gameId}/metadata/refresh`, { method: "POST" }),
+  selectGameMetadataMatch: (gameId: number, source: string, sourceId: string) =>
+    request<GameMetadataActionResult>(`/api/games/${gameId}/metadata/select-match`, {
+      method: "POST",
+      body: JSON.stringify({ source, sourceId }),
+    }),
+  saveGameMetadata: (gameId: number, metadata: GameMetadata) =>
+    request<GameDetails>(`/api/games/${gameId}/metadata`, {
+      method: "PUT",
+      body: JSON.stringify(metadata),
     }),
   clientPreferences: () => request<ClientPreferences>("/api/client/preferences"),
   saveClientPreferences: (preferences: ClientPreferences) =>

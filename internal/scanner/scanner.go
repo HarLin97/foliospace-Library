@@ -37,6 +37,7 @@ import (
 type Scanner struct {
 	store           *store.Store
 	workerCount     func() int
+	completionHook  func(domain.Library, domain.ScanJob)
 	gamelistCache   sync.Map
 	pegasusCache    sync.Map
 	dosCatalogCache sync.Map
@@ -67,6 +68,16 @@ func NewWithWorkerCount(store *store.Store, workerCount func() int) *Scanner {
 		workerCount = scanWorkerCount
 	}
 	return &Scanner{store: store, workerCount: workerCount}
+}
+
+func (s *Scanner) SetCompletionHook(hook func(domain.Library, domain.ScanJob)) {
+	s.completionHook = hook
+}
+
+func (s *Scanner) notifyCompleted(library domain.Library, job domain.ScanJob) {
+	if s.completionHook != nil {
+		s.completionHook(library, job)
+	}
 }
 
 func (s *Scanner) ScanLibrary(library domain.Library) (domain.ScanJob, error) {
@@ -386,6 +397,7 @@ func (s *Scanner) runScanJob(library domain.Library, job domain.ScanJob, scope s
 		return job, err
 	}
 	_ = s.store.AddJobEvent(job.ID, "info", "scan completed")
+	s.notifyCompleted(library, job)
 	return job, nil
 }
 
@@ -537,6 +549,7 @@ func (s *Scanner) runRecentScanJob(library domain.Library, job domain.ScanJob, s
 		return job, err
 	}
 	_ = s.store.AddJobEvent(job.ID, "info", "recent scan completed")
+	s.notifyCompleted(library, job)
 	return job, nil
 }
 
@@ -803,6 +816,7 @@ func (s *Scanner) runScanJobConcurrent(library domain.Library, job domain.ScanJo
 		return job, err
 	}
 	_ = s.store.AddJobEvent(job.ID, "info", "scan completed")
+	s.notifyCompleted(library, job)
 	return job, nil
 }
 

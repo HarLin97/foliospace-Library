@@ -3684,3 +3684,409 @@ button.danger:hover {
     transform: translateX(260%);
   }
 }
+
+.setupCatalogOptions {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  border: 1px solid #d8e0e4;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.setupCatalogOptions legend {
+  padding: 0 6px;
+  color: #304247;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.setupCatalogOptions .setupCheck {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setupCatalogOptions .setupCheck input {
+  min-height: 0;
+  margin: 0;
+}
+
+.setupCatalogOptions details {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #e5eaec;
+  padding-top: 10px;
+}
+
+.setupCatalogOptions summary {
+  cursor: pointer;
+  color: #526268;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.setupCatalogOptions details[open] summary {
+  margin-bottom: 10px;
+}
+
+.gameCurationPage {
+  display: block;
+  min-height: calc(100vh - 96px);
+  overflow: auto;
+  background: #f5f7f8;
+}
+
+.gameCurationHeader {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+}
+
+.curationActions,
+.gameMetadataEditorActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.curationSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(96px, 1fr));
+  gap: 8px;
+  padding: 14px 18px 0;
+}
+
+.curationSummaryGrid > button,
+.curationSummaryGrid > div {
+  display: grid;
+  gap: 2px;
+  min-height: 62px;
+  align-content: center;
+  justify-items: start;
+  border: 1px solid #d8e0e4;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 9px 12px;
+  text-align: left;
+}
+
+.curationSummaryGrid > button.active {
+  border-color: #466f7a;
+  box-shadow: inset 0 0 0 1px #466f7a;
+}
+
+.curationSummaryGrid > button.warning strong {
+  color: #9a4f20;
+}
+
+.curationSummaryGrid strong {
+  font-size: 20px;
+}
+
+.curationSummaryGrid span {
+  color: #647177;
+  font-size: 12px;
+}
+
+.curationTask,
+.curationSettings {
+  margin: 14px 18px 0;
+  border: 1px solid #d8e0e4;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.curationTask {
+  display: grid;
+  gap: 8px;
+}
+
+.curationTask > div:first-child,
+.curationSettingsTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.curationTask > div:first-child span,
+.curationSettingsTitle small {
+  color: #647177;
+  font-size: 12px;
+}
+
+.curationTaskProgress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #dde6e9;
+}
+
+.curationTaskProgress span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  background: #3b8798;
+  animation: progressSlide 1.25s ease-in-out infinite;
+}
+
+.curationSettings {
+  display: grid;
+  gap: 12px;
+}
+
+.curationSettingsTitle > div,
+.curationSettingsGrid label {
+  display: grid;
+  gap: 4px;
+}
+
+.curationSettingsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.curationSettingsGrid label,
+.curationToggles label {
+  color: #526268;
+  font-size: 12px;
+}
+
+.curationSettingsGrid input,
+.curationSettingsGrid select,
+.gameMetadataEditor input,
+.gameMetadataEditor textarea {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #ccd4d8;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 8px 10px;
+}
+
+.curationToggles,
+.policyStatusList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.curationToggles label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.policyStatusList > span {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 6px;
+  min-width: 220px;
+  align-items: center;
+  color: #9b3030;
+  font-size: 11px;
+}
+
+.policyStatusList > span.ready {
+  color: #287448;
+}
+
+.policyStatusList code {
+  overflow: hidden;
+  color: #647177;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curationList {
+  display: grid;
+  gap: 6px;
+  padding: 14px 18px 18px;
+}
+
+.curationListFooter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px 0 4px;
+}
+
+.curationListFooter small {
+  color: var(--muted);
+}
+
+.gameMetadataSources {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: #f8fafb;
+}
+
+.gameMetadataSources > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.gameMetadataSources span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.curationRow {
+  display: grid;
+  grid-template-columns: 48px minmax(180px, 1.2fr) minmax(160px, 0.7fr) minmax(220px, 1.2fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 68px;
+  border-bottom: 1px solid #e1e7e9;
+  background: #ffffff;
+  padding: 8px 10px;
+}
+
+.curationRow > img {
+  width: 42px;
+  height: 52px;
+  border-radius: 4px;
+  background: #e7edef;
+  object-fit: cover;
+}
+
+.curationIdentity,
+.curationState,
+.curationIssue {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.curationIdentity strong,
+.curationIdentity small,
+.curationIssue small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.curationIdentity code,
+.curationIdentity small,
+.curationIssue small,
+.curationState {
+  color: #647177;
+  font-size: 11px;
+}
+
+.curationState .ready {
+  color: #287448;
+}
+
+.curationIssue strong {
+  color: #8e4b25;
+  font-size: 12px;
+}
+
+.gameMetadataEditor {
+  display: grid;
+  gap: 12px;
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border: 1px solid #cfd9dd;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 22px 70px rgba(18, 24, 27, 0.28);
+  padding: 18px;
+}
+
+.gameMetadataEditorHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gameMetadataEditorHeader h2 {
+  margin: 0 0 3px;
+  font-size: 18px;
+}
+
+.gameMetadataEditor label {
+  display: grid;
+  gap: 4px;
+  color: #526268;
+  font-size: 12px;
+}
+
+.gameMetadataEditorGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 880px) {
+  .curationSummaryGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .curationRow {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+  }
+
+  .curationState,
+  .curationIssue {
+    grid-column: 2 / -1;
+  }
+}
+
+@media (max-width: 600px) {
+  .gameCurationHeader,
+  .curationTask > div:first-child,
+  .curationSettingsTitle {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .curationActions,
+  .gameMetadataEditorActions {
+    justify-content: stretch;
+  }
+
+  .curationActions button,
+  .gameMetadataEditorActions button {
+    flex: 1 1 auto;
+  }
+
+  .curationSummaryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding-inline: 10px;
+  }
+
+  .curationTask,
+  .curationSettings {
+    margin-inline: 10px;
+  }
+
+  .curationSettingsGrid,
+  .gameMetadataEditorGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .curationList {
+    padding-inline: 10px;
+  }
+
+  .gameMetadataEditor {
+    width: 100vw;
+    max-height: 100dvh;
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+}

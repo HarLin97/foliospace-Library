@@ -921,7 +921,7 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	seedGames := []domain.GameAsset{
 		{LibraryID: lib.ID, Title: "Super Contra", Platform: "nes", ROMSetName: "NES", Region: "Japan", Format: "nes", FilePath: "/library/nes/super-contra.nes", RelPath: "nes/super-contra.nes", Size: 262160, MTime: time.Unix(30, 0), CRC32: "9bb6059e", SHA1: "5de393e3ad83e6e185e6d338684d7a4475b7d2ce", EmulatorHint: "nes", Compatibility: "unknown"},
 		{LibraryID: lib.ID, Title: "Advance Wars", Platform: "gba", ROMSetName: "GBA", Region: "USA", Format: "gba", FilePath: "/library/gba/advance-wars.gba", RelPath: "gba/advance-wars.gba", Size: 1024, MTime: time.Unix(31, 0), CRC32: "11111111", SHA1: "1111111111111111111111111111111111111111", EmulatorHint: "gba", Compatibility: "unknown"},
-		{LibraryID: lib.ID, Title: "Metal Slug", Platform: "arcade", ROMSetName: "MAME", Region: "World", Format: "zip", FilePath: "/library/arcade/mslug.zip", RelPath: "arcade/mslug.zip", Size: 2048, MTime: time.Unix(32, 0), CRC32: "22222222", SHA1: "2222222222222222222222222222222222222222", EmulatorHint: "arcade", Compatibility: "unknown"},
+		{LibraryID: lib.ID, Title: "Metal Slug", Platform: "arcade", ROMSetName: "MAME", Region: "World", Format: "zip", FilePath: "/library/arcade/mslug.zip", RelPath: "arcade/mslug.zip", Size: 2048, MTime: time.Unix(32, 0), CRC32: "22222222", SHA1: "2222222222222222222222222222222222222222", EmulatorHint: "arcade", Compatibility: "unknown", CatalogRole: "needs-curation"},
 	}
 	for _, game := range seedGames {
 		if _, err := s.UpsertGame(game); err != nil {
@@ -951,6 +951,22 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	}
 	if len(romSet.Items) != 1 || romSet.Items[0].Title != "Advance Wars" {
 		t.Fatalf("rom set page = %#v, want Advance Wars only", romSet)
+	}
+
+	curation, err := s.ListGamesPage(domain.GameListOptions{Limit: 50, CatalogRole: "needs-curation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(curation.Items) != 1 || curation.Items[0].Title != "Metal Slug" {
+		t.Fatalf("curation page = %#v, want Metal Slug only", curation)
+	}
+
+	allAdministrative, err := s.ListGamesPage(domain.GameListOptions{Limit: 50, IncludeDependencies: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allAdministrative.Items) != 3 || allAdministrative.Total != 3 {
+		t.Fatalf("administrative page = %#v, want all catalog roles", allAdministrative)
 	}
 }
 
@@ -1078,6 +1094,22 @@ func TestStoreListsPlayedGamesByProfileAndPlaytime(t *testing.T) {
 	}
 	if guestPage.Total != 1 || len(guestPage.Items) != 1 || guestPage.Items[0].Game.ID != first.ID || guestPage.Items[0].Stats.TotalPlaySeconds != 300 {
 		t.Fatalf("guest played page = %#v", guestPage)
+	}
+}
+
+func TestStoreGameCatalogRoleCountsEmpty(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	total, ready, needsCuration, dependencies, err := New(conn).GameCatalogRoleCounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 0 || ready != 0 || needsCuration != 0 || dependencies != 0 {
+		t.Fatalf("empty role counts = (%d, %d, %d, %d), want all zero", total, ready, needsCuration, dependencies)
 	}
 }
 

@@ -483,15 +483,17 @@ type BookListPage struct {
 }
 
 type GameListOptions struct {
-	Limit             int
-	Offset            int
-	Query             string
-	Platform          string
-	ROMSetName        string
-	Format            string
-	Sort              string
-	BasePath          string
-	ClientVisibleOnly bool
+	Limit               int
+	Offset              int
+	Query               string
+	Platform            string
+	ROMSetName          string
+	Format              string
+	Sort                string
+	BasePath            string
+	ClientVisibleOnly   bool
+	CatalogRole         string
+	IncludeDependencies bool
 }
 
 type GameListPage struct {
@@ -500,6 +502,64 @@ type GameListPage struct {
 	Limit   int         `json:"limit"`
 	Offset  int         `json:"offset"`
 	HasMore bool        `json:"hasMore"`
+}
+
+type GameCatalogSettings struct {
+	AutoAnalyzeAfterScan bool   `json:"autoAnalyzeAfterScan"`
+	EnableLibretroCovers bool   `json:"enableLibretroCovers"`
+	FBNeoDATPath         string `json:"fbneoDatPath"`
+	MAMEListXMLPath      string `json:"mameListXmlPath"`
+	LaunchTargetsPath    string `json:"launchTargetsPath"`
+	MAMEPlatforms        string `json:"mamePlatforms"`
+	MetadataProvider     string `json:"metadataProvider"`
+}
+
+type GameCatalogPolicyStatus struct {
+	ID        string `json:"id"`
+	Path      string `json:"path"`
+	Available bool   `json:"available"`
+	Message   string `json:"message,omitempty"`
+}
+
+type GameCurationSummary struct {
+	Total         int64                     `json:"total"`
+	Ready         int64                     `json:"ready"`
+	NeedsCuration int64                     `json:"needsCuration"`
+	Dependencies  int64                     `json:"dependencies"`
+	MetadataReady int64                     `json:"metadataReady"`
+	ArtworkReady  int64                     `json:"artworkReady"`
+	Policies      []GameCatalogPolicyStatus `json:"policies"`
+	LastTask      GameCatalogTaskStatus     `json:"lastTask"`
+}
+
+type GameCurationItem struct {
+	Game           GameAsset `json:"game"`
+	MetadataStatus string    `json:"metadataStatus"`
+	ArtworkStatus  string    `json:"artworkStatus"`
+	ReadyProfiles  int       `json:"readyProfiles"`
+	IssueCode      string    `json:"issueCode,omitempty"`
+	IssueMessage   string    `json:"issueMessage,omitempty"`
+}
+
+type GameCurationPage struct {
+	Items   []GameCurationItem `json:"items"`
+	Total   int64              `json:"total"`
+	Limit   int                `json:"limit"`
+	Offset  int                `json:"offset"`
+	HasMore bool               `json:"hasMore"`
+}
+
+type GameCatalogTaskStatus struct {
+	ID        string         `json:"id,omitempty"`
+	Action    string         `json:"action,omitempty"`
+	Status    string         `json:"status,omitempty"`
+	Message   string         `json:"message,omitempty"`
+	Processed int64          `json:"processed"`
+	Matched   int64          `json:"matched"`
+	Failed    int64          `json:"failed"`
+	StartedAt *time.Time     `json:"startedAt,omitempty"`
+	EndedAt   *time.Time     `json:"endedAt,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 type GameListFacets struct {
