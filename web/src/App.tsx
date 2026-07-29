@@ -53,6 +53,8 @@ const defaultGameCatalogSettings: GameCatalogSettings = {
   enableLibretroCovers: true,
   fbneoDatPath: "/config/policies/fbneo-arcade.dat",
   mameListXmlPath: "/config/policies/mame0288lx.zip",
+  fbneoTargetsPath: "/config/policies/fbneo-mobile-targets.json",
+  mameTargetsPath: "/config/policies/mame-mobile-targets.json",
   launchTargetsPath: "/config/policies/targets.json",
   mamePlatforms: "arcade,mame,model2,cps,cps1,cps2,cps3,neogeo",
   metadataProvider: "local",
@@ -87,6 +89,9 @@ export function App() {
   const [gameCurationLoading, setGameCurationLoading] = useState(false);
   const [gameCurationState, setGameCurationState] = useState("needs-curation");
   const [gameCatalogTask, setGameCatalogTask] = useState<GameCatalogTaskStatus | null>(null);
+  const [compatibilityRebuildScope, setCompatibilityRebuildScope] = useState<"all" | "platform">("all");
+  const [compatibilityRebuildPlatform, setCompatibilityRebuildPlatform] = useState("");
+  const [compatibilityRebuildForce, setCompatibilityRebuildForce] = useState(false);
   const [gameCatalogSettings, setGameCatalogSettings] = useState<GameCatalogSettings>(defaultGameCatalogSettings);
   const [gameCatalogSettingsSaving, setGameCatalogSettingsSaving] = useState(false);
   const [editingGameDetails, setEditingGameDetails] = useState<GameDetails | null>(null);
@@ -295,6 +300,7 @@ export function App() {
 
   async function openGameCuration() {
     setView("game-curation");
+    void loadGamePlatformFacets();
     await refreshGameCuration(gameCurationState);
   }
 
@@ -341,13 +347,23 @@ export function App() {
     await refreshGameCuration(state);
   }
 
-  async function runGameCatalogAnalysis() {
+  async function runGameCompatibilityRebuild(gameId?: number) {
+    const force = gameId ? false : compatibilityRebuildForce;
+    if (force && !window.confirm(locale === "zh" || locale === "zht"
+      ? "强制全量重建会重新执行兼容性审计，可能耗时较长。确定继续吗？"
+      : "A forced rebuild reruns the complete compatibility audit and may take a long time. Continue?")) return;
     try {
-      const task = await api.analyzeGameCatalog();
+      const task = await api.rebuildGameCompatibility(gameId
+        ? { scope: "game", gameId }
+        : {
+            scope: compatibilityRebuildScope,
+            ...(compatibilityRebuildScope === "platform" ? { platform: compatibilityRebuildPlatform } : {}),
+            force,
+          });
       setGameCatalogTask(task);
-      setStatus("Game compatibility analysis started");
+      setStatus(locale === "zh" || locale === "zht" ? "兼容数据补齐任务已启动" : "Compatibility rebuild started");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to start analysis");
+      setStatus(error instanceof Error ? error.message : "Failed to start compatibility rebuild");
     }
   }
 
@@ -2743,9 +2759,6 @@ export function App() {
                 <small>{locale === "zh" || locale === "zht" ? "扫描结果、兼容性审计、封面和元数据在这里统一处理。" : "Review scan results, compatibility audits, covers, and metadata."}</small>
               </div>
               <div className="curationActions">
-                <button type="button" disabled={gameCatalogTask?.status === "running"} onClick={runGameCatalogAnalysis}>
-                  {locale === "zh" || locale === "zht" ? "重新分析兼容性" : "Analyze compatibility"}
-                </button>
                 <button type="button" disabled={gameCatalogTask?.status === "running"} onClick={() => runGameCoverMatch(false)}>
                   {locale === "zh" || locale === "zht" ? "匹配本地封面" : "Match local covers"}
                 </button>
@@ -2755,6 +2768,21 @@ export function App() {
               </div>
             </div>
 
+            <section className="curationRebuild">
+              <div className="curationRebuildHeading">
+                <div><strong>{locale === "zh" || locale === "zht" ? "补齐兼容数据" : "Complete compatibility data"}</strong><small>{locale === "zh" || locale === "zht" ? "默认只补缺失校验和，再用已安装策略刷新 Launch Profiles。" : "Fills missing checksums first, then refreshes Launch Profiles using installed policies."}</small></div>
+                <button type="button" disabled={gameCatalogTask?.status === "running" || (compatibilityRebuildScope === "platform" && !compatibilityRebuildPlatform)} onClick={() => runGameCompatibilityRebuild()}>{locale === "zh" || locale === "zht" ? "开始补齐" : "Start"}</button>
+              </div>
+              <div className="curationRebuildControls">
+                <div className="curationScopeSegment" aria-label="Compatibility rebuild scope">
+                  <button type="button" className={compatibilityRebuildScope === "all" ? "active" : ""} onClick={() => setCompatibilityRebuildScope("all")}>{locale === "zh" || locale === "zht" ? "全库" : "All games"}</button>
+                  <button type="button" className={compatibilityRebuildScope === "platform" ? "active" : ""} onClick={() => setCompatibilityRebuildScope("platform")}>{locale === "zh" || locale === "zht" ? "指定机种" : "Platform"}</button>
+                </div>
+                {compatibilityRebuildScope === "platform" && <select aria-label="Platform" value={compatibilityRebuildPlatform} onChange={(event) => setCompatibilityRebuildPlatform(event.target.value)}><option value="">{locale === "zh" || locale === "zht" ? "选择机种" : "Select platform"}</option>{gamePlatformOptions.map((option) => <option value={option.value} key={`curation-rebuild-${option.value}`}>{option.label} ({option.count})</option>)}</select>}
+                <label className="curationForceToggle"><input type="checkbox" checked={compatibilityRebuildForce} onChange={(event) => setCompatibilityRebuildForce(event.target.checked)} />{locale === "zh" || locale === "zht" ? "强制全量重建" : "Force full rebuild"}</label>
+              </div>
+            </section>
+
             {gameCurationSummary && (
               <div className="curationSummaryGrid">
                 <button type="button" className={gameCurationState === "" ? "active" : ""} onClick={() => changeGameCurationState("")}><strong>{gameCurationSummary.total}</strong><span>{locale === "zh" || locale === "zht" ? "全部" : "All"}</span></button>
@@ -2763,6 +2791,8 @@ export function App() {
                 <button type="button" className={gameCurationState === "dependency" ? "active" : ""} onClick={() => changeGameCurationState("dependency")}><strong>{gameCurationSummary.dependencies}</strong><span>{locale === "zh" || locale === "zht" ? "依赖文件" : "Dependencies"}</span></button>
                 <div><strong>{gameCurationSummary.artworkReady}</strong><span>{locale === "zh" || locale === "zht" ? "已有封面" : "With artwork"}</span></div>
                 <div><strong>{gameCurationSummary.metadataReady}</strong><span>{locale === "zh" || locale === "zht" ? "已有元数据" : "With metadata"}</span></div>
+                <div><strong>{gameCurationSummary.checksummed}</strong><span>{locale === "zh" || locale === "zht" ? "文件已校验" : "Checksummed files"}</span></div>
+                <div className={gameCurationSummary.checksumPending > 0 ? "warning" : ""}><strong>{gameCurationSummary.checksumPending}</strong><span>{locale === "zh" || locale === "zht" ? "等待校验" : "Pending checksums"}</span></div>
               </div>
             )}
 
@@ -2772,8 +2802,9 @@ export function App() {
                   <strong>{gameCatalogTask.action || "task"}</strong>
                   <span>{gameCatalogTask.message}</span>
                 </div>
-                <small>{gameCatalogTask.processed} checked · {gameCatalogTask.matched} matched · {gameCatalogTask.failed} failed</small>
-                {gameCatalogTask.status === "running" && <div className="curationTaskProgress"><span /></div>}
+                <small>{gameCatalogTask.processed}{gameCatalogTask.total > 0 ? ` / ${gameCatalogTask.total}` : ""} processed · {gameCatalogTask.matched} succeeded · {gameCatalogTask.skipped || 0} skipped · {gameCatalogTask.failed} failed</small>
+                {gameCatalogTask.status === "running" && <div className={`curationTaskProgress ${gameCatalogTask.total > 0 ? "determinate" : "indeterminate"}`}><span style={gameCatalogTask.total > 0 ? { width: `${Math.min(100, (gameCatalogTask.processed / gameCatalogTask.total) * 100)}%` } : undefined} /></div>}
+                {gameCatalogTask.errors && gameCatalogTask.errors.length > 0 && <details className="curationTaskErrors"><summary>{locale === "zh" || locale === "zht" ? `查看错误 (${gameCatalogTask.errors.length})` : `Errors (${gameCatalogTask.errors.length})`}</summary>{gameCatalogTask.errors.map((message, index) => <code key={`curation-task-error-${index}`}>{message}</code>)}</details>}
               </div>
             )}
 
@@ -2785,7 +2816,9 @@ export function App() {
               <div className="curationSettingsGrid">
                 <label><span>FBNeo DAT</span><input value={gameCatalogSettings.fbneoDatPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, fbneoDatPath: event.target.value }))} /></label>
                 <label><span>MAME listxml</span><input value={gameCatalogSettings.mameListXmlPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, mameListXmlPath: event.target.value }))} /></label>
-                <label><span>Runtime targets</span><input value={gameCatalogSettings.launchTargetsPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, launchTargetsPath: event.target.value }))} /></label>
+                <label><span>FBNeo runtime targets</span><input value={gameCatalogSettings.fbneoTargetsPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, fbneoTargetsPath: event.target.value }))} /></label>
+                <label><span>MAME runtime targets</span><input value={gameCatalogSettings.mameTargetsPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, mameTargetsPath: event.target.value }))} /></label>
+                <label><span>{locale === "zh" || locale === "zht" ? "旧版目标配置（兼容回退）" : "Legacy targets fallback"}</span><input value={gameCatalogSettings.launchTargetsPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, launchTargetsPath: event.target.value }))} /></label>
                 <label><span>{locale === "zh" || locale === "zht" ? "在线元数据" : "Online metadata"}</span><select value={gameCatalogSettings.metadataProvider} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, metadataProvider: event.target.value as GameCatalogSettings["metadataProvider"] }))}><option value="local">Local only</option><option value="hasheous">Hasheous (optional)</option><option value="disabled">Disabled</option></select></label>
               </div>
               <div className="curationToggles">
@@ -2803,9 +2836,12 @@ export function App() {
                 <article className="curationRow" key={`curation-${item.game.id}`}>
                   <img src={`/api/games/${item.game.id}/cover`} alt="" loading="lazy" />
                   <div className="curationIdentity"><strong>{item.game.title}</strong><small>{item.game.platform || "unknown"} · {item.game.romSetName || item.game.format} · {item.game.catalogRole || "game"}</small><code>{item.game.sha1 ? item.game.sha1.slice(0, 12) : "no sha1"}</code></div>
-                  <div className="curationState"><span className={item.readyProfiles > 0 ? "ready" : "muted"}>{item.readyProfiles} profile(s)</span><span>{item.artworkStatus} cover</span><span>{item.metadataStatus} metadata</span></div>
+                  <div className="curationState"><span className={item.mobileReady ? "ready" : "muted"}>{item.mobileReady ? (locale === "zh" || locale === "zht" ? "移动端就绪" : "Mobile ready") : (locale === "zh" || locale === "zht" ? "移动端待处理" : "Mobile blocked")}</span><span>{item.checksummed} / {item.fileCount} checksums</span><span>{item.readyProfiles} profile(s) · {item.artworkStatus} cover · {item.metadataStatus} metadata</span></div>
                   <div className="curationIssue"><strong>{item.issueCode || "ready"}</strong><small>{item.issueMessage || (locale === "zh" || locale === "zht" ? "可供客户端使用" : "Available to clients")}</small></div>
-                  <button type="button" onClick={() => editGameMetadata(item.game.id)}>{locale === "zh" || locale === "zht" ? "编辑" : "Edit"}</button>
+                  <div className="curationRowActions">
+                    {!item.mobileReady && <button type="button" disabled={gameCatalogTask?.status === "running"} onClick={() => runGameCompatibilityRebuild(item.game.id)}>{locale === "zh" || locale === "zht" ? "补齐兼容数据" : "Repair compatibility"}</button>}
+                    <button type="button" onClick={() => editGameMetadata(item.game.id)}>{locale === "zh" || locale === "zht" ? "编辑" : "Edit"}</button>
+                  </div>
                 </article>
               ))}
               {!gameCurationLoading && gameCurationItems.length === 0 && <div className="coverEmpty compact"><strong>{locale === "zh" || locale === "zht" ? "没有符合条件的条目" : "No matching entries"}</strong></div>}
@@ -3589,7 +3625,9 @@ export function App() {
                 <summary>高级策略文件</summary>
                 <label><span>FBNeo DAT</span><input value={setupGameCatalog.fbneoDatPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, fbneoDatPath: event.target.value }))} /></label>
                 <label><span>MAME listxml</span><input value={setupGameCatalog.mameListXmlPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, mameListXmlPath: event.target.value }))} /></label>
-                <label><span>Runtime targets</span><input value={setupGameCatalog.launchTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, launchTargetsPath: event.target.value }))} /></label>
+                <label><span>FBNeo runtime targets</span><input value={setupGameCatalog.fbneoTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, fbneoTargetsPath: event.target.value }))} /></label>
+                <label><span>MAME runtime targets</span><input value={setupGameCatalog.mameTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, mameTargetsPath: event.target.value }))} /></label>
+                <label><span>Legacy targets fallback</span><input value={setupGameCatalog.launchTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, launchTargetsPath: event.target.value }))} /></label>
               </details>
             </fieldset>
             <p className="setupHint">

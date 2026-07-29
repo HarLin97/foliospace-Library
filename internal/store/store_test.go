@@ -155,6 +155,95 @@ func TestReplaceGameLaunchProfilesPreservesGameRoleAcrossPolicies(t *testing.T) 
 	}
 }
 
+func TestReplaceGameFilesReusesChecksumOnlyForUnchangedSourceIdentity(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/games")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := s.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Checksum Game", Platform: "psp", ROMSetName: "PSP",
+		Format: "iso", FilePath: "/games/game.iso", RelPath: "game.iso", Size: 4,
+		MTime: time.Unix(1, 0), SHA1: "0123456789abcdef0123456789abcdef01234567",
+		EmulatorHint: "ppsspp", Compatibility: "unknown", CatalogRole: "game",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksum := "89abcdef0123456789abcdef0123456789abcdef"
+	file := domain.GameFile{
+		GameID: game.ID, Name: "game.iso", FilePath: "/games/game.iso", Size: 4,
+		MTime: time.Unix(1, 0), SHA1: checksum, Role: "entry", Position: 0,
+	}
+	if err := s.ReplaceGameFiles(game.ID, []domain.GameFile{file}); err != nil {
+		t.Fatal(err)
+	}
+
+	file.SHA1 = ""
+	if err := s.ReplaceGameFiles(game.ID, []domain.GameFile{file}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0].SHA1 != checksum {
+		t.Fatalf("unchanged checksum=%q, want %q", stored[0].SHA1, checksum)
+	}
+
+	file.MTime = time.Unix(2, 0)
+	if err := s.ReplaceGameFiles(game.ID, []domain.GameFile{file}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 1 || stored[0].SHA1 != "" {
+		t.Fatalf("changed source reused checksum %q", stored[0].SHA1)
+	}
+	pending, err := s.GameFilesMissingSHA1ForGame(game.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].GameID != game.ID || pending[0].Position != 0 {
+		t.Fatalf("targeted pending files = %#v, want the changed game file", pending)
+	}
+	platformTotal, platformChecksummed, err := s.GameFileChecksumCountsForPlatform("PSP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if platformTotal != 1 || platformChecksummed != 0 {
+		t.Fatalf("PSP checksum counts = %d/%d, want 0/1 complete", platformChecksummed, platformTotal)
+	}
+	platformPending, err := s.GameFilesMissingSHA1ForScope(0, "psp", 0, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(platformPending) != 1 || platformPending[0].ID != stored[0].ID {
+		t.Fatalf("platform pending files = %#v, want the PSP file", platformPending)
+	}
+	none, err := s.GameFilesMissingSHA1ForScope(0, "snes", 0, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("unexpected non-PSP pending files = %#v", none)
+	}
+	if _, err := s.GameFilesMissingSHA1ForGame(0, 10); err == nil {
+		t.Fatal("targeted checksum query accepted an invalid game ID")
+	}
+	if _, err := s.UpdateGameFileSHA1(stored[0], "not-a-sha1"); err == nil {
+		t.Fatal("invalid SHA-1 update succeeded")
+	}
+}
+
 func TestStorePersistsWebtoonReadingPositionPerProfile(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {

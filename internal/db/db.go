@@ -132,6 +132,7 @@ func Migrate(conn *sql.DB) error {
 			file_path TEXT NOT NULL,
 			size INTEGER NOT NULL,
 			mtime TEXT NOT NULL,
+			sha1 TEXT NOT NULL DEFAULT '',
 			role TEXT NOT NULL DEFAULT 'dependency',
 			position INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -543,6 +544,9 @@ func Migrate(conn *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "games", "catalog_role", "TEXT NOT NULL DEFAULT 'game'"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "game_files", "sha1", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := addColumnIfMissing(conn, "game_dos_launch", "install_directory", "TEXT NOT NULL DEFAULT ''"); err != nil {

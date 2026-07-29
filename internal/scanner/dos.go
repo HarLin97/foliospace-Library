@@ -132,7 +132,7 @@ func (s *Scanner) indexDOSGameFile(library domain.Library, filePath string, info
 		return err
 	}
 	if err := s.store.ReplaceGameFiles(game.ID, []domain.GameFile{{
-		GameID: game.ID, Name: filepath.Base(filePath), FilePath: filePath, Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0,
+		GameID: game.ID, Name: filepath.Base(filePath), FilePath: filePath, Size: info.Size(), MTime: info.ModTime(), SHA1: checksums.sha1, Role: "entry", Position: 0,
 	}}); err != nil {
 		return err
 	}

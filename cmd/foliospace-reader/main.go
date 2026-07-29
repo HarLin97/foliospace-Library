@@ -32,7 +32,10 @@ func main() {
 		log.Printf("marked %d interrupted scan job(s) as cancelled", count)
 	}
 
-	api := httpapi.NewWithOptions(service.NewWithConfig(appStore, cfg.ConfigDir), http.FileServer(http.Dir("web/dist")), httpapi.Options{APIToken: cfg.APIToken})
+	api := httpapi.NewWithOptions(service.NewWithConfig(appStore, cfg.ConfigDir), http.FileServer(http.Dir("web/dist")), httpapi.Options{
+		APIToken:                  cfg.APIToken,
+		DisableGameLaunchResolver: cfg.DisableGameLaunchResolver,
+	})
 
 	server := &http.Server{
 		Addr:              cfg.Addr,

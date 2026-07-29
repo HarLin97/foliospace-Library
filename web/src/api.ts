@@ -279,6 +279,8 @@ export type GameCatalogSettings = {
   enableLibretroCovers: boolean;
   fbneoDatPath: string;
   mameListXmlPath: string;
+  fbneoTargetsPath: string;
+  mameTargetsPath: string;
   launchTargetsPath: string;
   mamePlatforms: string;
   metadataProvider: "local" | "hasheous" | "disabled";
@@ -287,11 +289,18 @@ export type GameCatalogSettings = {
 export type GameCatalogTaskStatus = {
   id?: string;
   action?: string;
+  scope?: "game" | "platform" | "all";
+  gameId?: number;
+  platform?: string;
+  force?: boolean;
   status?: "running" | "completed" | "failed" | "interrupted";
   message?: string;
   processed: number;
+  total: number;
   matched: number;
+  skipped?: number;
   failed: number;
+  errors?: string[];
   startedAt?: string;
   endedAt?: string;
   details?: Record<string, unknown>;
@@ -311,6 +320,9 @@ export type GameCurationSummary = {
   dependencies: number;
   metadataReady: number;
   artworkReady: number;
+  fileCount: number;
+  checksummed: number;
+  checksumPending: number;
   policies: GameCatalogPolicyStatus[];
   lastTask: GameCatalogTaskStatus;
 };
@@ -320,6 +332,9 @@ export type GameCurationItem = {
   metadataStatus: string;
   artworkStatus: string;
   readyProfiles: number;
+  fileCount: number;
+  checksummed: number;
+  mobileReady: boolean;
   issueCode?: string;
   issueMessage?: string;
 };
@@ -694,6 +709,16 @@ export const api = {
   },
   gameCurationTask: () => request<GameCatalogTaskStatus>("/api/games/curation/task"),
   analyzeGameCatalog: () => request<GameCatalogTaskStatus>("/api/games/curation/analyze", { method: "POST" }),
+  rebuildGameCompatibility: (options: { scope?: "game" | "platform" | "all"; gameId?: number; platform?: string; force?: boolean } = {}) =>
+    request<GameCatalogTaskStatus>("/api/games/curation/rebuild", {
+      method: "POST",
+      body: JSON.stringify({ scope: options.scope || "all", ...options }),
+    }),
+  backfillGameChecksums: (limit = 100, gameId?: number) =>
+    request<GameCatalogTaskStatus>("/api/games/curation/checksums", {
+      method: "POST",
+      body: JSON.stringify({ limit, ...(gameId ? { gameId } : {}) }),
+    }),
   matchGameCovers: (includeNetwork: boolean) =>
     request<GameCatalogTaskStatus>("/api/games/curation/covers", {
       method: "POST",

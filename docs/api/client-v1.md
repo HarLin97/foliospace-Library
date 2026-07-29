@@ -625,19 +625,25 @@ Reads or replaces the instance-level catalog pipeline configuration:
   "enableLibretroCovers": true,
   "fbneoDatPath": "/config/policies/fbneo-arcade.dat",
   "mameListXmlPath": "/config/policies/mame0288lx.zip",
+  "fbneoTargetsPath": "/config/policies/fbneo-mobile-targets.json",
+  "mameTargetsPath": "/config/policies/mame-mobile-targets.json",
   "launchTargetsPath": "/config/policies/targets.json",
   "mamePlatforms": "arcade,mame,model2,cps,cps1,cps2,cps3,neogeo",
   "metadataProvider": "local"
 }
 ```
 
-`metadataProvider` is `local`, `hasheous`, or `disabled`. `local` is the default and performs no Internet requests. Hasheous is opt-in and uses stable ROM hashes; it is never required for scanning or launch-profile resolution. A missing policy file is reported in curation status rather than causing the service to fail startup.
+`metadataProvider` is `local`, `hasheous`, or `disabled`. `local` is the default and performs no Internet requests. Hasheous is opt-in and uses stable ROM hashes; it is never required for scanning or launch-profile resolution. FBNeo and MAME use separate target files because their runtime fingerprint policies differ. `launchTargetsPath` remains a backward-compatible fallback for installations that still use one legacy target file. A missing policy file is reported in curation status rather than causing the service to fail startup.
 
 ### `GET /api/games/curation`
 
-Returns all administrative game records, including dependencies and `needs-curation` entries. Query parameters are `limit`, `offset`, `q`, `platform`, `state`, and `sort`. `state` accepts catalog roles such as `game`, `needs-curation`, or `dependency`. Each item includes metadata/artwork state, ready profile count, and an actionable issue code such as `identity-missing`, `policy-pack-missing`, or `launch-profile-missing`.
+Returns all administrative game records, including dependencies and `needs-curation` entries. Query parameters are `limit`, `offset`, `q`, `platform`, `state`, and `sort`. `state` accepts catalog roles such as `game`, `needs-curation`, or `dependency`. Each item includes metadata/artwork state, ready profile count, `fileCount`, `checksummed`, `mobileReady`, and an actionable issue code such as `identity-missing`, `policy-pack-missing`, `dependency-missing`, or `manifest-checksum-unavailable`.
 
-Use `GET /api/games/curation?summary=1` for aggregate counts, installed-policy status, and the latest background task. `GET /api/games/curation/task` returns the persisted task status directly.
+Use `GET /api/games/curation?summary=1` for aggregate counts, including `fileCount`, `checksummed`, and `checksumPending`, installed-policy status, and the latest background task. `GET /api/games/curation/task` returns the persisted task status directly.
+
+### `POST /api/games/curation/checksums`
+
+Starts one exclusive, bounded checksum-backfill task for canonical launch files. The optional request body is `{"limit": 100}`; the default is 100 and the maximum is 500. Pass `{"gameId": 18726, "limit": 32}` to repair one blocked game's files without hashing unrelated games. Files are processed sequentially, source identity is checked before and after reading, and a checksum is committed only if path, size, and modification time still match the indexed record. Repeat the global task while `checksumPending` is greater than zero. The resolver does not hash files synchronously.
 
 ### `POST /api/games/curation/analyze`
 
@@ -911,7 +917,8 @@ Resolves a stable launch profile for the exact client and emulator runtime inven
 
 Resolution is risk-tiered:
 
-- Ordinary console and computer platforms reuse the existing validated canonical manifest. Known Libretro platform/core combinations do not require a per-build core SHA-256; Dolphin and Supermodel may report an empty version.
+- Ordinary console and computer platforms reuse the existing validated canonical manifest. Every returned launch file has a persisted SHA-1; the resolver never computes large-file hashes synchronously.
+- Physical iPhone, iPad, Apple Vision Pro, and Apple TV clients must report the SHA-256 of every Libretro core they offer. PSP uses normalized core id `ppsspp`; DOS uses `dosboxpure` (the input alias `dosbox-pure` is accepted). Desktop standalone PPSSPP 1.20.4+ and DOSBox Staging 0.82.2+ remain supported.
 - Curated DOS packages reuse their existing `dosLaunch` object. An ambiguous or unknown inner executable is not promoted to a launchable profile.
 - MAME and FBNeo remain strict: runtime/content-set or core/hash mismatches return `409`, and every audited dependency must be present.
 - Ordinary SFC/SNES entries accept the known Libretro `bsnes`, `bsnes-mercury`, `snes9x`, `snes9x-current`, and Mesen-S core identifiers. They do not require the per-ROM arcade audit table.
@@ -929,6 +936,8 @@ Pragmatic profiles accept these canonical native client identities:
 | Apple TV | `SpatialEMU.tvOS` | `tvos-arm64` | `arm64` |
 
 Apple mobile identities describe physical-device builds. Simulator identities and generic placeholders such as `SpatialEMU.Apple` are intentionally rejected, because they do not identify a deployable runtime ABI. The client must report only runtimes actually bundled in that target. Ordinary console, computer, and disc platforms can then resolve through the same deterministic manifest-backed route used by desktop clients.
+
+For Apple mobile Libretro requests, `coreSha256` must be 64 lowercase hexadecimal characters and must describe the actual bundled core. This requirement applies to ordinary console cores as well as PSP and DOS. It prevents simulator, placeholder, or stale builds from receiving a profile intended for a different binary.
 
 MAME and FBNeo profiles remain target-specific and audited. Adding an Apple client identity does not make a Windows arcade profile portable: each mobile target needs a persisted profile matching its exact client identity and runtime tuple. Current Apple builds report `mame/0.287/mame-0.287`; FBNeo additionally requires the exact client-reported `coreSha256`. The server can persist these alongside Windows MAME 0.288 and FBNeo profiles without replacing or weakening either policy.
 
@@ -1005,20 +1014,33 @@ A successful response nests the canonical game manifest and adds cache identity:
 }
 ```
 
-The profile may publish a client-visible logical filename that differs from the immutable physical asset name. Clients must save each downloaded file using `files[].name`; URLs remain opaque, bearer-authenticated service URLs and never contain access tokens or NAS paths. Exactly one file is `entry`; BIOS, parent sets, device ROMs, CHDs, tracks, and other required files are `dependency` entries. `manifest.game.size` is the complete profile download size.
+The profile may publish a client-visible logical filename that differs from the immutable physical asset name. Clients must save each downloaded file using `files[].name`; URLs remain opaque, bearer-authenticated service URLs and never contain access tokens or NAS paths. Exactly one file is `entry`; BIOS, parent sets, device ROMs, CHDs, tracks, and other required files are `dependency` entries. File positions are unique and contiguous, every file has a positive size, and every returned file includes a lowercase `sha1:<40 hex>` checksum. `manifest.game.size` is the complete profile download size.
 
 For a successful Windows 1.302 request, `runtime` is the exact selected request tuple, including trailing version components such as PCSX2 `2.6.3.0` or DOSBox Staging `0.82.2.0`. The server may normalize these versions internally for compatibility policy but must not rewrite them in the response.
 
 Ordinary profiles are deterministic wrappers over the current canonical manifest. Their IDs and revisions are stable until the indexed game changes. Multi-file games use `/api/client/games/{gameId}/files/{position}` URLs and preserve descriptor-relative filenames. DOS responses keep the downloadable archive as `manifest.game.fileName`, use the inner `.bat`/`.com`/`.exe` as `entryFile`, and include the validated `dosLaunch` object.
 
-The server never chooses an unreported runtime or substitutes the newest or closest MAME/FBNeo profile. An installed resolver returns `409` with a structured error when no compatible profile exists:
+The server never chooses an unreported runtime or substitutes the newest or closest MAME/FBNeo profile. An installed resolver returns `409` with a stable structured error when it cannot safely produce a launch package:
 
 ```json
 {
-  "code": "runtime-profile-not-available",
-  "message": "No MAME 0.289 profile is available for game 12."
+  "code": "manifest-checksum-unavailable",
+  "message": "A required launch file has not been checksummed.",
+  "details": {
+    "gameId": 12,
+    "file": "track01.bin"
+  }
 }
 ```
+
+Current error codes are:
+
+- `runtime-unsupported`: the client identity, architecture, runtime, or core family is unsupported.
+- `core-fingerprint-unknown`: a physical Apple client omitted or supplied an unrecognized Libretro core SHA-256.
+- `launch-profile-missing`: a launchable profile has not been curated for this game/runtime.
+- `dependency-missing`: an entry, track, BIOS, parent, device, or other required file is missing or invalid.
+- `manifest-checksum-unavailable`: a required file has no persisted SHA-1 or changed after it was checksummed.
+- `content-set-mismatch`: a MAME content set does not match an installed audited profile.
 
 Clients must not fall back after `409`, `422`, authentication failures, or server errors. Only `404`, `405`, or `501` indicate that the resolver itself is unavailable and permit legacy manifest fallback. Cache identity is `gameId + launchProfileId + profileRevision + runtime.id + runtime.version + runtime.contentSet + runtime.coreId + runtime.coreSha256`.
 

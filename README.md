@@ -63,9 +63,12 @@ FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games
 FOLIOSPACE_ADDR=:8080
 FOLIOSPACE_API_TOKEN=
 FOLIOSPACE_SCAN_WORKERS=2
+FOLIOSPACE_DISABLE_GAME_LAUNCH_RESOLVER=true
 ```
 
 Set `FOLIOSPACE_API_TOKEN` to require API authentication from environment variables. If it is empty, release `0.966` can create the first access token from the web setup page and stores only a SHA-256 token hash in SQLite. Native clients can send `Authorization: Bearer <token>`. The web UI stays publicly loadable, then prompts for the access token and receives an HttpOnly cookie so covers, pages, and EPUB iframe resources can load through normal browser requests.
+
+The launch resolver is disabled by default while runtime profiles are being stabilized. With `FOLIOSPACE_DISABLE_GAME_LAUNCH_RESOLVER=true`, the server advertises `gameLaunchResolver: false` and returns `404` from the resolve endpoint, allowing compatible clients to use the established game manifest flow. Set the variable to `false` only after the runtime target catalog and profile migration have passed client acceptance tests.
 
 Authentication helpers:
 
@@ -81,7 +84,7 @@ First-run setup helpers:
 
 Fresh installations can also configure the game catalog pipeline during setup. FolioSpace classifies new game files after scanning, keeps unverified archives in `needs-curation`, and publishes only records that are safe for native clients to launch. The setup page can enable automatic post-scan analysis, local/Libretro cover matching, optional Hasheous hash metadata, and explicit FBNeo/MAME compatibility policy paths under `/config/policies`.
 
-After setup, open **Game Curation** in the web sidebar to inspect ready games, dependencies, and records that need attention. The page reports missing identity, missing policy packs, and failed launch-profile audits; it can re-run catalog analysis, batch-match local covers, optionally try Libretro artwork, and edit metadata without moving the source ROM. See [`docs/operations/game-catalog-curation.md`](docs/operations/game-catalog-curation.md) for the complete workflow.
+After setup, open **Game Curation** in the web sidebar to inspect ready games, dependencies, and records that need attention. The page reports missing identity, launch-file checksum coverage, missing policy packs, and failed launch-profile audits; it can run bounded checksum backfill, re-run catalog analysis, batch-match local covers, optionally try Libretro artwork, and edit metadata without moving the source ROM. See [`docs/operations/game-catalog-curation.md`](docs/operations/game-catalog-curation.md) for the complete workflow.
 
 ## Client API v1
 

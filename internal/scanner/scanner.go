@@ -1430,6 +1430,11 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 			format = "m3u"
 		}
 	}
+	if platform != "pc98" {
+		if err := populateGameFileSHA1(gameFiles, path, checksums.sha1, format); err != nil {
+			return err
+		}
+	}
 	gameAsset := domain.GameAsset{
 		LibraryID:     library.ID,
 		Title:         title,
@@ -1624,7 +1629,7 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 		if err != nil {
 			return err
 		}
-		return s.store.ReplaceGameFiles(game.ID, []domain.GameFile{{Name: filepath.Base(path), FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0}})
+		return s.store.ReplaceGameFiles(game.ID, []domain.GameFile{{Name: filepath.Base(path), FilePath: path, Size: info.Size(), MTime: info.ModTime(), SHA1: checksums.sha1, Role: "entry", Position: 0}})
 	}
 
 	shortName := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
@@ -1648,6 +1653,9 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 		}
 		return err
 	}
+	if err := populateGameFileSHA1(files, path, checksums.sha1, "zip"); err != nil {
+		return err
+	}
 	game, err := s.store.UpsertGame(domain.GameAsset{
 		LibraryID: library.ID, Title: entry.title, Platform: "naomi2", ROMSetName: shortName, Region: entry.region, Format: "zip",
 		FilePath: path, RelPath: filepath.ToSlash(relPath), Size: totalSize, MTime: info.ModTime(), CRC32: checksums.crc32, SHA1: checksums.sha1,
@@ -1666,19 +1674,26 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 	if err != nil {
 		return err
 	}
+	companionSHA1 := ""
+	for _, file := range files {
+		if filepath.Clean(file.FilePath) == filepath.Clean(companionPath) {
+			companionSHA1 = file.SHA1
+			break
+		}
+	}
 	companionRelPath, err := filepath.Rel(library.RootPath, companionPath)
 	if err != nil {
 		return err
 	}
 	dependency, err := s.store.UpsertGame(domain.GameAsset{
 		LibraryID: library.ID, Title: entry.gdrom, Platform: "naomi2", ROMSetName: entry.gdrom, Region: entry.region, Format: "chd",
-		FilePath: companionPath, RelPath: filepath.ToSlash(companionRelPath), Size: companionInfo.Size(), MTime: companionInfo.ModTime(),
+		FilePath: companionPath, RelPath: filepath.ToSlash(companionRelPath), Size: companionInfo.Size(), MTime: companionInfo.ModTime(), SHA1: companionSHA1,
 		EmulatorHint: "flycast", Compatibility: "unknown", CatalogRole: "dependency",
 	})
 	if err != nil {
 		return err
 	}
-	return s.store.ReplaceGameFiles(dependency.ID, []domain.GameFile{{Name: filepath.Base(companionPath), FilePath: companionPath, Size: companionInfo.Size(), MTime: companionInfo.ModTime(), Role: "entry", Position: 0}})
+	return s.store.ReplaceGameFiles(dependency.ID, []domain.GameFile{{Name: filepath.Base(companionPath), FilePath: companionPath, Size: companionInfo.Size(), MTime: companionInfo.ModTime(), SHA1: companionSHA1, Role: "entry", Position: 0}})
 }
 
 func (s *Scanner) canSkipNaomi2Game(path string, info fs.FileInfo) bool {
@@ -1778,6 +1793,13 @@ func (s *Scanner) syncPC98SupportFiles(gameID int64) error {
 	sort.Slice(fonts, func(i, j int) bool {
 		return strings.ToLower(fonts[i].FilePath) < strings.ToLower(fonts[j].FilePath)
 	})
+	for index := range fonts {
+		checksums, err := fileChecksums(fonts[index].FilePath)
+		if err != nil {
+			return err
+		}
+		fonts[index].SHA1 = checksums.sha1
+	}
 	return s.store.ReplacePC98SupportFiles(gameID, fonts)
 }
 
@@ -3968,6 +3990,62 @@ func fileChecksums(path string) (checksumPair, error) {
 		sha256: hex.EncodeToString(sha256Hash.Sum(nil)),
 	}, nil
 }
+
+func populateGameFileSHA1(files []domain.GameFile, primaryPath string, primarySHA1 string, format string) error {
+	for index := range files {
+		file := &files[index]
+		if file.Position == 0 && filepath.Clean(file.FilePath) == filepath.Clean(primaryPath) {
+			switch strings.ToLower(strings.TrimSpace(format)) {
+			case "cue":
+				data, err := os.ReadFile(file.FilePath)
+				if err != nil {
+					return err
+				}
+				normalized, err := NormalizeCUEFileReferences(data)
+				if err != nil {
+					return err
+				}
+				file.SHA1 = sha1Hex(normalized)
+				continue
+			case "m3u":
+				file.SHA1 = sha1Hex(canonicalM3UData(files))
+				continue
+			default:
+				if gameFileSHA1Pattern.MatchString(strings.ToLower(strings.TrimSpace(primarySHA1))) {
+					file.SHA1 = strings.ToLower(strings.TrimSpace(primarySHA1))
+					continue
+				}
+			}
+		}
+		checksums, err := fileChecksums(file.FilePath)
+		if err != nil {
+			return fmt.Errorf("checksum game file %s: %w", file.Name, err)
+		}
+		file.SHA1 = checksums.sha1
+	}
+	return nil
+}
+
+func canonicalM3UData(files []domain.GameFile) []byte {
+	lines := make([]string, 0)
+	for _, file := range files {
+		if file.Role != "dependency" {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(file.Name)) {
+		case ".cue", ".ccd", ".toc", ".chd":
+			lines = append(lines, file.Name)
+		}
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
+}
+
+func sha1Hex(data []byte) string {
+	sum := sha1.Sum(data)
+	return hex.EncodeToString(sum[:])
+}
+
+var gameFileSHA1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func gameTitle(path string) string {
 	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))

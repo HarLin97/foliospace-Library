@@ -8,6 +8,7 @@ func TestLoadUsesNASDefaults(t *testing.T) {
 	t.Setenv("FOLIOSPACE_ADDR", "")
 	t.Setenv("FOLIOSPACE_API_TOKEN", "")
 	t.Setenv("FOLIOSPACE_MEMORY_LIMIT_MB", "")
+	t.Setenv("FOLIOSPACE_DISABLE_GAME_LAUNCH_RESOLVER", "")
 
 	cfg := Load()
 
@@ -26,6 +27,9 @@ func TestLoadUsesNASDefaults(t *testing.T) {
 	if cfg.MemoryLimitMB != 768 {
 		t.Fatalf("MemoryLimitMB = %d, want 768", cfg.MemoryLimitMB)
 	}
+	if !cfg.DisableGameLaunchResolver {
+		t.Fatal("DisableGameLaunchResolver = false, want true")
+	}
 }
 
 func TestLoadUsesEnvironmentOverrides(t *testing.T) {
@@ -34,6 +38,7 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	t.Setenv("FOLIOSPACE_ADDR", "127.0.0.1:9090")
 	t.Setenv("FOLIOSPACE_API_TOKEN", "secret")
 	t.Setenv("FOLIOSPACE_MEMORY_LIMIT_MB", "1024")
+	t.Setenv("FOLIOSPACE_DISABLE_GAME_LAUNCH_RESOLVER", "false")
 
 	cfg := Load()
 
@@ -51,5 +56,8 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.MemoryLimitMB != 1024 {
 		t.Fatalf("MemoryLimitMB = %d, want 1024", cfg.MemoryLimitMB)
+	}
+	if cfg.DisableGameLaunchResolver {
+		t.Fatal("DisableGameLaunchResolver = true, want false")
 	}
 }

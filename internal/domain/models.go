@@ -239,6 +239,7 @@ type GameFile struct {
 	FilePath string    `json:"filePath,omitempty"`
 	Size     int64     `json:"size"`
 	MTime    time.Time `json:"mtime"`
+	SHA1     string    `json:"sha1,omitempty"`
 	Role     string    `json:"role"`
 	Position int       `json:"position"`
 }
@@ -509,6 +510,8 @@ type GameCatalogSettings struct {
 	EnableLibretroCovers bool   `json:"enableLibretroCovers"`
 	FBNeoDATPath         string `json:"fbneoDatPath"`
 	MAMEListXMLPath      string `json:"mameListXmlPath"`
+	FBNeoTargetsPath     string `json:"fbneoTargetsPath"`
+	MAMETargetsPath      string `json:"mameTargetsPath"`
 	LaunchTargetsPath    string `json:"launchTargetsPath"`
 	MAMEPlatforms        string `json:"mamePlatforms"`
 	MetadataProvider     string `json:"metadataProvider"`
@@ -522,14 +525,17 @@ type GameCatalogPolicyStatus struct {
 }
 
 type GameCurationSummary struct {
-	Total         int64                     `json:"total"`
-	Ready         int64                     `json:"ready"`
-	NeedsCuration int64                     `json:"needsCuration"`
-	Dependencies  int64                     `json:"dependencies"`
-	MetadataReady int64                     `json:"metadataReady"`
-	ArtworkReady  int64                     `json:"artworkReady"`
-	Policies      []GameCatalogPolicyStatus `json:"policies"`
-	LastTask      GameCatalogTaskStatus     `json:"lastTask"`
+	Total           int64                     `json:"total"`
+	Ready           int64                     `json:"ready"`
+	NeedsCuration   int64                     `json:"needsCuration"`
+	Dependencies    int64                     `json:"dependencies"`
+	MetadataReady   int64                     `json:"metadataReady"`
+	ArtworkReady    int64                     `json:"artworkReady"`
+	FileCount       int64                     `json:"fileCount"`
+	Checksummed     int64                     `json:"checksummed"`
+	ChecksumPending int64                     `json:"checksumPending"`
+	Policies        []GameCatalogPolicyStatus `json:"policies"`
+	LastTask        GameCatalogTaskStatus     `json:"lastTask"`
 }
 
 type GameCurationItem struct {
@@ -537,6 +543,9 @@ type GameCurationItem struct {
 	MetadataStatus string    `json:"metadataStatus"`
 	ArtworkStatus  string    `json:"artworkStatus"`
 	ReadyProfiles  int       `json:"readyProfiles"`
+	FileCount      int       `json:"fileCount"`
+	Checksummed    int       `json:"checksummed"`
+	MobileReady    bool      `json:"mobileReady"`
 	IssueCode      string    `json:"issueCode,omitempty"`
 	IssueMessage   string    `json:"issueMessage,omitempty"`
 }
@@ -549,14 +558,28 @@ type GameCurationPage struct {
 	HasMore bool               `json:"hasMore"`
 }
 
+type GameCompatibilityRebuildRequest struct {
+	Scope    string `json:"scope"`
+	GameID   int64  `json:"gameId,omitempty"`
+	Platform string `json:"platform,omitempty"`
+	Force    bool   `json:"force"`
+}
+
 type GameCatalogTaskStatus struct {
 	ID        string         `json:"id,omitempty"`
 	Action    string         `json:"action,omitempty"`
+	Scope     string         `json:"scope,omitempty"`
+	GameID    int64          `json:"gameId,omitempty"`
+	Platform  string         `json:"platform,omitempty"`
+	Force     bool           `json:"force,omitempty"`
 	Status    string         `json:"status,omitempty"`
 	Message   string         `json:"message,omitempty"`
 	Processed int64          `json:"processed"`
+	Total     int64          `json:"total"`
 	Matched   int64          `json:"matched"`
+	Skipped   int64          `json:"skipped"`
 	Failed    int64          `json:"failed"`
+	Errors    []string       `json:"errors,omitempty"`
 	StartedAt *time.Time     `json:"startedAt,omitempty"`
 	EndedAt   *time.Time     `json:"endedAt,omitempty"`
 	Details   map[string]any `json:"details,omitempty"`

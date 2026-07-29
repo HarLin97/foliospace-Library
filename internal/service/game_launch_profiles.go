@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -18,6 +19,20 @@ type RuntimeProfileNotAvailableError struct {
 	GameID         int64
 	RuntimeID      string
 	RuntimeVersion string
+}
+
+type GameLaunchResolveError struct {
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+func (e *GameLaunchResolveError) Error() string {
+	return e.Message
+}
+
+func launchResolveError(code, message string, details map[string]any) *GameLaunchResolveError {
+	return &GameLaunchResolveError{Code: code, Message: message, Details: details}
 }
 
 func (e *RuntimeProfileNotAvailableError) Error() string {
@@ -299,6 +314,7 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 	if err != nil {
 		return domain.GameLaunchResolution{}, err
 	}
+	missingDependency := ""
 	for _, profile := range persistedProfiles {
 		runtime, ok := matchingPersistedRuntime(profile, req)
 		if !ok || len(profile.Files) == 0 {
@@ -312,6 +328,11 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 			if sourceErr != nil || source.Size != file.Size ||
 				!strings.EqualFold(strings.TrimSpace(source.SHA1), file.SourceSHA1) ||
 				!strings.EqualFold(filepath.Base(source.FilePath), file.SourceName) {
+				available = false
+				break
+			}
+			if info, statErr := os.Stat(source.FilePath); statErr != nil || !info.Mode().IsRegular() || info.Size() != source.Size {
+				missingDependency = file.Name
 				available = false
 				break
 			}
@@ -340,10 +361,16 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 			source, sourceErr := s.resolveAuditedLaunchSource(file)
 			if sourceErr != nil {
 				if errors.Is(sourceErr, errAuditedLaunchSourceUnavailable) {
+					missingDependency = file.Name
 					candidateAvailable = false
 					break
 				}
 				return domain.GameLaunchResolution{}, sourceErr
+			}
+			if info, statErr := os.Stat(source.FilePath); statErr != nil || !info.Mode().IsRegular() || info.Size() != source.Size {
+				missingDependency = file.Name
+				candidateAvailable = false
+				break
 			}
 			resolvedFiles = append(resolvedFiles, domain.GameLaunchResolvedFile{
 				SourceGameID: source.ID, Name: file.Name, Size: file.Size, Role: file.Role, SHA1: file.SourceSHA1,
@@ -364,6 +391,12 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 			Game: resolvedGame, EntryFile: profile.Files[0].Name, Files: resolvedFiles,
 		}, nil
 	}
+	if missingDependency != "" {
+		return domain.GameLaunchResolution{}, launchResolveError(
+			"dependency-missing", "A required audited launch file is unavailable.",
+			map[string]any{"gameId": game.ID, "file": missingDependency},
+		)
+	}
 	if runtime, ok := matchingPragmaticRuntime(game, req); ok {
 		return s.resolvePragmaticGameLaunch(game, runtime, req.Client)
 	}
@@ -373,9 +406,7 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 			break
 		}
 	}
-	return domain.GameLaunchResolution{}, &RuntimeProfileNotAvailableError{
-		GameID: gameID, RuntimeID: requestedRuntime.ID, RuntimeVersion: requestedRuntime.Version,
-	}
+	return domain.GameLaunchResolution{}, classifyLaunchResolveFailure(game, req, persistedProfiles, requestedRuntime)
 }
 
 func matchingPersistedRuntime(profile domain.GameLaunchProfile, req domain.GameLaunchResolveRequest) (domain.GameRuntimeDescriptor, bool) {
@@ -422,8 +453,28 @@ func (s *Service) resolvePragmaticGameLaunch(game domain.GameAsset, runtime doma
 	}
 	entryFile, err := validatePragmaticManifest(game, files)
 	if err != nil {
-		return domain.GameLaunchResolution{}, &RuntimeProfileNotAvailableError{
-			GameID: game.ID, RuntimeID: runtime.ID, RuntimeVersion: runtime.Version,
+		return domain.GameLaunchResolution{}, launchResolveError("dependency-missing", err.Error(), map[string]any{"gameId": game.ID})
+	}
+	for _, file := range files {
+		info, statErr := os.Stat(file.FilePath)
+		if statErr != nil || !info.Mode().IsRegular() {
+			return domain.GameLaunchResolution{}, launchResolveError(
+				"dependency-missing", "A required launch file is missing.",
+				map[string]any{"gameId": game.ID, "file": file.Name},
+			)
+		}
+		if gameFileSourceChanged(game, file, info) {
+			return domain.GameLaunchResolution{}, launchResolveError(
+				"manifest-checksum-unavailable", "A required launch file changed after its checksum was recorded.",
+				map[string]any{"gameId": game.ID, "file": file.Name},
+			)
+		}
+		checksum := strings.ToLower(strings.TrimSpace(file.SHA1))
+		if !sha1Pattern.MatchString(checksum) {
+			return domain.GameLaunchResolution{}, launchResolveError(
+				"manifest-checksum-unavailable", "A required launch file has not been checksummed.",
+				map[string]any{"gameId": game.ID, "file": file.Name},
+			)
 		}
 	}
 
@@ -431,9 +482,9 @@ func (s *Service) resolvePragmaticGameLaunch(game domain.GameAsset, runtime doma
 	if strings.EqualFold(game.Platform, "dos") {
 		launch, launchErr := s.store.DOSLaunch(game.ID)
 		if launchErr != nil || validatePragmaticDOSLaunch(launch) != nil {
-			return domain.GameLaunchResolution{}, &RuntimeProfileNotAvailableError{
-				GameID: game.ID, RuntimeID: runtime.ID, RuntimeVersion: runtime.Version,
-			}
+			return domain.GameLaunchResolution{}, launchResolveError(
+				"launch-profile-missing", "The DOS launch entry is not curated.", map[string]any{"gameId": game.ID},
+			)
 		}
 		entryFile = launch.EntryFile
 		dosLaunch = &launch
@@ -442,19 +493,15 @@ func (s *Service) resolvePragmaticGameLaunch(game domain.GameAsset, runtime doma
 	resolvedFiles := make([]domain.GameLaunchResolvedFile, 0, len(files))
 	for _, file := range files {
 		position := file.Position
-		sha1 := ""
-		if file.Position == 0 && sha1Pattern.MatchString(strings.ToLower(strings.TrimSpace(game.SHA1))) {
-			sha1 = strings.ToLower(strings.TrimSpace(game.SHA1))
-		}
 		resolvedFiles = append(resolvedFiles, domain.GameLaunchResolvedFile{
 			SourceGameID: game.ID, Position: &position, Name: file.Name,
-			Size: file.Size, Role: file.Role, SHA1: sha1,
+			Size: file.Size, Role: file.Role, SHA1: strings.ToLower(strings.TrimSpace(file.SHA1)),
 		})
 	}
 
 	return domain.GameLaunchResolution{
 		LaunchProfileID: pragmaticLaunchProfileID(game, runtime, client),
-		ProfileRevision: pragmaticProfileRevision(game),
+		ProfileRevision: pragmaticProfileRevision(game, files),
 		Runtime:         runtime, Game: game, EntryFile: entryFile, Files: resolvedFiles, DOSLaunch: dosLaunch,
 	}, nil
 }
@@ -465,12 +512,32 @@ func matchingPragmaticRuntime(game domain.GameAsset, req domain.GameLaunchResolv
 	}
 	platform := normalizeLaunchPlatform(game.Platform)
 	for _, runtime := range req.Runtimes {
-		if pragmaticRuntimeSupportsPlatform(runtime, platform) {
+		if pragmaticRuntimeSupportsPlatform(runtime, platform) && pragmaticRuntimeAllowedForClient(runtime, platform, req.Client) {
 			// Windows 1.302 compares every field with the selected request tuple.
 			return runtime, true
 		}
 	}
 	return domain.GameRuntimeDescriptor{}, false
+}
+
+type pragmaticRuntimeRule struct {
+	Platform   string
+	RuntimeID  string
+	CoreID     string
+	MinVersion string
+}
+
+var pragmaticRuntimeRules = []pragmaticRuntimeRule{
+	{Platform: "dreamcast", RuntimeID: "flycast", MinVersion: "2.6"},
+	{Platform: "naomi", RuntimeID: "flycast", MinVersion: "2.6"},
+	{Platform: "naomi2", RuntimeID: "flycast", MinVersion: "2.6"},
+	{Platform: "model3", RuntimeID: "supermodel"},
+	{Platform: "ngc", RuntimeID: "dolphin"},
+	{Platform: "ps2", RuntimeID: "pcsx2", MinVersion: "2.6.3"},
+	{Platform: "psp", RuntimeID: "ppsspp", MinVersion: "1.20.4"},
+	{Platform: "psp", RuntimeID: "libretro", CoreID: "ppsspp"},
+	{Platform: "dos", RuntimeID: "dosbox-staging", MinVersion: "0.82.2"},
+	{Platform: "dos", RuntimeID: "libretro", CoreID: "dosboxpure"},
 }
 
 func supportedPragmaticClient(client domain.GameLaunchClient) bool {
@@ -499,21 +566,38 @@ func supportedPragmaticClient(client domain.GameLaunchClient) bool {
 func pragmaticRuntimeSupportsPlatform(runtime domain.GameRuntimeDescriptor, platform string) bool {
 	runtimeID := strings.ToLower(strings.TrimSpace(runtime.ID))
 	version := canonicalPragmaticVersion(runtime.Version)
-	switch platform {
-	case "dreamcast", "naomi", "naomi2":
-		return runtimeID == "flycast" && version != "" && versionAtLeast(version, "2.6")
-	case "model3":
-		return runtimeID == "supermodel" && optionalNumericVersion(version)
-	case "ngc":
-		return runtimeID == "dolphin" && optionalNumericVersion(version)
-	case "ps2":
-		return runtimeID == "pcsx2" && versionAtLeast(version, "2.6.3")
-	case "psp":
-		return runtimeID == "ppsspp" && versionAtLeast(version, "1.20.4")
-	case "dos":
-		return runtimeID == "dosbox-staging" && versionAtLeast(version, "0.82.2")
+	coreID := normalizeLaunchCoreID(runtime.CoreID)
+	for _, rule := range pragmaticRuntimeRules {
+		if rule.Platform != platform || rule.RuntimeID != runtimeID || (rule.CoreID != "" && rule.CoreID != coreID) {
+			continue
+		}
+		if rule.MinVersion != "" {
+			return versionAtLeast(version, rule.MinVersion)
+		}
+		return optionalNumericVersion(version)
+	}
+	return runtimeID == "libretro" && ordinaryLibretroCoreSupportsPlatform(runtime.CoreID, platform)
+}
+
+func pragmaticRuntimeAllowedForClient(runtime domain.GameRuntimeDescriptor, platform string, client domain.GameLaunchClient) bool {
+	runtimeID := strings.ToLower(strings.TrimSpace(runtime.ID))
+	if isAppleMobileClient(client) {
+		if (platform == "psp" || platform == "dos") && runtimeID != "libretro" {
+			return false
+		}
+		if runtimeID == "libretro" && !sha256Pattern.MatchString(strings.ToLower(strings.TrimSpace(runtime.CoreSHA256))) {
+			return false
+		}
+	}
+	return true
+}
+
+func isAppleMobileClient(client domain.GameLaunchClient) bool {
+	switch strings.ToLower(strings.TrimSpace(client.Name)) {
+	case "spatialemu.ios", "spatialemu.ipados", "spatialemu.visionos", "spatialemu.tvos":
+		return true
 	default:
-		return runtimeID == "libretro" && ordinaryLibretroCoreSupportsPlatform(runtime.CoreID, platform)
+		return false
 	}
 }
 
@@ -673,10 +757,38 @@ func validatePragmaticManifest(game domain.GameAsset, files []domain.GameFile) (
 	if entries != 1 {
 		return "", fmt.Errorf("canonical manifest requires exactly one entry, got %d", entries)
 	}
+	for position := 0; position < len(files); position++ {
+		if _, exists := positions[position]; !exists {
+			return "", fmt.Errorf("canonical manifest is missing position %d", position)
+		}
+	}
 	if game.Size <= 0 {
 		return "", errors.New("canonical manifest has invalid aggregate size")
 	}
 	return entryFile, nil
+}
+
+func gameFileSourceChanged(game domain.GameAsset, file domain.GameFile, info os.FileInfo) bool {
+	if !info.ModTime().Equal(file.MTime) {
+		return true
+	}
+	if isVirtualGameFile(game, file) {
+		return false
+	}
+	return info.Size() != file.Size
+}
+
+func isVirtualGameFile(game domain.GameAsset, file domain.GameFile) bool {
+	format := strings.ToLower(strings.TrimSpace(game.Format))
+	role := strings.ToLower(strings.TrimSpace(file.Role))
+	if role == "entry" && (format == "cue" || format == "m3u") {
+		return true
+	}
+	if !strings.EqualFold(filepath.Ext(file.FilePath), ".zip") {
+		return false
+	}
+	platform := normalizeLaunchPlatform(game.Platform)
+	return platform == "n64" || platform == "pc98"
 }
 
 func validatePragmaticDOSLaunch(launch domain.DOSLaunch) error {
@@ -742,19 +854,106 @@ func validLaunchRelativePath(name string) bool {
 }
 
 func pragmaticLaunchProfileID(game domain.GameAsset, runtime domain.GameRuntimeDescriptor, client domain.GameLaunchClient) string {
-	key := fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%s\x00%s", game.ID, strings.ToLower(strings.TrimSpace(runtime.ID)),
-		strings.ToLower(strings.TrimSpace(runtime.CoreID)), normalizeLaunchPlatform(game.Platform),
+	key := fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s", game.ID,
+		strings.ToLower(strings.TrimSpace(runtime.ID)), strings.TrimSpace(runtime.Version), strings.TrimSpace(runtime.ContentSet),
+		strings.ToLower(strings.TrimSpace(runtime.CoreID)), strings.ToLower(strings.TrimSpace(runtime.CoreSHA256)),
+		normalizeLaunchPlatform(game.Platform), strings.ToLower(strings.TrimSpace(client.Name)),
 		strings.ToLower(strings.TrimSpace(client.Platform)), strings.ToLower(strings.TrimSpace(client.Architecture)))
 	digest := sha256.Sum256([]byte(key))
 	return fmt.Sprintf("auto-%x", digest[:10])
 }
 
-func pragmaticProfileRevision(game domain.GameAsset) int {
-	revision := game.UpdatedAt.Unix()
-	if revision <= 0 {
+func pragmaticProfileRevision(game domain.GameAsset, files []domain.GameFile) int {
+	var key strings.Builder
+	fmt.Fprintf(&key, "%d\x00%s\x00%d\x00", game.ID, game.UpdatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), game.Size)
+	for _, file := range files {
+		fmt.Fprintf(&key, "%d\x00%s\x00%d\x00%s\x00%s\x00", file.Position, file.Name, file.Size,
+			strings.ToLower(strings.TrimSpace(file.Role)), strings.ToLower(strings.TrimSpace(file.SHA1)))
+	}
+	digest := sha256.Sum256([]byte(key.String()))
+	revision := int(uint32(digest[0])<<24|uint32(digest[1])<<16|uint32(digest[2])<<8|uint32(digest[3])) & 0x7fffffff
+	if revision == 0 {
 		return 1
 	}
-	return int(revision)
+	return revision
+}
+
+func classifyLaunchResolveFailure(game domain.GameAsset, req domain.GameLaunchResolveRequest, profiles []domain.GameLaunchProfile, requested domain.GameRuntimeDescriptor) error {
+	details := map[string]any{"gameId": game.ID}
+	if !supportedPragmaticClient(req.Client) {
+		return launchResolveError("runtime-unsupported", "The client identity or architecture is not supported.", details)
+	}
+	for _, runtime := range req.Runtimes {
+		if !strings.EqualFold(strings.TrimSpace(runtime.ID), "libretro") {
+			continue
+		}
+		core := normalizeLaunchCoreID(runtime.CoreID)
+		platform := normalizeLaunchPlatform(game.Platform)
+		coreMatchesPlatform := ordinaryLibretroCoreSupportsPlatform(core, platform) ||
+			(platform == "psp" && core == "ppsspp") || (platform == "dos" && core == "dosboxpure") || core == "fbneo"
+		if coreMatchesPlatform && !sha256Pattern.MatchString(strings.ToLower(strings.TrimSpace(runtime.CoreSHA256))) && isAppleMobileClient(req.Client) {
+			details["coreId"] = runtime.CoreID
+			return launchResolveError("core-fingerprint-unknown", "The client did not provide a recognized core fingerprint.", details)
+		}
+		for _, profile := range profiles {
+			if persistedProfileClientMatches(profile, req.Client) && strings.EqualFold(profile.Runtime.ID, runtime.ID) && strings.EqualFold(profile.Runtime.CoreID, runtime.CoreID) && profile.Runtime.CoreSHA256 != runtime.CoreSHA256 {
+				details["coreId"] = runtime.CoreID
+				return launchResolveError("core-fingerprint-unknown", "The supplied core fingerprint is not present in the launch policy.", details)
+			}
+		}
+		for _, profile := range auditedGameLaunchProfiles {
+			if auditedProfileSourceMatchesGame(profile, game) && auditedProfileClientMatches(profile, req.Client) &&
+				strings.EqualFold(profile.Runtime.ID, runtime.ID) && strings.EqualFold(profile.Runtime.CoreID, runtime.CoreID) &&
+				profile.Runtime.CoreSHA256 != runtime.CoreSHA256 {
+				details["coreId"] = runtime.CoreID
+				return launchResolveError("core-fingerprint-unknown", "The supplied core fingerprint is not present in the launch policy.", details)
+			}
+		}
+	}
+	for _, runtime := range req.Runtimes {
+		if !strings.EqualFold(strings.TrimSpace(runtime.ID), "mame") {
+			continue
+		}
+		for _, profile := range profiles {
+			if persistedProfileClientMatches(profile, req.Client) && strings.EqualFold(profile.Runtime.ID, runtime.ID) && profile.Runtime.ContentSet != runtime.ContentSet {
+				details["contentSet"] = runtime.ContentSet
+				return launchResolveError("content-set-mismatch", "The requested content set does not match an installed launch profile.", details)
+			}
+		}
+		for _, profile := range auditedGameLaunchProfiles {
+			if auditedProfileSourceMatchesGame(profile, game) && auditedProfileClientMatches(profile, req.Client) &&
+				strings.EqualFold(profile.Runtime.ID, runtime.ID) && profile.Runtime.ContentSet != runtime.ContentSet {
+				details["contentSet"] = runtime.ContentSet
+				return launchResolveError("content-set-mismatch", "The requested content set does not match an installed launch profile.", details)
+			}
+		}
+	}
+	if !isLaunchableCatalogGame(game) || isStrictArcadePlatform(game.Platform) || len(profiles) > 0 {
+		return launchResolveError("launch-profile-missing", "No compatible audited launch profile is available for this game and client.", details)
+	}
+	if strings.TrimSpace(requested.ID) != "" {
+		details["runtimeId"] = requested.ID
+	}
+	return launchResolveError("runtime-unsupported", "None of the reported runtimes can launch this platform.", details)
+}
+
+func persistedProfileClientMatches(profile domain.GameLaunchProfile, client domain.GameLaunchClient) bool {
+	return strings.EqualFold(strings.TrimSpace(client.Name), profile.ClientName) &&
+		strings.EqualFold(strings.TrimSpace(client.Platform), profile.ClientPlatform) &&
+		strings.EqualFold(strings.TrimSpace(client.Architecture), profile.Architecture) &&
+		versionAtLeast(client.Version, profile.MinClientVersion)
+}
+
+func auditedProfileClientMatches(profile auditedGameLaunchProfile, client domain.GameLaunchClient) bool {
+	return strings.EqualFold(strings.TrimSpace(client.Name), profile.ClientName) &&
+		strings.EqualFold(strings.TrimSpace(client.Platform), profile.ClientPlatform) &&
+		strings.EqualFold(strings.TrimSpace(client.Architecture), profile.Architecture) &&
+		versionAtLeast(client.Version, profile.MinClientVersion)
+}
+
+func auditedProfileSourceMatchesGame(profile auditedGameLaunchProfile, game domain.GameAsset) bool {
+	return len(profile.Files) > 0 && strings.EqualFold(strings.TrimSpace(game.SHA1), profile.EntrySHA1) &&
+		game.Size == profile.Files[0].Size && strings.EqualFold(filepath.Base(game.FilePath), profile.EntrySourceName)
 }
 
 func (s *Service) resolveAuditedLaunchSource(file auditedGameLaunchFile) (domain.GameAsset, error) {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1771,21 +1772,45 @@ func (s *Store) ReplaceGameFiles(gameID int64, files []domain.GameFile) error {
 		return err
 	}
 	defer tx.Rollback()
+	existingRows, err := tx.Query(`SELECT file_path, size, mtime, sha1 FROM game_files WHERE game_id = ?`, gameID)
+	if err != nil {
+		return err
+	}
+	existing := make(map[string]string)
+	for existingRows.Next() {
+		var path, mtime, sha1 string
+		var size int64
+		if err := existingRows.Scan(&path, &size, &mtime, &sha1); err != nil {
+			_ = existingRows.Close()
+			return err
+		}
+		existing[gameFileIdentity(path, size, parseTime(mtime))] = sha1
+	}
+	if err := existingRows.Close(); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM game_files WHERE game_id = ?`, gameID); err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO game_files(game_id, name, file_path, size, mtime, role, position)
-		VALUES(?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT INTO game_files(game_id, name, file_path, size, mtime, sha1, role, position)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, file := range files {
-		if _, err := stmt.Exec(gameID, file.Name, file.FilePath, file.Size, file.MTime.Format(time.RFC3339Nano), file.Role, file.Position); err != nil {
+		if strings.TrimSpace(file.SHA1) == "" {
+			file.SHA1 = existing[gameFileIdentity(file.FilePath, file.Size, file.MTime)]
+		}
+		if _, err := stmt.Exec(gameID, file.Name, file.FilePath, file.Size, file.MTime.Format(time.RFC3339Nano), strings.ToLower(strings.TrimSpace(file.SHA1)), file.Role, file.Position); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+func gameFileIdentity(path string, size int64, mtime time.Time) string {
+	return filepath.Clean(path) + "\x00" + strconv.FormatInt(size, 10) + "\x00" + mtime.UTC().Format(time.RFC3339Nano)
 }
 
 func (s *Store) UpsertDOSLaunch(launch domain.DOSLaunch) error {
@@ -1913,7 +1938,7 @@ func (s *Store) CanSkipPC98Source(path string, containerSize int64, mtime time.T
 }
 
 func (s *Store) PC98SourceSupportFiles(path string) ([]domain.GameFile, error) {
-	rows, err := s.db.Query(`SELECT gf.id, gf.game_id, gf.name, gf.file_path, gf.size, gf.mtime, gf.role, gf.position
+	rows, err := s.db.Query(`SELECT gf.id, gf.game_id, gf.name, gf.file_path, gf.size, gf.mtime, gf.sha1, gf.role, gf.position
 		FROM game_sources gs JOIN game_files gf ON gf.game_id = gs.game_id
 		WHERE gs.file_path = ? AND gf.role = 'font' ORDER BY gf.position, gf.id`, path)
 	if err != nil {
@@ -1924,7 +1949,7 @@ func (s *Store) PC98SourceSupportFiles(path string) ([]domain.GameFile, error) {
 	for rows.Next() {
 		var file domain.GameFile
 		var mtime string
-		if err := rows.Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.Role, &file.Position); err != nil {
+		if err := rows.Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.SHA1, &file.Role, &file.Position); err != nil {
 			return nil, err
 		}
 		file.MTime = parseTime(mtime)
@@ -1947,8 +1972,8 @@ func (s *Store) ReplacePC98SupportFiles(gameID int64, files []domain.GameFile) e
 		return err
 	}
 	for _, file := range files {
-		if _, err := tx.Exec(`INSERT INTO game_files(game_id, name, file_path, size, mtime, role, position) VALUES(?, ?, ?, ?, ?, 'font', ?)`,
-			gameID, file.Name, file.FilePath, file.Size, file.MTime.Format(time.RFC3339Nano), position); err != nil {
+		if _, err := tx.Exec(`INSERT INTO game_files(game_id, name, file_path, size, mtime, sha1, role, position) VALUES(?, ?, ?, ?, ?, ?, 'font', ?)`,
+			gameID, file.Name, file.FilePath, file.Size, file.MTime.Format(time.RFC3339Nano), strings.ToLower(strings.TrimSpace(file.SHA1)), position); err != nil {
 			return err
 		}
 		position++
@@ -2282,8 +2307,8 @@ func rebuildPC98GameTx(tx *sql.Tx, gameID int64) error {
 			}
 		}
 		usedNames[nameKey] = true
-		if _, err := tx.Exec(`INSERT INTO game_files(game_id, name, file_path, size, mtime, role, position) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-			gameID, name, source.FilePath, source.Size, source.MTime.Format(time.RFC3339Nano), role, position); err != nil {
+		if _, err := tx.Exec(`INSERT INTO game_files(game_id, name, file_path, size, mtime, sha1, role, position) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+			gameID, name, source.FilePath, source.Size, source.MTime.Format(time.RFC3339Nano), strings.ToLower(strings.TrimSpace(source.SHA1)), role, position); err != nil {
 			return err
 		}
 		totalSize += source.Size
@@ -2396,7 +2421,7 @@ func uniqueInt64s(values []int64) []int64 {
 }
 
 func (s *Store) GameFiles(gameID int64) ([]domain.GameFile, error) {
-	rows, err := s.db.Query(`SELECT id, game_id, name, file_path, size, mtime, role, position
+	rows, err := s.db.Query(`SELECT id, game_id, name, file_path, size, mtime, sha1, role, position
 		FROM game_files WHERE game_id = ? ORDER BY position, id`, gameID)
 	if err != nil {
 		return nil, err
@@ -2406,7 +2431,7 @@ func (s *Store) GameFiles(gameID int64) ([]domain.GameFile, error) {
 	for rows.Next() {
 		var file domain.GameFile
 		var mtime string
-		if err := rows.Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.Role, &file.Position); err != nil {
+		if err := rows.Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.SHA1, &file.Role, &file.Position); err != nil {
 			return nil, err
 		}
 		file.MTime = parseTime(mtime)
@@ -2440,14 +2465,137 @@ func (s *Store) GameSources(gameID int64) ([]domain.GameSource, error) {
 func (s *Store) GameFileByPosition(gameID int64, position int) (domain.GameFile, error) {
 	var file domain.GameFile
 	var mtime string
-	err := s.db.QueryRow(`SELECT id, game_id, name, file_path, size, mtime, role, position
+	err := s.db.QueryRow(`SELECT id, game_id, name, file_path, size, mtime, sha1, role, position
 		FROM game_files WHERE game_id = ? AND position = ?`, gameID, position).
-		Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.Role, &file.Position)
+		Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.SHA1, &file.Role, &file.Position)
 	if err != nil {
 		return domain.GameFile{}, err
 	}
 	file.MTime = parseTime(mtime)
 	return file, nil
+}
+
+func (s *Store) GameFileChecksumCounts() (total int64, checksummed int64, err error) {
+	err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN LENGTH(LOWER(TRIM(sha1))) = 40 AND LOWER(TRIM(sha1)) NOT GLOB '*[^0-9a-f]*' THEN 1 ELSE 0 END), 0) FROM game_files`).Scan(&total, &checksummed)
+	return
+}
+
+func (s *Store) GameFileChecksumCountsForGame(gameID int64) (total int, checksummed int, err error) {
+	err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN LENGTH(LOWER(TRIM(sha1))) = 40 AND LOWER(TRIM(sha1)) NOT GLOB '*[^0-9a-f]*' THEN 1 ELSE 0 END), 0) FROM game_files WHERE game_id = ?`, gameID).Scan(&total, &checksummed)
+	return
+}
+
+func (s *Store) GameFilesMissingSHA1(limit int) ([]domain.GameFile, error) {
+	return s.gameFilesMissingSHA1(0, limit)
+}
+
+func (s *Store) GameFilesMissingSHA1ForGame(gameID int64, limit int) ([]domain.GameFile, error) {
+	if gameID <= 0 {
+		return nil, errors.New("game ID must be positive")
+	}
+	return s.gameFilesMissingSHA1(gameID, limit)
+}
+
+func (s *Store) GameFileChecksumCountsForPlatform(platform string) (total int64, checksummed int64, err error) {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if platform == "" {
+		return 0, 0, errors.New("platform is required")
+	}
+	err = s.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN LENGTH(LOWER(TRIM(gf.sha1))) = 40 AND LOWER(TRIM(gf.sha1)) NOT GLOB '*[^0-9a-f]*' THEN 1 ELSE 0 END), 0)
+		FROM game_files gf JOIN games g ON g.id = gf.game_id WHERE LOWER(TRIM(g.platform)) = ?`, platform).Scan(&total, &checksummed)
+	return
+}
+
+func (s *Store) GameFilesMissingSHA1ForScope(gameID int64, platform string, afterID int64, limit int) ([]domain.GameFile, error) {
+	if gameID < 0 || afterID < 0 {
+		return nil, errors.New("game and cursor IDs cannot be negative")
+	}
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	if limit <= 0 || limit > 256 {
+		limit = 32
+	}
+	conditions := []string{"gf.id > ?", "(LENGTH(LOWER(TRIM(gf.sha1))) <> 40 OR LOWER(TRIM(gf.sha1)) GLOB '*[^0-9a-f]*')"}
+	args := []any{afterID}
+	if gameID > 0 {
+		conditions = append(conditions, "gf.game_id = ?")
+		args = append(args, gameID)
+	}
+	if platform != "" {
+		conditions = append(conditions, "LOWER(TRIM(g.platform)) = ?")
+		args = append(args, platform)
+	}
+	args = append(args, limit)
+	query := `SELECT gf.id, gf.game_id, gf.name, gf.file_path, gf.size, gf.mtime, gf.sha1, gf.role, gf.position
+		FROM game_files gf JOIN games g ON g.id = gf.game_id
+		WHERE ` + strings.Join(conditions, " AND ") + ` ORDER BY gf.id LIMIT ?`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	files := make([]domain.GameFile, 0, limit)
+	for rows.Next() {
+		var file domain.GameFile
+		var mtime string
+		if err := rows.Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.SHA1, &file.Role, &file.Position); err != nil {
+			return nil, err
+		}
+		file.MTime = parseTime(mtime)
+		files = append(files, file)
+	}
+	return files, rows.Err()
+}
+
+func (s *Store) gameFilesMissingSHA1(gameID int64, limit int) ([]domain.GameFile, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	query := `SELECT id, game_id, name, file_path, size, mtime, sha1, role, position
+		FROM game_files WHERE LENGTH(LOWER(TRIM(sha1))) <> 40 OR LOWER(TRIM(sha1)) GLOB '*[^0-9a-f]*'
+		ORDER BY game_id, position, id LIMIT ?`
+	args := []any{limit}
+	if gameID > 0 {
+		query = `SELECT id, game_id, name, file_path, size, mtime, sha1, role, position
+			FROM game_files WHERE game_id = ? AND (LENGTH(LOWER(TRIM(sha1))) <> 40 OR LOWER(TRIM(sha1)) GLOB '*[^0-9a-f]*')
+			ORDER BY position, id LIMIT ?`
+		args = []any{gameID, limit}
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	files := make([]domain.GameFile, 0, limit)
+	for rows.Next() {
+		var file domain.GameFile
+		var mtime string
+		if err := rows.Scan(&file.ID, &file.GameID, &file.Name, &file.FilePath, &file.Size, &mtime, &file.SHA1, &file.Role, &file.Position); err != nil {
+			return nil, err
+		}
+		file.MTime = parseTime(mtime)
+		files = append(files, file)
+	}
+	return files, rows.Err()
+}
+
+func (s *Store) UpdateGameFileSHA1(file domain.GameFile, sha1 string) (bool, error) {
+	sha1 = strings.ToLower(strings.TrimSpace(sha1))
+	decoded, err := hex.DecodeString(sha1)
+	if err != nil || len(decoded) != 20 {
+		return false, errors.New("game file SHA-1 must be 40 hexadecimal characters")
+	}
+	result, err := s.db.Exec(`UPDATE game_files SET sha1 = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND game_id = ? AND file_path = ? AND size = ? AND mtime = ?`,
+		sha1, file.ID, file.GameID, file.FilePath, file.Size, file.MTime.Format(time.RFC3339Nano))
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed == 0 {
+		return false, err
+	}
+	_, err = s.db.Exec(`UPDATE games SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, file.GameID)
+	return true, err
 }
 
 func (s *Store) ListRecentGames(limit int) ([]domain.GameAsset, error) {

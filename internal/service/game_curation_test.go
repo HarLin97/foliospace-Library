@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -29,13 +30,54 @@ func TestGameCatalogSettingsDefaultsAndNormalization(t *testing.T) {
 	if defaults.FBNeoDATPath != filepath.Join(configDir, "policies", "fbneo-arcade.dat") {
 		t.Fatalf("FBNeo DAT path = %q", defaults.FBNeoDATPath)
 	}
+	if defaults.FBNeoTargetsPath != filepath.Join(configDir, "policies", "fbneo-mobile-targets.json") ||
+		defaults.MAMETargetsPath != filepath.Join(configDir, "policies", "mame-mobile-targets.json") {
+		t.Fatalf("runtime target paths = %#v", defaults)
+	}
 
 	if err := svc.SaveGameCatalogSettings(domain.GameCatalogSettings{MetadataProvider: "unsupported"}); err != nil {
 		t.Fatal(err)
 	}
 	normalized := svc.GameCatalogSettings()
-	if normalized.MetadataProvider != "local" || normalized.MAMEPlatforms != defaultMAMEPlatforms {
+	if normalized.MetadataProvider != "local" || normalized.MAMEPlatforms != defaultMAMEPlatforms ||
+		normalized.FBNeoTargetsPath != defaults.FBNeoTargetsPath || normalized.MAMETargetsPath != defaults.MAMETargetsPath {
 		t.Fatalf("normalized settings = %#v", normalized)
+	}
+}
+
+func TestEffectiveTargetsPathUsesLegacyFallback(t *testing.T) {
+	configDir := t.TempDir()
+	preferred := filepath.Join(configDir, "missing.json")
+	legacy := filepath.Join(configDir, "targets.json")
+	if err := os.WriteFile(legacy, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := effectiveTargetsPath(preferred, legacy); got != legacy {
+		t.Fatalf("effective target path = %q, want legacy %q", got, legacy)
+	}
+}
+
+func TestGameCatalogTargetsPolicyStatusValidatesSplitPolicies(t *testing.T) {
+	dir := t.TempDir()
+	fbneoPath := filepath.Join(dir, "fbneo.json")
+	mamePath := filepath.Join(dir, "mame.json")
+	fullHash := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := os.WriteFile(fbneoPath, []byte(`{"targets":[{"id":"ipad","coreSha256":"`+fullHash+`"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mamePath, []byte(`{"targets":[{"id":"ipad"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status := gameCatalogTargetsPolicyStatus(fbneoPath, mamePath)
+	if !status.Available || status.ID != "targets" {
+		t.Fatalf("targets status = %#v, want available aggregate", status)
+	}
+	if err := os.WriteFile(fbneoPath, []byte(`{"targets":[{"id":"ipad","coreSha256":"0123"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status = gameCatalogTargetsPolicyStatus(fbneoPath, mamePath)
+	if status.Available || status.Message == "" {
+		t.Fatalf("invalid targets status = %#v, want unavailable with an error", status)
 	}
 }
 

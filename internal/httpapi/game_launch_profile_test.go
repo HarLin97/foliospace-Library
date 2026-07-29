@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -82,6 +84,29 @@ func TestAPIResolvesAuditedMAMEProfilesWithoutChangingLegacyManifest(t *testing.
 	}
 }
 
+func TestAPICanDisableLaunchResolverWithoutChangingLegacyManifest(t *testing.T) {
+	ts, vstriker, _, _ := launchProfileTestServerWithOptions(t, Options{
+		APIToken:                  "secret",
+		DisableGameLaunchResolver: true,
+	})
+	defer ts.Close()
+
+	info := authGet(t, ts.URL+"/api/client/info", "secret")
+	if !strings.Contains(info, `"gameLaunchResolver":false`) {
+		t.Fatalf("client info still advertises resolver capability: %s", info)
+	}
+
+	response := postLaunchResolve(t, ts.URL, vstriker.ID, "secret", auditedMAMERequest("1.302"), nil)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("disabled resolver status=%d body=%s", response.StatusCode, response.Body)
+	}
+
+	legacy := authGet(t, ts.URL+"/api/client/games/"+itoa(vstriker.ID)+"/manifest", "secret")
+	if !strings.Contains(legacy, `"romSetName":"Model2ROMs"`) || strings.Contains(legacy, "launchProfileId") {
+		t.Fatalf("legacy manifest changed while resolver disabled: %s", legacy)
+	}
+}
+
 func TestAPIResolverRejectsUnauthorizedInvalidAndUnmatchedRequests(t *testing.T) {
 	ts, vstriker, _, _ := launchProfileTestServer(t)
 	defer ts.Close()
@@ -95,7 +120,7 @@ func TestAPIResolverRejectsUnauthorizedInvalidAndUnmatchedRequests(t *testing.T)
 	unmatched.Runtimes[0].Version = "0.289"
 	unmatched.Runtimes[0].ContentSet = "mame-0.289"
 	conflict := postLaunchResolve(t, ts.URL, vstriker.ID, "secret", unmatched, nil)
-	if conflict.StatusCode != http.StatusConflict || !strings.Contains(string(conflict.Body), `"code":"runtime-profile-not-available"`) || !strings.Contains(string(conflict.Body), "MAME 0.289") {
+	if conflict.StatusCode != http.StatusConflict || !strings.Contains(string(conflict.Body), `"code":"content-set-mismatch"`) {
 		t.Fatalf("unmatched status=%d body=%s", conflict.StatusCode, conflict.Body)
 	}
 
@@ -162,7 +187,7 @@ func TestAPIResolvesAuditedCPSAndMAMECatalogProfiles(t *testing.T) {
 	wrongCore.Runtimes = append([]domain.GameRuntimeDescriptor{}, cpsRequest.Runtimes...)
 	wrongCore.Runtimes[0].CoreSHA256 = strings.Repeat("0", 64)
 	conflict := postLaunchResolve(t, ts.URL, games["sf2"].ID, "secret", wrongCore, nil)
-	if conflict.StatusCode != http.StatusConflict || !strings.Contains(string(conflict.Body), `"code":"runtime-profile-not-available"`) {
+	if conflict.StatusCode != http.StatusConflict || !strings.Contains(string(conflict.Body), `"code":"core-fingerprint-unknown"`) {
 		t.Fatalf("wrong CPS core status=%d body=%s", conflict.StatusCode, conflict.Body)
 	}
 
@@ -265,13 +290,13 @@ func TestAPIResolvesStrictMobileArcadeProfilesWithExactRuntimeIdentity(t *testin
 	wrongHash.Runtimes = append([]domain.GameRuntimeDescriptor{}, wrongHash.Runtimes...)
 	wrongHash.Runtimes[0].CoreSHA256 = strings.Repeat("2", 64)
 	response := postLaunchResolve(t, ts.URL, games["sf2"].ID, "secret", wrongHash, nil)
-	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"runtime-profile-not-available"`) {
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"core-fingerprint-unknown"`) {
 		t.Fatalf("wrong mobile FBNeo hash status=%d body=%s", response.StatusCode, response.Body)
 	}
 }
 
 func TestAPIResolvesPragmaticConsoleDiscAndDOSProfiles(t *testing.T) {
-	ts, games := pragmaticLaunchProfileTestServer(t)
+	ts, games, _ := pragmaticLaunchProfileTestServer(t)
 	defer ts.Close()
 
 	tests := []struct {
@@ -316,6 +341,9 @@ func TestAPIResolvesPragmaticConsoleDiscAndDOSProfiles(t *testing.T) {
 			if file.URL != expectedURL {
 				t.Fatalf("%s file %d URL=%q, want %q", test.name, position, file.URL, expectedURL)
 			}
+			if !strings.HasPrefix(file.Checksum, "sha1:") || len(file.Checksum) != len("sha1:")+40 {
+				t.Fatalf("%s file %d checksum=%q", test.name, position, file.Checksum)
+			}
 		}
 
 		repeated := postLaunchResolve(t, ts.URL, games[test.name].ID, "secret", request, nil)
@@ -347,7 +375,7 @@ func TestAPIResolvesPragmaticConsoleDiscAndDOSProfiles(t *testing.T) {
 }
 
 func TestAPIResolvesPragmaticProfilesForAppleMobileClients(t *testing.T) {
-	ts, games := pragmaticLaunchProfileTestServer(t)
+	ts, games, _ := pragmaticLaunchProfileTestServer(t)
 	defer ts.Close()
 
 	clients := []domain.GameLaunchClient{
@@ -356,7 +384,7 @@ func TestAPIResolvesPragmaticProfilesForAppleMobileClients(t *testing.T) {
 		{Name: "SpatialEMU.visionOS", Version: "1.40", Platform: "visionos-arm64", Architecture: "arm64"},
 		{Name: "SpatialEMU.tvOS", Version: "1.40", Platform: "tvos-arm64", Architecture: "arm64"},
 	}
-	runtime := domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "nestopia"}
+	runtime := domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "nestopia", CoreSHA256: strings.Repeat("3", 64)}
 	profileIDs := make(map[string]struct{}, len(clients))
 	for _, client := range clients {
 		t.Run(client.Platform, func(t *testing.T) {
@@ -383,8 +411,52 @@ func TestAPIResolvesPragmaticProfilesForAppleMobileClients(t *testing.T) {
 	}
 }
 
+func TestAPIResolvesMobilePSPAndDOSProfilesWithExactCoreFingerprint(t *testing.T) {
+	ts, games, _ := pragmaticLaunchProfileTestServer(t)
+	defer ts.Close()
+
+	for _, test := range []struct {
+		name    string
+		gameID  int64
+		client  domain.GameLaunchClient
+		runtime domain.GameRuntimeDescriptor
+		entry   string
+	}{
+		{
+			name: "iPad PSP", gameID: games["psp"].ID,
+			client:  domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.40", Platform: "ipados-arm64", Architecture: "arm64"},
+			runtime: domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "ppsspp", CoreSHA256: strings.Repeat("4", 64)},
+			entry:   "mgs.iso",
+		},
+		{
+			name: "Vision Pro DOS", gameID: games["dos"].ID,
+			client:  domain.GameLaunchClient{Name: "SpatialEMU.visionOS", Version: "1.40", Platform: "visionos-arm64", Architecture: "arm64"},
+			runtime: domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "dosbox-pure", CoreSHA256: strings.Repeat("5", 64)},
+			entry:   "GAME/START.BAT",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := domain.GameLaunchResolveRequest{Client: test.client, Runtimes: []domain.GameRuntimeDescriptor{test.runtime}}
+			response := postLaunchResolve(t, ts.URL, test.gameID, "secret", request, nil)
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("resolve status=%d body=%s", response.StatusCode, response.Body)
+			}
+			var resolved clientGameLaunchResolutionResponse
+			if err := json.Unmarshal(response.Body, &resolved); err != nil {
+				t.Fatal(err)
+			}
+			if resolved.Runtime != test.runtime || resolved.Manifest.EntryFile == nil || *resolved.Manifest.EntryFile != test.entry {
+				t.Fatalf("resolution=%+v", resolved)
+			}
+			if len(resolved.Manifest.Files) == 0 || !strings.HasPrefix(resolved.Manifest.Files[0].Checksum, "sha1:") {
+				t.Fatalf("manifest files=%+v", resolved.Manifest.Files)
+			}
+		})
+	}
+}
+
 func TestAPIPragmaticResolverRejectsUnknownCoreAndUncuratedDOS(t *testing.T) {
-	ts, games := pragmaticLaunchProfileTestServer(t)
+	ts, games, _ := pragmaticLaunchProfileTestServer(t)
 	defer ts.Close()
 	client := domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"}
 
@@ -401,7 +473,70 @@ func TestAPIPragmaticResolverRejectsUnknownCoreAndUncuratedDOS(t *testing.T) {
 	}
 }
 
-func pragmaticLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[string]domain.GameAsset) {
+func TestAPIPragmaticResolverRejectsChangedAndMissingManifestFiles(t *testing.T) {
+	t.Run("changed source invalidates checksum", func(t *testing.T) {
+		ts, games, _ := pragmaticLaunchProfileTestServer(t)
+		defer ts.Close()
+		if err := os.WriteFile(games["nes"].FilePath, []byte("evil"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(games["nes"].FilePath, time.Now(), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		request := domain.GameLaunchResolveRequest{
+			Client:   domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"},
+			Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "nestopia"}},
+		}
+		response := postLaunchResolve(t, ts.URL, games["nes"].ID, "secret", request, nil)
+		if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"manifest-checksum-unavailable"`) {
+			t.Fatalf("changed source status=%d body=%s", response.StatusCode, response.Body)
+		}
+	})
+
+	t.Run("missing dependency is explicit", func(t *testing.T) {
+		ts, games, _ := pragmaticLaunchProfileTestServer(t)
+		defer ts.Close()
+		if err := os.Remove(filepath.Join(filepath.Dir(games["ps1"].FilePath), "ridge.bin")); err != nil {
+			t.Fatal(err)
+		}
+		request := domain.GameLaunchResolveRequest{
+			Client:   domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"},
+			Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "swanstation"}},
+		}
+		response := postLaunchResolve(t, ts.URL, games["ps1"].ID, "secret", request, nil)
+		if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"dependency-missing"`) {
+			t.Fatalf("missing dependency status=%d body=%s", response.StatusCode, response.Body)
+		}
+	})
+
+	t.Run("missing checksum is explicit", func(t *testing.T) {
+		ts, games, st := pragmaticLaunchProfileTestServer(t)
+		defer ts.Close()
+		files, err := st.GameFiles(games["psp"].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		changedAt := time.Unix(2, 0)
+		if err := os.Chtimes(files[0].FilePath, changedAt, changedAt); err != nil {
+			t.Fatal(err)
+		}
+		files[0].MTime = changedAt
+		files[0].SHA1 = ""
+		if err := st.ReplaceGameFiles(games["psp"].ID, files); err != nil {
+			t.Fatal(err)
+		}
+		request := domain.GameLaunchResolveRequest{
+			Client:   domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.40", Platform: "ipados-arm64", Architecture: "arm64"},
+			Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "ppsspp", CoreSHA256: strings.Repeat("6", 64)}},
+		}
+		response := postLaunchResolve(t, ts.URL, games["psp"].ID, "secret", request, nil)
+		if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"manifest-checksum-unavailable"`) {
+			t.Fatalf("missing checksum status=%d body=%s", response.StatusCode, response.Body)
+		}
+	})
+}
+
+func pragmaticLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[string]domain.GameAsset, *store.Store) {
 	t.Helper()
 	root := t.TempDir()
 	conn, err := db.Open(t.TempDir())
@@ -420,6 +555,9 @@ func pragmaticLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[strin
 		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.Chtimes(path, time.Unix(1, 0), time.Unix(1, 0)); err != nil {
+			t.Fatal(err)
+		}
 		return path
 	}
 	addGame := func(key, platform, format, entryName string, dependencies ...string) domain.GameAsset {
@@ -428,12 +566,12 @@ func pragmaticLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[strin
 			entryContents = "FILE \"" + dependencies[0] + "\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n"
 		}
 		entryPath := createFile(entryName, entryContents)
-		files := []domain.GameFile{{Name: entryName, FilePath: entryPath, Size: int64(len(entryContents)), MTime: time.Unix(1, 0), Role: "entry", Position: 0}}
+		files := []domain.GameFile{{Name: entryName, FilePath: entryPath, Size: int64(len(entryContents)), MTime: time.Unix(1, 0), SHA1: testSHA1(entryContents), Role: "entry", Position: 0}}
 		totalSize := int64(len(entryContents))
 		for index, dependency := range dependencies {
 			contents := "track-data-" + dependency
 			path := createFile(dependency, contents)
-			files = append(files, domain.GameFile{Name: dependency, FilePath: path, Size: int64(len(contents)), MTime: time.Unix(1, 0), Role: "dependency", Position: index + 1})
+			files = append(files, domain.GameFile{Name: dependency, FilePath: path, Size: int64(len(contents)), MTime: time.Unix(1, 0), SHA1: testSHA1(contents), Role: "dependency", Position: index + 1})
 			totalSize += int64(len(contents))
 		}
 		game, err := st.UpsertGame(domain.GameAsset{
@@ -483,10 +621,19 @@ func pragmaticLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[strin
 	}
 
 	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
-	return ts, games
+	return ts, games, st
+}
+
+func testSHA1(contents string) string {
+	digest := sha1.Sum([]byte(contents))
+	return hex.EncodeToString(digest[:])
 }
 
 func launchProfileTestServer(t *testing.T) (*httptest.Server, domain.GameAsset, domain.GameAsset, domain.GameAsset) {
+	return launchProfileTestServerWithOptions(t, Options{APIToken: "secret"})
+}
+
+func launchProfileTestServerWithOptions(t *testing.T, options Options) (*httptest.Server, domain.GameAsset, domain.GameAsset, domain.GameAsset) {
 	t.Helper()
 	root := t.TempDir()
 	conn, err := db.Open(t.TempDir())
@@ -528,7 +675,7 @@ func launchProfileTestServer(t *testing.T) (*httptest.Server, domain.GameAsset, 
 	vstriker := upsert("vstriker", "model2", "Model2ROMs", "vstriker.zip", 10313686, "8e3518318eeb157ab299b2f284faef176d3f49dd", "game")
 	segabill := upsert("segabill", "model2", "Model2ROMs", "segabill.zip", 3117, "4631db7f7f5160a3a6591d3102722be869710f66", "dependency")
 	tekken := upsert("tektagtac1", "arcade", "Namco System 12", "tektagtac1.zip", 120980600, "d6615a3a70ea9941b61ccd608054a0044d3d6ab3", "game")
-	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, options).Routes())
 	return ts, vstriker, segabill, tekken
 }
 

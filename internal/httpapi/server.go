@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -28,7 +29,8 @@ type Server struct {
 }
 
 type Options struct {
-	APIToken string
+	APIToken                  string
+	DisableGameLaunchResolver bool
 }
 
 const authCookieName = "foliospace_api_token"
@@ -86,6 +88,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/games/curation", s.handleGameCuration)
 	mux.HandleFunc("/api/games/curation/task", s.handleGameCurationTask)
 	mux.HandleFunc("/api/games/curation/analyze", s.handleGameCurationAnalyze)
+	mux.HandleFunc("/api/games/curation/checksums", s.handleGameCurationChecksums)
+	mux.HandleFunc("/api/games/curation/rebuild", s.handleGameCurationRebuild)
 	mux.HandleFunc("/api/games/curation/covers", s.handleGameCurationCovers)
 	mux.HandleFunc("/api/games/", s.handleGameAction)
 	mux.HandleFunc("/api/games/recent", s.handleRecentGames)
@@ -321,6 +325,55 @@ func (s *Server) handleGameCurationAnalyze(w http.ResponseWriter, r *http.Reques
 	writeJSONStatus(w, http.StatusAccepted, task)
 }
 
+func (s *Server) handleGameCurationChecksums(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Limit  int   `json:"limit"`
+		GameID int64 `json:"gameId"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	task, err := s.service.StartGameChecksumBackfill(req.Limit, req.GameID)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeJSONStatus(w, http.StatusAccepted, task)
+}
+
+func (s *Server) handleGameCurationRebuild(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req domain.GameCompatibilityRebuildRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	task, err := s.service.StartGameCompatibilityRebuild(req)
+	if err != nil {
+		status := http.StatusBadRequest
+		if task.Status == "running" {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err)
+		return
+	}
+	writeJSONStatus(w, http.StatusAccepted, task)
+}
+
 func (s *Server) handleGameCurationCovers(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -450,7 +503,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			GamePlayStats:         true,
 			GamePlayedCatalog:     true,
 			GameMetadataProviders: true,
-			GameLaunchResolver:    true,
+			GameLaunchResolver:    !s.options.DisableGameLaunchResolver,
 			DOSArchiveLaunchV1:    true,
 		},
 	})
@@ -701,6 +754,10 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if tail == "resolve" {
+		if s.options.DisableGameLaunchResolver {
+			http.NotFound(w, r)
+			return
+		}
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -717,18 +774,28 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		}
 		resolution, err := s.service.ResolveGameLaunchProfile(id, req)
 		if err != nil {
+			var resolveErr *service.GameLaunchResolveError
+			if errors.As(err, &resolveErr) {
+				logGameLaunchDecision(id, req, "", 0, resolveErr.Code)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(resolveErr)
+				return
+			}
 			var unavailable *service.RuntimeProfileNotAvailableError
 			if errors.As(err, &unavailable) {
+				logGameLaunchDecision(id, req, "", 0, "launch-profile-missing")
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusConflict)
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"code": "runtime-profile-not-available", "message": unavailable.Error(),
+					"code": "launch-profile-missing", "message": unavailable.Error(),
 				})
 				return
 			}
 			writeJSONOrError(w, nil, err)
 			return
 		}
+		logGameLaunchDecision(id, req, resolution.LaunchProfileID, resolution.ProfileRevision, "")
 		w.Header().Set("Cache-Control", "private, no-store")
 		writeJSON(w, clientGameLaunchResolution(resolution))
 		return
@@ -895,6 +962,20 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	http.NotFound(w, r)
+}
+
+func logGameLaunchDecision(gameID int64, req domain.GameLaunchResolveRequest, profileID string, revision int, rejection string) {
+	runtimes := make([]string, 0, len(req.Runtimes))
+	for _, runtime := range req.Runtimes {
+		fingerprint := strings.ToLower(strings.TrimSpace(runtime.CoreSHA256))
+		if len(fingerprint) > 12 {
+			fingerprint = fingerprint[:12]
+		}
+		runtimes = append(runtimes, fmt.Sprintf("%s/%s/%s/%s/%s", runtime.ID, runtime.Version, runtime.ContentSet, runtime.CoreID, fingerprint))
+	}
+	log.Printf("game launch resolve game=%d client=%s/%s/%s/%s runtimes=%q profile=%q revision=%d rejection=%q",
+		gameID, req.Client.Name, req.Client.Version, req.Client.Platform, req.Client.Architecture,
+		strings.Join(runtimes, ","), profileID, revision, rejection)
 }
 
 func (s *Server) handleClientGames(w http.ResponseWriter, r *http.Request) {
@@ -2797,14 +2878,24 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunc
 
 func clientGameLaunchResolution(resolution domain.GameLaunchResolution) clientGameLaunchResolutionResponse {
 	game := clientGameItem(resolution.Game)
+	entry := domain.GameLaunchResolvedFile{}
+	if len(resolution.Files) > 0 {
+		entry = resolution.Files[0]
+		for _, file := range resolution.Files {
+			if strings.EqualFold(strings.TrimSpace(file.Role), "entry") {
+				entry = file
+				break
+			}
+		}
+	}
 	if resolution.DOSLaunch != nil {
-		game.FileName = resolution.Files[0].Name
+		game.FileName = entry.Name
 	} else {
 		game.FileName = resolution.EntryFile
 	}
 	manifest := clientGameManifestResponse{
 		Game:      game,
-		FileURL:   resolvedGameFileURL(resolution.Files[0]),
+		FileURL:   resolvedGameFileURL(entry),
 		EntryFile: &resolution.EntryFile,
 		Files:     make([]clientGameFile, 0, len(resolution.Files)),
 	}
