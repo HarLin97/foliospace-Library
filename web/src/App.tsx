@@ -46,8 +46,10 @@ type Locale = "zh" | "zht" | "en" | "ja" | "ko";
 type LibraryAssetType = "mixed" | "book" | "comic" | "game" | "video";
 type ReaderImageSize = { width: number; height: number };
 const bookPageSize = 30;
+const collectionPageSize = 60;
 const catalogPageSize = 200;
 const gameCatalogPageSize = 80;
+const gameCurationPageSize = 60;
 const defaultGameCatalogSettings: GameCatalogSettings = {
   autoAnalyzeAfterScan: true,
   enableLibretroCovers: true,
@@ -66,6 +68,10 @@ export function App() {
   const [view, setView] = useState<View>("library");
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [series, setSeries] = useState<Series[]>([]);
+  const [collectionTotal, setCollectionTotal] = useState(0);
+  const [collectionHasMore, setCollectionHasMore] = useState(false);
+  const [collectionLoading, setCollectionLoading] = useState(false);
+  const [allCollectionsLoaded, setAllCollectionsLoaded] = useState(false);
   const [books, setBooks] = useState<Book[]>([]);
   const [continueBooks, setContinueBooks] = useState<Book[]>([]);
   const [recentBooks, setRecentBooks] = useState<Book[]>([]);
@@ -82,11 +88,15 @@ export function App() {
   const [gameCatalogHasMore, setGameCatalogHasMore] = useState(false);
   const [videoCatalogHasMore, setVideoCatalogHasMore] = useState(false);
   const [gameCatalogLoading, setGameCatalogLoading] = useState(false);
+  const [gamePlatformFacetsLoading, setGamePlatformFacetsLoading] = useState(false);
   const [gameCurationSummary, setGameCurationSummary] = useState<GameCurationSummary | null>(null);
   const [gameCurationItems, setGameCurationItems] = useState<GameCurationItem[]>([]);
   const [gameCurationTotal, setGameCurationTotal] = useState(0);
   const [gameCurationHasMore, setGameCurationHasMore] = useState(false);
   const [gameCurationLoading, setGameCurationLoading] = useState(false);
+  const [gameCurationSummaryLoading, setGameCurationSummaryLoading] = useState(false);
+  const [gameCurationSettingsLoading, setGameCurationSettingsLoading] = useState(false);
+  const [gameCurationTaskLoading, setGameCurationTaskLoading] = useState(false);
   const [gameCurationState, setGameCurationState] = useState("needs-curation");
   const [gameCatalogTask, setGameCatalogTask] = useState<GameCatalogTaskStatus | null>(null);
   const [compatibilityRebuildScope, setCompatibilityRebuildScope] = useState<"all" | "platform">("all");
@@ -201,12 +211,16 @@ export function App() {
   const pageSpreadRef = useRef<HTMLDivElement | null>(null);
   const webtoonRef = useRef<HTMLDivElement | null>(null);
   const bookLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const collectionLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const collectionSectionsRef = useRef<HTMLDivElement | null>(null);
   const collectionContentRef = useRef<HTMLElement | null>(null);
   const videoPlayerRef = useRef<HTMLVideoElement | null>(null);
   const previousVideoTranscodeStatus = useRef<string>("");
   const collectionScrollTop = useRef(0);
   const bookListRequest = useRef(0);
+  const collectionListRequest = useRef(0);
+  const gameCatalogRequest = useRef(0);
+  const gameCurationRequest = useRef(0);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const epubRestorePosition = useRef<number | null>(null);
   const epubChapterOpenPosition = useRef<EpubChapterOpenPosition>("start");
@@ -231,7 +245,7 @@ export function App() {
       setActiveTask("Refreshing library");
     }
     try {
-      const nextProfiles = await api.profiles();
+      const nextProfiles = await api.profiles({ timeoutMs: BOOTSTRAP_TIMEOUT_MS });
       const profileList = arrayOrEmpty(nextProfiles);
       const resolvedProfile = resolveActiveProfile(profileList, getActiveProfileId());
       setProfiles(profileList);
@@ -241,40 +255,47 @@ export function App() {
       } else {
         persistActiveProfileId("");
       }
-      const [preferences, info, nextScanSettings, nextLibraries, nextSeries, nextJobs, nextThumbnailWorkerStatus, nextErrors, nextContinueBooks, nextRecentBooks, nextFavoriteBooks, nextWantBooks, nextGameShelf, nextVideoShelf, nextManualCollections] = await Promise.all([
-        api.clientPreferences(),
-        api.clientInfo(),
-        api.scanSettings(),
-        api.libraries(),
-        api.series(),
-        api.jobs(),
-        api.thumbnailWorkerStatus({ timeoutMs: 4_000 }),
-        api.errors(),
-        api.continueReading(),
-        api.recentBooks(),
-        api.favoriteBooks(),
-        api.privateStatusBooks("want"),
-        api.recentGames(),
-        api.recentVideos(),
-        api.manualCollections(),
+      let completedRequests = 0;
+      const failures: unknown[] = [];
+      const settle = async <T,>(request: Promise<T>, apply: (value: T) => void) => {
+        try {
+          apply(await request);
+          completedRequests += 1;
+        } catch (error) {
+          failures.push(error);
+        }
+      };
+      await Promise.all([
+        settle(api.clientPreferences({ timeoutMs: BOOTSTRAP_TIMEOUT_MS }), (preferences) => {
+          applyClientPreferences(preferences);
+          preferencesLoaded.current = true;
+        }),
+        settle(api.clientInfo({ timeoutMs: BOOTSTRAP_TIMEOUT_MS }), setClientInfo),
+        settle(api.scanSettings({ timeoutMs: BOOTSTRAP_TIMEOUT_MS }), (nextScanSettings) => {
+          setScanSettings(nextScanSettings);
+          setScanWorkerDraft(nextScanSettings.scanWorkers);
+        }),
+        settle(api.libraries({ timeoutMs: BOOTSTRAP_TIMEOUT_MS }), (nextLibraries) => setLibraries(arrayOrEmpty(nextLibraries))),
+        settle(api.clientHome(12, { timeoutMs: BOOTSTRAP_TIMEOUT_MS }), (home) => {
+          setContinueBooks(arrayOrEmpty(home.continueReading));
+          setRecentBooks(arrayOrEmpty(home.recentBooks));
+          setFavoriteBooks(arrayOrEmpty(home.favoriteBooks));
+          setWantBooks(arrayOrEmpty(home.wantToRead));
+          setGameShelf(arrayOrEmpty(home.gameShelf));
+          setVideoShelf(arrayOrEmpty(home.videoShelf));
+        }),
+        settle(api.manualCollections({ timeoutMs: BOOTSTRAP_TIMEOUT_MS }), (nextManualCollections) => setManualCollections(arrayOrEmpty(nextManualCollections))),
       ]);
-      applyClientPreferences(preferences);
-      preferencesLoaded.current = true;
-      setClientInfo(info);
-      setScanSettings(nextScanSettings);
-      setScanWorkerDraft(nextScanSettings.scanWorkers);
-      setLibraries(arrayOrEmpty(nextLibraries));
-      setSeries(arrayOrEmpty(nextSeries));
-      setJobs(arrayOrEmpty(nextJobs));
-      setThumbnailWorkerStatus(nextThumbnailWorkerStatus);
-      setErrors(arrayOrEmpty(nextErrors));
-      setContinueBooks(arrayOrEmpty(nextContinueBooks));
-      setRecentBooks(arrayOrEmpty(nextRecentBooks));
-      setFavoriteBooks(arrayOrEmpty(nextFavoriteBooks));
-      setWantBooks(arrayOrEmpty(nextWantBooks));
-      setGameShelf(arrayOrEmpty(nextGameShelf));
-      setVideoShelf(arrayOrEmpty(nextVideoShelf));
-      setManualCollections(arrayOrEmpty(nextManualCollections));
+      const authorizationFailure = failures.find(isUnauthorized);
+      if (authorizationFailure) {
+        throw authorizationFailure;
+      }
+      if (completedRequests === 0 && failures.length > 0) {
+        throw failures[0];
+      }
+      if (failures.length > 0) {
+        setStatus(`Library overview partially loaded (${failures.length} unavailable)`);
+      }
     } finally {
       if (showProgress) {
         setActiveTask(null);
@@ -282,19 +303,113 @@ export function App() {
     }
   }
 
+  async function refreshJobs() {
+    const nextJobs = arrayOrEmpty(await api.jobs({ timeoutMs: 10_000 }));
+    setJobs(nextJobs);
+    return nextJobs;
+  }
+
+  const loadCollectionsPage = useCallback(async (offset = 0, replace = offset === 0) => {
+    const requestID = ++collectionListRequest.current;
+    setCollectionLoading(true);
+    try {
+      const page = await api.collectionsPage(
+        {
+          limit: collectionPageSize,
+          offset,
+          q: query.trim() || undefined,
+          sort: collectionSort,
+          direction: collectionSortDirection,
+        },
+        { timeoutMs: BOOTSTRAP_TIMEOUT_MS },
+      );
+      if (requestID !== collectionListRequest.current) return;
+      const items = arrayOrEmpty(page.items);
+      setSeries((current) => replace ? items : mergeCollections(current, items));
+      setCollectionTotal(page.total);
+      setCollectionHasMore(page.hasMore);
+      setAllCollectionsLoaded(false);
+    } catch (error) {
+      if (requestID === collectionListRequest.current) {
+        handleAPIError(error);
+      }
+    } finally {
+      if (requestID === collectionListRequest.current) {
+        setCollectionLoading(false);
+      }
+    }
+  }, [activeProfileId, collectionSort, collectionSortDirection, query]);
+
+  async function openFavorites() {
+    setView("favorites");
+    if (allCollectionsLoaded) return;
+    const requestID = ++collectionListRequest.current;
+    setCollectionLoading(true);
+    setActiveTask("Loading favorites");
+    try {
+      const items = arrayOrEmpty(await api.series({ timeoutMs: 20_000 }));
+      if (requestID !== collectionListRequest.current) return;
+      setSeries(items);
+      setCollectionTotal(items.length);
+      setCollectionHasMore(false);
+      setAllCollectionsLoaded(true);
+    } catch (error) {
+      if (requestID === collectionListRequest.current) {
+        handleAPIError(error);
+      }
+    } finally {
+      if (requestID === collectionListRequest.current) {
+        setCollectionLoading(false);
+        setActiveTask(null);
+      }
+    }
+  }
+
+  async function openJobsView() {
+    setView("jobs");
+    setActiveTask("Loading jobs");
+    try {
+      await refreshJobs();
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setActiveTask(null);
+    }
+  }
+
+  async function openErrorsView() {
+    setView("errors");
+    setActiveTask("Loading errors");
+    try {
+      setErrors(arrayOrEmpty(await api.errors({ timeoutMs: 10_000 })));
+    } catch (error) {
+      handleAPIError(error);
+    } finally {
+      setActiveTask(null);
+    }
+  }
+
   async function openGameCatalog() {
     setView("games");
-    void loadGamePlatformFacets();
-    if (gameCatalog.length > 0 || gameCatalogLoading) return;
-    await loadGameCatalogPage(0, true);
+    const requests: Promise<unknown>[] = [];
+    if (gamePlatformFacets.length === 0 && !gamePlatformFacetsLoading) {
+      requests.push(loadGamePlatformFacets());
+    }
+    if (gameCatalog.length === 0 && !gameCatalogLoading) {
+      requests.push(loadGameCatalogPage(0, true));
+    }
+    await Promise.allSettled(requests);
   }
 
   async function loadGamePlatformFacets() {
+    setGamePlatformFacetsLoading(true);
     try {
       const facets = await api.clientGameFacets();
       setGamePlatformFacets(arrayOrEmpty(facets.platforms));
     } catch {
       // Older servers do not expose facets; keep the legacy collection fallback.
+    } finally {
+      setGamePlatformFacetsLoading(false);
     }
   }
 
@@ -305,33 +420,46 @@ export function App() {
   }
 
   async function refreshGameCuration(state = gameCurationState) {
-    if (gameCurationLoading) return;
+    const requestID = ++gameCurationRequest.current;
     setGameCurationLoading(true);
-    try {
-      const [summary, page, settings, task] = await Promise.all([
-        api.gameCurationSummary(),
-        api.gameCurationPage({ limit: 120, state }),
-        api.gameCatalogSettings(),
-        api.gameCurationTask(),
-      ]);
-      setGameCurationSummary(summary);
-      setGameCurationItems(arrayOrEmpty(page.items));
-      setGameCurationTotal(page.total);
-      setGameCurationHasMore(page.hasMore);
-      setGameCatalogSettings(settings);
-      setGameCatalogTask(task);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to load game curation");
-    } finally {
-      setGameCurationLoading(false);
-    }
+    setGameCurationSummaryLoading(true);
+    setGameCurationSettingsLoading(true);
+    setGameCurationTaskLoading(true);
+    const reportFailure = (error: unknown, fallback: string) => {
+      setStatus(error instanceof Error ? error.message : fallback);
+    };
+    await Promise.allSettled([
+      api.gameCurationSummary()
+        .then(setGameCurationSummary)
+        .catch((error) => reportFailure(error, "Failed to load game curation summary"))
+        .finally(() => setGameCurationSummaryLoading(false)),
+      api.gameCurationPage({ limit: gameCurationPageSize, state })
+        .then((page) => {
+          if (requestID !== gameCurationRequest.current) return;
+          setGameCurationItems(arrayOrEmpty(page.items));
+          setGameCurationTotal(page.total);
+          setGameCurationHasMore(page.hasMore);
+        })
+        .catch((error) => reportFailure(error, "Failed to load game curation entries"))
+        .finally(() => {
+          if (requestID === gameCurationRequest.current) setGameCurationLoading(false);
+        }),
+      api.gameCatalogSettings()
+        .then(setGameCatalogSettings)
+        .catch((error) => reportFailure(error, "Failed to load game catalog settings"))
+        .finally(() => setGameCurationSettingsLoading(false)),
+      api.gameCurationTask()
+        .then(setGameCatalogTask)
+        .catch((error) => reportFailure(error, "Failed to load game curation task"))
+        .finally(() => setGameCurationTaskLoading(false)),
+    ]);
   }
 
   async function loadMoreGameCuration() {
     if (gameCurationLoading || !gameCurationHasMore) return;
     setGameCurationLoading(true);
     try {
-      const page = await api.gameCurationPage({ limit: 120, offset: gameCurationItems.length, state: gameCurationState });
+      const page = await api.gameCurationPage({ limit: gameCurationPageSize, offset: gameCurationItems.length, state: gameCurationState });
       setGameCurationItems((current) => mergeCurationByID(current, arrayOrEmpty(page.items)));
       setGameCurationTotal(page.total);
       setGameCurationHasMore(page.hasMore);
@@ -344,7 +472,19 @@ export function App() {
 
   async function changeGameCurationState(state: string) {
     setGameCurationState(state);
-    await refreshGameCuration(state);
+    const requestID = ++gameCurationRequest.current;
+    setGameCurationLoading(true);
+    try {
+      const page = await api.gameCurationPage({ limit: gameCurationPageSize, state });
+      if (requestID !== gameCurationRequest.current) return;
+      setGameCurationItems(arrayOrEmpty(page.items));
+      setGameCurationTotal(page.total);
+      setGameCurationHasMore(page.hasMore);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to load game curation entries");
+    } finally {
+      if (requestID === gameCurationRequest.current) setGameCurationLoading(false);
+    }
   }
 
   async function runGameCompatibilityRebuild(gameId?: number) {
@@ -454,18 +594,23 @@ export function App() {
   }
 
   async function loadGameCatalogPage(offset: number, reset = false) {
-    if (gameCatalogLoading) return;
+    const requestID = reset ? ++gameCatalogRequest.current : gameCatalogRequest.current;
+    if (!reset && gameCatalogLoading) return;
     setGameCatalogLoading(true);
     try {
       const page = await api.clientGames({ limit: gameCatalogPageSize, offset, sort: gameCatalogSort, platform: gameCatalogPlatform });
+      if (requestID !== gameCatalogRequest.current) return;
       const items = arrayOrEmpty(page.items);
       setGameCatalog((current) => reset ? items : mergeByID(current, items));
       setGameCatalogTotal(page.total);
       setGameCatalogHasMore(page.hasMore);
     } catch (error) {
+      if (requestID !== gameCatalogRequest.current) return;
       setStatus(error instanceof Error ? error.message : "Failed to load games");
     } finally {
-      setGameCatalogLoading(false);
+      if (requestID === gameCatalogRequest.current) {
+        setGameCatalogLoading(false);
+      }
     }
   }
 
@@ -505,23 +650,26 @@ export function App() {
     setGameCatalog([]);
     setGameCatalogTotal(0);
     setGameCatalogHasMore(false);
-    setTimeout(() => {
-      void loadGameCatalogPageForOptions(sort, platform);
-    }, 0);
+    void loadGameCatalogPageForOptions(sort, platform);
   }
 
   async function loadGameCatalogPageForOptions(sort: GameCatalogSort, platform: string) {
+    const requestID = ++gameCatalogRequest.current;
     setGameCatalogLoading(true);
     try {
       const page = await api.clientGames({ limit: gameCatalogPageSize, offset: 0, sort, platform });
+      if (requestID !== gameCatalogRequest.current) return;
       const items = arrayOrEmpty(page.items);
       setGameCatalog(items);
       setGameCatalogTotal(page.total);
       setGameCatalogHasMore(page.hasMore);
     } catch (error) {
+      if (requestID !== gameCatalogRequest.current) return;
       setStatus(error instanceof Error ? error.message : "Failed to load games");
     } finally {
-      setGameCatalogLoading(false);
+      if (requestID === gameCatalogRequest.current) {
+        setGameCatalogLoading(false);
+      }
     }
   }
 
@@ -587,8 +735,14 @@ export function App() {
           setAuthMessage("Checking saved access token.");
           await api.authCheck(storedToken, { timeoutMs: BOOTSTRAP_TIMEOUT_MS });
         }
+        setAuthChecked(true);
         setAuthMessage("Loading library overview.");
         await refreshAll(true);
+        void refreshJobs().catch((error) => {
+          if (isUnauthorized(error)) {
+            handleAPIError(error);
+          }
+        });
       } catch (error) {
         if (isUnauthorized(error)) {
           clearAuthToken();
@@ -607,6 +761,14 @@ export function App() {
 
     bootstrap();
   }, []);
+
+  useEffect(() => {
+    if (!authChecked || authRequired || setupRequired || view !== "library") return;
+    const timer = window.setTimeout(() => {
+      void loadCollectionsPage(0, true);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [authChecked, authRequired, loadCollectionsPage, setupRequired, view]);
 
   useEffect(() => {
     writeLocalPreferences({
@@ -865,11 +1027,32 @@ export function App() {
   useEffect(() => {
     if (!activeScan) return;
 
-    const timer = window.setInterval(() => {
-      refreshAll().catch(handleAPIError);
-    }, 1200);
-
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const nextJobs = await refreshJobs();
+        if (cancelled) return;
+        const current = nextJobs.find((job) => job.id === activeScan.id);
+        if (!current || !isActiveScanStatus(current.status)) {
+          void refreshAll().catch(handleAPIError);
+          void loadCollectionsPage(0, true);
+          return;
+        }
+      } catch (error) {
+        if (!cancelled) {
+          handleAPIError(error);
+        }
+      }
+      if (!cancelled) {
+        timer = window.setTimeout(poll, 1500);
+      }
+    };
+    timer = window.setTimeout(poll, 1500);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
   }, [activeScan?.id]);
 
   useEffect(() => {
@@ -946,7 +1129,7 @@ export function App() {
     try {
       const job = await api.scan(library.id);
       setStatus(`Scan queued: job #${job.id}`);
-      await refreshAll();
+      setJobs((items) => upsertScanJob(items, job));
     } finally {
       setActiveTask(null);
     }
@@ -967,7 +1150,7 @@ export function App() {
     try {
       const job = await api.scan(library.id, path);
       setStatus(t.quickScanQueued(job.id));
-      await refreshAll();
+      setJobs((items) => upsertScanJob(items, job));
     } catch (error) {
       handleAPIError(error);
     } finally {
@@ -991,7 +1174,7 @@ export function App() {
     try {
       const job = await api.scan(library.id, { path, mode: "recent", recentLimit: recentScanLimit });
       setStatus(t.recentScanQueued(job.id));
-      await refreshAll();
+      setJobs((items) => upsertScanJob(items, job));
     } catch (error) {
       handleAPIError(error);
     } finally {
@@ -1010,8 +1193,8 @@ export function App() {
             ? await api.cancelJob(job.id)
             : await api.resumeJob(job.id);
       setSelectedJob(updated);
+      setJobs((items) => upsertScanJob(items, updated));
       setStatus(`Job #${job.id}: ${action}`);
-      await refreshAll();
       await openJob(updated);
     } catch (error) {
       handleAPIError(error);
@@ -1063,6 +1246,7 @@ export function App() {
       setBookTotal(0);
       setBookHasMore(false);
       await refreshAll();
+      await loadCollectionsPage(0, true);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to remove library");
     } finally {
@@ -1081,6 +1265,7 @@ export function App() {
       setNewLibraryAssetType("mixed");
       setNewLibraryExcludes(defaultExcludePatternsText());
       await refreshAll();
+      await loadCollectionsPage(0, true);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to add library");
     } finally {
@@ -1452,6 +1637,21 @@ export function App() {
     observer.observe(node);
     return () => observer.disconnect();
   }, [bookHasMore, bookListLoading, books.length, loadBooksPage, selectedSeries]);
+
+  useEffect(() => {
+    const node = collectionLoadMoreRef.current;
+    if (!node || view !== "library" || !collectionHasMore || collectionLoading) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          void loadCollectionsPage(series.length, false);
+        }
+      },
+      { root: collectionSectionsRef.current, rootMargin: "240px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [collectionHasMore, collectionLoading, loadCollectionsPage, series.length, view]);
 
   useEffect(() => {
     if (view !== "jobs" || authRequired) return;
@@ -2108,6 +2308,22 @@ export function App() {
       : gamePlatformFilterOptions(series),
     [gamePlatformFacets, series],
   );
+  const gameCatalogLoadStages = [
+    { loading: gamePlatformFacetsLoading && gamePlatformFacets.length === 0, label: locale === "zh" || locale === "zht" ? "机种统计" : "platforms" },
+    { loading: gameCatalogLoading && gameCatalog.length === 0, label: locale === "zh" || locale === "zht" ? "游戏清单" : "game list" },
+  ];
+  const gameCatalogPendingStages = gameCatalogLoadStages.filter((stage) => stage.loading);
+  const gameCatalogInitialLoading = gameCatalogPendingStages.length > 0;
+  const gameCatalogLoadProgress = ((gameCatalogLoadStages.length - gameCatalogPendingStages.length) / gameCatalogLoadStages.length) * 100;
+  const gameCurationLoadStages = [
+    { loading: gameCurationSummaryLoading, label: locale === "zh" || locale === "zht" ? "统计" : "summary" },
+    { loading: gameCurationSettingsLoading, label: locale === "zh" || locale === "zht" ? "设置" : "settings" },
+    { loading: gameCurationTaskLoading, label: locale === "zh" || locale === "zht" ? "任务状态" : "task status" },
+    { loading: gameCurationLoading && gameCurationItems.length === 0, label: locale === "zh" || locale === "zht" ? "游戏清单" : "game list" },
+  ];
+  const gameCurationPendingStages = gameCurationLoadStages.filter((stage) => stage.loading);
+  const gameCurationInitialLoading = gameCurationPendingStages.length > 0;
+  const gameCurationLoadProgress = ((gameCurationLoadStages.length - gameCurationPendingStages.length) / gameCurationLoadStages.length) * 100;
 
   useEffect(() => {
     const node = collectionSectionsRef.current;
@@ -2141,7 +2357,7 @@ export function App() {
         <button className={view === "library" ? "active" : ""} onClick={returnToLibrary}>
           {t.library}
         </button>
-        <button className={view === "favorites" ? "active" : ""} onClick={() => setView("favorites")}>
+        <button className={view === "favorites" ? "active" : ""} onClick={openFavorites}>
           {t.favorites}
         </button>
         <button className={view === "reader" ? "active" : ""} onClick={() => setView("reader")}>
@@ -2156,10 +2372,10 @@ export function App() {
         <button className={view === "videos" ? "active" : ""} onClick={openVideoCatalog}>
           {t.videoShelf}
         </button>
-        <button className={view === "jobs" ? "active" : ""} onClick={() => setView("jobs")}>
+        <button className={view === "jobs" ? "active" : ""} onClick={openJobsView}>
           {t.jobs}
         </button>
-        <button className={view === "errors" ? "active" : ""} onClick={() => setView("errors")}>
+        <button className={view === "errors" ? "active" : ""} onClick={openErrorsView}>
           {t.errors}
         </button>
         <button className={view === "about" ? "active" : ""} onClick={() => setView("about")}>
@@ -2502,7 +2718,7 @@ export function App() {
               <div className="collectionPanelHeader">
                 <div>
                   <h1>{t.collections}</h1>
-                  <small>{t.catalogLoadedCount(filteredSeries.length, series.length)}</small>
+                  <small>{t.catalogLoadedCount(filteredSeries.length, collectionTotal)}</small>
                 </div>
                 <div className="collectionSortTools">
                   <label>
@@ -2527,6 +2743,23 @@ export function App() {
                   collectionScrollTop.current = event.currentTarget.scrollTop;
                 }}
               >
+                {collectionLoading && (
+                  <div className="catalogInitialProgress collectionLoadProgress" role="status" aria-live="polite">
+                    <div>
+                      <strong>{series.length === 0 ? `${t.collections}...` : t.loadingMoreVolumes}</strong>
+                      <span>{t.catalogLoadedCount(series.length, collectionTotal)}</span>
+                    </div>
+                    <div className="catalogInitialProgressTrack">
+                      <span
+                        style={{
+                          width: collectionTotal > 0
+                            ? `${Math.max(8, Math.min(100, (series.length / collectionTotal) * 100))}%`
+                            : "28%",
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
                 {collectionSections.map((section) => (
                   <section className="collectionSection" key={section.key} aria-label={section.title}>
                     <h2>{section.title}</h2>
@@ -2544,6 +2777,18 @@ export function App() {
                     </div>
                   </section>
                 ))}
+                {collectionHasMore && (
+                  <div className="collectionLoadMore" ref={collectionLoadMoreRef}>
+                    <button
+                      className="catalogLoadMore"
+                      type="button"
+                      disabled={collectionLoading}
+                      onClick={() => loadCollectionsPage(series.length, false)}
+                    >
+                      {collectionLoading ? t.loadingMoreVolumes : t.loadMore}
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -2722,6 +2967,23 @@ export function App() {
             )}
           >
             <div className="gamePlatformList">
+              {gameCatalogInitialLoading && (
+                <div className="catalogInitialProgress" role="status" aria-live="polite">
+                  <div><strong>{locale === "zh" || locale === "zht" ? "正在载入游戏库" : "Loading game library"}</strong><span>{gameCatalogPendingStages.map((stage) => stage.label).join(" · ")}</span></div>
+                  <div className="catalogInitialProgressTrack"><span style={{ width: `${gameCatalogLoadProgress}%` }} /></div>
+                </div>
+              )}
+              {gameCatalogLoading && gameCatalog.length === 0 && (
+                <div className="catalogGrid games gameCatalogSkeletonGrid" aria-hidden="true">
+                  {Array.from({ length: 10 }, (_, index) => (
+                    <div className="gameCatalogSkeleton" key={`game-catalog-skeleton-${index}`}>
+                      <span />
+                      <i />
+                      <i />
+                    </div>
+                  ))}
+                </div>
+              )}
               {gameCatalogSections.map((section) => (
                 <section className="gamePlatformGroup" key={`game-platform-${section.platform}`}>
                   <div className="gamePlatformHeader">
@@ -2768,6 +3030,13 @@ export function App() {
               </div>
             </div>
 
+            {gameCurationInitialLoading && (
+              <div className="curationInitialProgress" role="status" aria-live="polite">
+                <div><strong>{locale === "zh" || locale === "zht" ? "正在载入游戏整理数据" : "Loading game curation"}</strong><span>{gameCurationPendingStages.map((stage) => stage.label).join(" · ")}</span></div>
+                <div className="curationInitialProgressTrack"><span style={{ width: `${gameCurationLoadProgress}%` }} /></div>
+              </div>
+            )}
+
             <section className="curationRebuild">
               <div className="curationRebuildHeading">
                 <div><strong>{locale === "zh" || locale === "zht" ? "补齐兼容数据" : "Complete compatibility data"}</strong><small>{locale === "zh" || locale === "zht" ? "默认只补缺失校验和，再用已安装策略刷新 Launch Profiles。" : "Fills missing checksums first, then refreshes Launch Profiles using installed policies."}</small></div>
@@ -2795,6 +3064,11 @@ export function App() {
                 <div className={gameCurationSummary.checksumPending > 0 ? "warning" : ""}><strong>{gameCurationSummary.checksumPending}</strong><span>{locale === "zh" || locale === "zht" ? "等待校验" : "Pending checksums"}</span></div>
               </div>
             )}
+            {gameCurationSummaryLoading && !gameCurationSummary && (
+              <div className="curationSummaryGrid loading" aria-hidden="true">
+                {Array.from({ length: 8 }, (_, index) => <div className="curationSummarySkeleton" key={`curation-summary-skeleton-${index}`} />)}
+              </div>
+            )}
 
             {gameCatalogTask?.status && (
               <div className={`curationTask ${gameCatalogTask.status}`}>
@@ -2811,7 +3085,7 @@ export function App() {
             <section className="curationSettings">
               <div className="curationSettingsTitle">
                 <div><strong>{locale === "zh" || locale === "zht" ? "兼容性与元数据设置" : "Compatibility and metadata settings"}</strong><small>{locale === "zh" || locale === "zht" ? "策略文件只读取，不会修改 ROM。" : "Policy files are read-only; ROM files are never modified."}</small></div>
-                <button type="button" disabled={gameCatalogSettingsSaving} onClick={saveGameCatalogSettings}>{gameCatalogSettingsSaving ? "Saving…" : (locale === "zh" || locale === "zht" ? "保存" : "Save")}</button>
+                <button type="button" disabled={gameCatalogSettingsSaving || gameCurationSettingsLoading} onClick={saveGameCatalogSettings}>{gameCatalogSettingsSaving ? "Saving…" : (locale === "zh" || locale === "zht" ? "保存" : "Save")}</button>
               </div>
               <div className="curationSettingsGrid">
                 <label><span>FBNeo DAT</span><input value={gameCatalogSettings.fbneoDatPath} onChange={(event) => setGameCatalogSettings((value) => ({ ...value, fbneoDatPath: event.target.value }))} /></label>
@@ -2831,7 +3105,12 @@ export function App() {
             </section>
 
             <div className="curationList">
-              {gameCurationLoading && gameCurationItems.length === 0 && <div className="coverEmpty compact">Loading…</div>}
+              {gameCurationLoading && gameCurationItems.length === 0 && (
+                <div className="curationListLoading" role="status">
+                  <strong>{locale === "zh" || locale === "zht" ? "正在载入待整理游戏" : "Loading curation entries"}</strong>
+                  {Array.from({ length: 5 }, (_, index) => <span key={`curation-row-skeleton-${index}`} />)}
+                </div>
+              )}
               {gameCurationItems.map((item) => (
                 <article className="curationRow" key={`curation-${item.game.id}`}>
                   <img src={`/api/games/${item.game.id}/cover`} alt="" loading="lazy" />
@@ -4326,13 +4605,19 @@ function GameTile({
   className?: string;
 }) {
   const [coverFailed, setCoverFailed] = useState(false);
+  const [coverLoaded, setCoverLoaded] = useState(false);
   const hasCover = Boolean(game.coverUrl && !coverFailed);
+
+  useEffect(() => {
+    setCoverFailed(false);
+    setCoverLoaded(false);
+  }, [game.coverUrl]);
 
   return (
     <div className={`${className} gameCard`} title={game.title}>
       <button className="gameCardButton" type="button">
-        <span className={`shelfCover gameCover${hasCover ? " hasCover" : ""}`}>
-          {hasCover ? <img src={authenticatedResourcePath(game.coverUrl)} alt="" loading="lazy" onError={() => setCoverFailed(true)} /> : null}
+        <span className={`shelfCover gameCover${hasCover ? " hasCover" : ""}${hasCover && !coverLoaded ? " loadingCover" : ""}`}>
+          {hasCover ? <img className={coverLoaded ? "loaded" : ""} src={authenticatedResourcePath(game.coverUrl)} alt="" loading="lazy" onLoad={() => setCoverLoaded(true)} onError={() => { setCoverFailed(true); setCoverLoaded(false); }} /> : null}
           <span className="gameCoverPlatform">{gamePlatformLabel(game)}</span>
           <span className="gameCoverTitle">Now Printing</span>
           <span className="gameCoverFormat">{game.format.toUpperCase()}</span>
@@ -6527,6 +6812,12 @@ function replaceSeries(items: Series[], updatedSeries: Series) {
   return items.map((series) => (series.id === updatedSeries.id ? updatedSeries : series));
 }
 
+function mergeCollections(items: Series[], additions: Series[]) {
+  const merged = new Map(items.map((item) => [item.id, item]));
+  additions.forEach((item) => merged.set(item.id, item));
+  return Array.from(merged.values());
+}
+
 function replaceGame(items: GameAsset[], updatedGame: GameAsset) {
   return items.map((game) => (game.id === updatedGame.id ? updatedGame : game));
 }
@@ -6562,6 +6853,10 @@ function continueMeta(book: Book, t: Translation) {
 
 function isActiveScanStatus(status: string) {
   return status === "running" || status === "pause_requested" || status === "cancel_requested";
+}
+
+function upsertScanJob(items: ScanJob[], updatedJob: ScanJob) {
+  return [updatedJob, ...items.filter((job) => job.id !== updatedJob.id)].sort((left, right) => right.id - left.id);
 }
 
 function normalizeQuickScanTarget(library: Library, inputPath: string) {

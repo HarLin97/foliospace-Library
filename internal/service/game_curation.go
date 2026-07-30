@@ -191,35 +191,32 @@ func (s *Service) ListGameCurationPage(options domain.GameListOptions) (domain.G
 	if err != nil {
 		return domain.GameCurationPage{}, err
 	}
+	gameIDs := make([]int64, 0, len(page.Items))
+	for _, game := range page.Items {
+		gameIDs = append(gameIDs, game.ID)
+	}
+	stats, err := s.store.GameCurationStats(gameIDs)
+	if err != nil {
+		return domain.GameCurationPage{}, err
+	}
 	items := make([]domain.GameCurationItem, 0, len(page.Items))
 	policies := s.gameCatalogPolicyStatuses()
 	for _, game := range page.Items {
-		details, detailsErr := s.store.GameDetails(game.ID)
-		profiles, profileErr := s.store.GameLaunchProfiles(game.ID)
-		item := domain.GameCurationItem{Game: game, MetadataStatus: "missing", ArtworkStatus: "missing"}
-		if detailsErr == nil {
-			item.MetadataStatus = details.MetadataStatus
-			for _, artwork := range details.Artwork {
-				if artwork.Kind == "cover" && artwork.Selected {
-					item.ArtworkStatus = "ready"
-					break
-				}
-			}
+		gameStats := stats[game.ID]
+		item := domain.GameCurationItem{
+			Game: game, MetadataStatus: gameStats.MetadataStatus, ArtworkStatus: gameStats.ArtworkStatus,
+			ReadyProfiles: gameStats.ReadyProfiles, FileCount: gameStats.FileCount, Checksummed: gameStats.Checksummed,
 		}
-		if profileErr == nil {
-			item.ReadyProfiles = len(profiles)
-		}
-		item.FileCount, item.Checksummed, _ = s.store.GameFileChecksumCountsForGame(game.ID)
 		item.MobileReady = item.FileCount > 0 && item.Checksummed == item.FileCount &&
 			(!launchcatalog.IsStrictArcadePlatform(game.Platform) || item.ReadyProfiles > 0) &&
 			isLaunchableCatalogGame(game)
-		item.IssueCode, item.IssueMessage = gameCurationIssue(game, profiles, policies, item.FileCount, item.Checksummed)
+		item.IssueCode, item.IssueMessage = gameCurationIssue(game, item.ReadyProfiles, policies, item.FileCount, item.Checksummed)
 		items = append(items, item)
 	}
 	return domain.GameCurationPage{Items: items, Total: page.Total, Limit: page.Limit, Offset: page.Offset, HasMore: page.HasMore}, nil
 }
 
-func gameCurationIssue(game domain.GameAsset, profiles []domain.GameLaunchProfile, policies []domain.GameCatalogPolicyStatus, fileCount, checksummed int) (string, string) {
+func gameCurationIssue(game domain.GameAsset, readyProfiles int, policies []domain.GameCatalogPolicyStatus, fileCount, checksummed int) (string, string) {
 	switch strings.ToLower(strings.TrimSpace(game.CatalogRole)) {
 	case "dependency":
 		return "dependency", "This file is a BIOS, device, parent, or track dependency and is intentionally hidden from clients."
@@ -238,7 +235,7 @@ func gameCurationIssue(game domain.GameAsset, profiles []domain.GameLaunchProfil
 		}
 		return "launch-profile-missing", "The ROM did not pass an installed compatibility policy, or a required parent/BIOS archive is missing."
 	default:
-		if len(profiles) == 0 && launchcatalog.IsStrictArcadePlatform(game.Platform) {
+		if readyProfiles == 0 && launchcatalog.IsStrictArcadePlatform(game.Platform) {
 			return "launch-profile-missing", "The catalog entry is visible but has no audited runtime profile. Re-run compatibility analysis."
 		}
 	}
@@ -251,8 +248,11 @@ func gameCurationIssue(game domain.GameAsset, profiles []domain.GameLaunchProfil
 	return "", ""
 }
 
-func (s *Service) handleCompletedScan(library domain.Library, _ domain.ScanJob) {
+func (s *Service) handleCompletedScan(library domain.Library, job domain.ScanJob) {
 	if library.AssetType != "game" && library.AssetType != "mixed" {
+		return
+	}
+	if !scanShouldTriggerCatalogAnalysis(library, job) {
 		return
 	}
 	if _, err := s.store.Setting(gameCatalogSettingsSetting); err != nil {
@@ -261,6 +261,18 @@ func (s *Service) handleCompletedScan(library domain.Library, _ domain.ScanJob) 
 	if s.GameCatalogSettings().AutoAnalyzeAfterScan {
 		_, _ = s.StartGameCatalogAnalysis()
 	}
+}
+
+func scanShouldTriggerCatalogAnalysis(library domain.Library, job domain.ScanJob) bool {
+	targetPath := filepath.Clean(strings.TrimSpace(job.TargetPath))
+	if targetPath == "." || targetPath == "" {
+		return false
+	}
+	if targetPath == filepath.Clean(library.RootPath) {
+		return true
+	}
+	info, err := os.Stat(targetPath)
+	return err == nil && info.IsDir()
 }
 
 func (s *Service) GameCatalogTaskStatus() domain.GameCatalogTaskStatus {

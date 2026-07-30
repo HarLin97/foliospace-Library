@@ -2485,6 +2485,42 @@ func (s *Store) GameFileChecksumCountsForGame(gameID int64) (total int, checksum
 	return
 }
 
+func (s *Store) GameCurationStats(gameIDs []int64) (map[int64]domain.GameCurationStats, error) {
+	stats := make(map[int64]domain.GameCurationStats, len(gameIDs))
+	if len(gameIDs) == 0 {
+		return stats, nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(gameIDs)), ",")
+	args := make([]any, 0, len(gameIDs))
+	for _, gameID := range gameIDs {
+		args = append(args, gameID)
+	}
+	rows, err := s.db.Query(`SELECT g.id,
+		CASE WHEN EXISTS(SELECT 1 FROM game_metadata gm WHERE gm.game_id = g.id)
+			OR EXISTS(SELECT 1 FROM game_metadata_sources gms WHERE gms.game_id = g.id)
+			THEN 'matched' ELSE 'unmatched' END,
+		CASE WHEN EXISTS(SELECT 1 FROM game_artwork ga WHERE ga.game_id = g.id AND ga.selected = 1 AND ga.kind = 'cover')
+			THEN 'ready' ELSE 'missing' END,
+		(SELECT COUNT(*) FROM game_launch_profiles glp WHERE glp.game_id = g.id AND LOWER(TRIM(glp.status)) = 'ready'),
+		(SELECT COUNT(*) FROM game_files gf WHERE gf.game_id = g.id),
+		(SELECT COALESCE(SUM(CASE WHEN LENGTH(LOWER(TRIM(gf.sha1))) = 40 AND LOWER(TRIM(gf.sha1)) NOT GLOB '*[^0-9a-f]*' THEN 1 ELSE 0 END), 0)
+			FROM game_files gf WHERE gf.game_id = g.id)
+		FROM games g WHERE g.id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var gameID int64
+		var item domain.GameCurationStats
+		if err := rows.Scan(&gameID, &item.MetadataStatus, &item.ArtworkStatus, &item.ReadyProfiles, &item.FileCount, &item.Checksummed); err != nil {
+			return nil, err
+		}
+		stats[gameID] = item
+	}
+	return stats, rows.Err()
+}
+
 func (s *Store) GameFilesMissingSHA1(limit int) ([]domain.GameFile, error) {
 	return s.gameFilesMissingSHA1(0, limit)
 }
@@ -2635,7 +2671,7 @@ func (s *Store) ListGamesPageForProfile(options domain.GameListOptions, profileI
 
 	queryArgs := append([]any{}, args...)
 	queryArgs = append(queryArgs, limit, offset)
-	rows, err := s.db.Query(gameSelectSQL()+where+gameListOrderBy(options.Sort)+` LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := s.db.Query(gameSelectSQL()+where+gameListOrderBy(options.Sort, strings.TrimSpace(options.Query) != "")+` LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return domain.GameListPage{}, err
 	}
@@ -3420,16 +3456,20 @@ func videoListOrderBy(sort string) string {
 	}
 }
 
-func gameListOrderBy(sort string) string {
+func gameListOrderBy(sort string, preferReady bool) string {
+	prefix := ""
+	if preferReady {
+		prefix = `CASE LOWER(TRIM(catalog_role)) WHEN '' THEN 0 WHEN 'game' THEN 0 WHEN 'needs-curation' THEN 1 ELSE 2 END, `
+	}
 	switch strings.ToLower(strings.TrimSpace(sort)) {
 	case "title":
-		return ` ORDER BY LOWER(title), platform, id`
+		return ` ORDER BY ` + prefix + `LOWER(title), platform, id`
 	case "platform":
-		return ` ORDER BY LOWER(platform), LOWER(title), id`
+		return ` ORDER BY ` + prefix + `LOWER(platform), LOWER(title), id`
 	case "oldest":
-		return ` ORDER BY updated_at ASC, id ASC`
+		return ` ORDER BY ` + prefix + `updated_at ASC, id ASC`
 	default:
-		return ` ORDER BY updated_at DESC, id DESC`
+		return ` ORDER BY ` + prefix + `updated_at DESC, id DESC`
 	}
 }
 

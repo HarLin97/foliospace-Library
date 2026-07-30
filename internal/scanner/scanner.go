@@ -968,6 +968,38 @@ func (s *Scanner) scanTaskNeedsIndex(library domain.Library, task scanFileTask, 
 }
 
 func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileInfo, ext string, platform string) bool {
+	if ext == ".zip" {
+		archiveROM, detected, err := inspectConsoleROMZIP(path, false)
+		if err != nil {
+			return false
+		}
+		if detected {
+			if !archiveROM.definitive {
+				return false
+			}
+			game, err := s.store.GameByPath(path)
+			if err != nil {
+				return false
+			}
+			romSetName, emulatorHint := consolePlatformMetadata(archiveROM.platform)
+			files, err := s.store.GameFiles(game.ID)
+			return err == nil &&
+				game.Size == archiveROM.size &&
+				game.MTime.Equal(info.ModTime()) &&
+				game.Platform == archiveROM.platform &&
+				game.ROMSetName == romSetName &&
+				game.Format == archiveROM.format &&
+				game.EmulatorHint == emulatorHint &&
+				strings.EqualFold(game.CatalogRole, launchcatalog.RoleGame) &&
+				game.CRC32 != "" &&
+				game.SHA1 != "" &&
+				len(files) == 1 &&
+				files[0].Role == "entry" &&
+				files[0].Name == archiveROM.name &&
+				files[0].Size == archiveROM.size &&
+				files[0].SHA1 != ""
+		}
+	}
 	if platform == "dos" {
 		catalog, _ := s.dosCatalogForPath(library.RootPath, path)
 		return s.store.CanSkipDOSGame(path, info.Size(), info.ModTime(), catalog.revision)
@@ -999,12 +1031,16 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 		if err != nil {
 			return false
 		}
-		expectedRole := launchcatalog.CatalogRole(game, nil)
+		expected := launchcatalog.CanonicalizeAuditedGame(domain.GameAsset{
+			FilePath: path, Size: info.Size(), SHA1: game.SHA1, Platform: platform,
+			ROMSetName: romSetName, EmulatorHint: emulatorHint, CatalogRole: game.CatalogRole,
+		})
+		expectedRole := launchcatalog.CatalogRole(expected, nil)
 		return game.Size == info.Size() &&
 			game.MTime.Equal(info.ModTime()) &&
-			game.Platform == platform &&
-			game.ROMSetName == romSetName &&
-			game.EmulatorHint == emulatorHint &&
+			game.Platform == expected.Platform &&
+			game.ROMSetName == expected.ROMSetName &&
+			game.EmulatorHint == expected.EmulatorHint &&
 			strings.EqualFold(game.CatalogRole, expectedRole) &&
 			game.CRC32 != "" &&
 			game.SHA1 != ""
@@ -1325,6 +1361,17 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	if platform == "naomi2" {
 		return s.indexNaomi2GameFile(library, path, info, relPath)
 	}
+	consoleROM := consoleROMInfo{}
+	consoleROMDetected := false
+	if ext == ".zip" {
+		consoleROM, consoleROMDetected, err = inspectConsoleROMZIP(path, true)
+		if err != nil {
+			return err
+		}
+		if consoleROMDetected {
+			platform = consoleROM.platform
+		}
+	}
 	romSetName := inferROMSetName(relPath)
 	emulatorHint := platform
 	format := strings.TrimPrefix(ext, ".")
@@ -1333,12 +1380,28 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	compatibility := "unknown"
 	catalogRole := "game"
 	bootabilityChecked := false
+	if consoleROMDetected {
+		romSetName, emulatorHint = consolePlatformMetadata(platform)
+		if consoleROM.definitive {
+			title = gameTitle(consoleROM.name)
+			format = consoleROM.format
+			totalSize = consoleROM.size
+			checksums = consoleROM.checksums
+			compatibility = "untested"
+			gameFiles = []domain.GameFile{{Name: consoleROM.name, FilePath: path, Size: consoleROM.size, MTime: info.ModTime(), Role: "entry", Position: 0}}
+			relPath = filepath.Join(filepath.Dir(relPath), consoleROM.name)
+		} else {
+			catalogRole = launchcatalog.RoleNeedsCuration
+		}
+	}
 	if canonicalROMSetName, canonicalEmulatorHint, canonicalCatalogRole, ok := canonicalArcadeCatalogMetadata(platform, path, ext); ok {
 		romSetName = canonicalROMSetName
 		emulatorHint = canonicalEmulatorHint
 		catalogRole = canonicalCatalogRole
 	}
-	if platform == "n64" {
+	if consoleROMDetected && consoleROM.definitive {
+		// The archive inspection already validated and checksummed the inner ROM.
+	} else if platform == "n64" {
 		rom, inspectErr := inspectN64ROM(path, info, ext)
 		if inspectErr != nil {
 			_ = s.store.DeleteGameByPath(path)
@@ -1415,7 +1478,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 			title = pcfxDirectoryTitle(library.RootPath, path)
 		}
 	}
-	if platform != "n64" && platform != "pc98" {
+	if platform != "n64" && platform != "pc98" && !(consoleROMDetected && consoleROM.definitive) {
 		gameFiles, totalSize, err = indexedGameFiles(path, info, ext)
 		if err != nil {
 			return err
@@ -2331,6 +2394,186 @@ func isPC98MediaExt(ext string) bool {
 	default:
 		return false
 	}
+}
+
+const (
+	consoleArchiveMaxEntries           = 4096
+	consoleArchiveMaxUncompressedBytes = uint64(1 << 30)
+	consoleROMMaxBytes                 = uint64(128 << 20)
+)
+
+type consoleROMInfo struct {
+	name       string
+	platform   string
+	format     string
+	size       int64
+	checksums  checksumPair
+	definitive bool
+}
+
+// inspectConsoleROMZIP treats explicit cartridge ROM content as stronger
+// evidence than an archive short name. The short name remains useful only
+// when the archive does not contain a recognizable console ROM.
+func inspectConsoleROMZIP(path string, withChecksums bool) (consoleROMInfo, bool, error) {
+	reader, err := stdzip.OpenReader(path)
+	if err != nil {
+		return consoleROMInfo{}, false, fmt.Errorf("open console ROM zip: %w", err)
+	}
+	defer reader.Close()
+	if len(reader.File) > consoleArchiveMaxEntries {
+		return consoleROMInfo{}, false, fmt.Errorf("console ROM zip has %d entries, limit is %d", len(reader.File), consoleArchiveMaxEntries)
+	}
+
+	var total uint64
+	candidates := make([]consoleROMInfo, 0, 2)
+	files := make([]*stdzip.File, 0, 2)
+	binFiles := make([]*stdzip.File, 0, 1)
+	for _, file := range reader.File {
+		if err := validateArchiveEntryName(file.Name); err != nil {
+			return consoleROMInfo{}, false, err
+		}
+		total += file.UncompressedSize64
+		if total > consoleArchiveMaxUncompressedBytes {
+			return consoleROMInfo{}, false, fmt.Errorf("console ROM zip uncompressed size exceeds %d bytes", consoleArchiveMaxUncompressedBytes)
+		}
+		if file.FileInfo().IsDir() || isIgnoredArchiveEntry(file.Name) {
+			continue
+		}
+		if file.Mode()&os.ModeSymlink != 0 || file.Flags&0x1 != 0 {
+			return consoleROMInfo{}, false, fmt.Errorf("unsupported console ROM zip entry: %s", file.Name)
+		}
+		ext := strings.ToLower(filepath.Ext(file.Name))
+		platform, format, ok := consolePlatformForROMExtension(ext)
+		if ok {
+			candidates = append(candidates, consoleROMInfo{
+				name: filepath.Base(filepath.Clean(strings.ReplaceAll(file.Name, `\`, "/"))), platform: platform,
+				format: format, size: int64(file.UncompressedSize64),
+			})
+			files = append(files, file)
+			continue
+		}
+		if ext == ".bin" {
+			binFiles = append(binFiles, file)
+		}
+	}
+
+	if len(candidates) == 0 && len(binFiles) == 1 {
+		isMegaDrive, err := hasMegaDriveROMHeader(binFiles[0])
+		if err != nil {
+			return consoleROMInfo{}, false, err
+		}
+		if isMegaDrive {
+			file := binFiles[0]
+			candidates = append(candidates, consoleROMInfo{
+				name: filepath.Base(filepath.Clean(strings.ReplaceAll(file.Name, `\`, "/"))), platform: "md",
+				format: "bin", size: int64(file.UncompressedSize64),
+			})
+			files = append(files, file)
+		}
+	}
+	if len(candidates) == 0 {
+		return consoleROMInfo{}, false, nil
+	}
+
+	platform := candidates[0].platform
+	for _, candidate := range candidates[1:] {
+		if candidate.platform != platform {
+			return consoleROMInfo{platform: "unknown", format: "zip"}, true, nil
+		}
+	}
+	if len(candidates) != 1 {
+		return consoleROMInfo{platform: platform, format: "zip"}, true, nil
+	}
+	if uint64(candidates[0].size) == 0 || uint64(candidates[0].size) > consoleROMMaxBytes {
+		return consoleROMInfo{}, false, fmt.Errorf("console ROM entry %s has invalid size %d", candidates[0].name, candidates[0].size)
+	}
+	candidates[0].definitive = true
+	if !withChecksums {
+		return candidates[0], true, nil
+	}
+	body, err := files[0].Open()
+	if err != nil {
+		return consoleROMInfo{}, false, fmt.Errorf("open console ROM entry %s: %w", candidates[0].name, err)
+	}
+	defer body.Close()
+	checksums, err := checksumsForDeclaredSize(body, uint64(candidates[0].size))
+	if err != nil {
+		return consoleROMInfo{}, false, fmt.Errorf("checksum console ROM entry %s: %w", candidates[0].name, err)
+	}
+	candidates[0].checksums = checksums
+	return candidates[0], true, nil
+}
+
+func consolePlatformForROMExtension(ext string) (platform string, format string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".sfc", ".smc":
+		return "snes", strings.TrimPrefix(strings.ToLower(ext), "."), true
+	case ".nes":
+		return "nes", "nes", true
+	case ".gb":
+		return "gb", "gb", true
+	case ".gbc":
+		return "gbc", "gbc", true
+	case ".gba":
+		return "gba", "gba", true
+	case ".md", ".gen":
+		return "md", strings.TrimPrefix(strings.ToLower(ext), "."), true
+	default:
+		return "", "", false
+	}
+}
+
+func consolePlatformMetadata(platform string) (romSetName string, emulatorHint string) {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "snes":
+		return "SNES", "snes9x"
+	case "nes":
+		return "NES", "nestopia"
+	case "gb":
+		return "GB", "gambatte"
+	case "gbc":
+		return "GBC", "gambatte"
+	case "gba":
+		return "GBA", "mgba"
+	case "md":
+		return "Mega Drive", "genesisplusgx"
+	default:
+		return "", ""
+	}
+}
+
+func hasMegaDriveROMHeader(file *stdzip.File) (bool, error) {
+	if file.UncompressedSize64 < 0x104 || file.UncompressedSize64 > consoleROMMaxBytes {
+		return false, nil
+	}
+	body, err := file.Open()
+	if err != nil {
+		return false, fmt.Errorf("open Mega Drive ROM candidate %s: %w", file.Name, err)
+	}
+	defer body.Close()
+	header := make([]byte, 0x104)
+	if _, err := io.ReadFull(body, header); err != nil {
+		return false, fmt.Errorf("read Mega Drive ROM candidate %s: %w", file.Name, err)
+	}
+	return bytes.Equal(header[0x100:0x104], []byte("SEGA")), nil
+}
+
+func checksumsForDeclaredSize(reader io.Reader, declaredSize uint64) (checksumPair, error) {
+	crc := crc32.NewIEEE()
+	sha := sha1.New()
+	sha256Hash := sha256.New()
+	written, err := io.Copy(io.MultiWriter(crc, sha, sha256Hash), io.LimitReader(reader, int64(declaredSize)+1))
+	if err != nil {
+		return checksumPair{}, err
+	}
+	if uint64(written) != declaredSize {
+		return checksumPair{}, fmt.Errorf("ROM size mismatch: read %d, expected %d", written, declaredSize)
+	}
+	return checksumPair{
+		crc32:  fmt.Sprintf("%08x", crc.Sum32()),
+		sha1:   hex.EncodeToString(sha.Sum(nil)),
+		sha256: hex.EncodeToString(sha256Hash.Sum(nil)),
+	}, nil
 }
 
 const (
@@ -4199,9 +4442,6 @@ func isPC98ExcludedFile(path string) bool {
 
 func inferGamePlatform(ext string, relPath string) string {
 	path := strings.ToLower(filepath.ToSlash(relPath))
-	if platform := cpsPlatformForROMSet(path, ext); platform != "" {
-		return platform
-	}
 	if platform := inferFBNeoPlatform(path); platform != "" {
 		return platform
 	}

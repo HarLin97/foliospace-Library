@@ -101,6 +101,29 @@ func TestValidateMAMEArchiveAcceptsCRCMatchedHistoricalAlias(t *testing.T) {
 	}
 }
 
+func TestValidateMAMESelfContainedArchiveRequiresMergedParentROMs(t *testing.T) {
+	cloneBytes := []byte("clone-rom")
+	parentBytes := []byte("parent-rom")
+	machine := MAMEMachine{
+		Name: "clone", CloneOf: "parent", ROMOf: "parent",
+		ROMs: []MAMEROM{
+			{Name: "clone.bin", Size: int64(len(cloneBytes)), CRC: fmt.Sprintf("%08x", crc32.ChecksumIEEE(cloneBytes))},
+			{Name: "parent.bin", Merge: "parent.bin", Size: int64(len(parentBytes)), CRC: fmt.Sprintf("%08x", crc32.ChecksumIEEE(parentBytes))},
+		},
+	}
+	dir := t.TempDir()
+	partialPath := filepath.Join(dir, "partial.zip")
+	writeTestZip(t, partialPath, map[string][]byte{"clone.bin": cloneBytes})
+	if err := ValidateMAMESelfContainedArchive(partialPath, machine); err == nil {
+		t.Fatal("expected merged parent ROM to be required")
+	}
+	completePath := filepath.Join(dir, "complete.zip")
+	writeTestZip(t, completePath, map[string][]byte{"clone.bin": cloneBytes, "parent.bin": parentBytes})
+	if err := ValidateMAMESelfContainedArchive(completePath, machine); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeMAMEXMLArchive(t *testing.T, path, xmlText string) {
 	t.Helper()
 	file, err := os.Create(path)

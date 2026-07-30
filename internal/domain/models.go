@@ -551,6 +551,14 @@ type GameCurationItem struct {
 	IssueMessage   string    `json:"issueMessage,omitempty"`
 }
 
+type GameCurationStats struct {
+	MetadataStatus string
+	ArtworkStatus  string
+	ReadyProfiles  int
+	FileCount      int
+	Checksummed    int
+}
+
 type GameCurationPage struct {
 	Items   []GameCurationItem `json:"items"`
 	Total   int64              `json:"total"`

@@ -45,6 +45,35 @@ func TestGameCatalogSettingsDefaultsAndNormalization(t *testing.T) {
 	}
 }
 
+func TestScanShouldTriggerCatalogAnalysisOnlyForDirectories(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "SNES")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rom := filepath.Join(dir, "sf2.zip")
+	if err := os.WriteFile(rom, []byte("rom"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	library := domain.Library{RootPath: root, AssetType: "game"}
+	for _, test := range []struct {
+		name   string
+		target string
+		want   bool
+	}{
+		{name: "full library", target: root, want: true},
+		{name: "directory", target: dir, want: true},
+		{name: "single ROM", target: rom, want: false},
+		{name: "missing target", target: filepath.Join(root, "missing.zip"), want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := scanShouldTriggerCatalogAnalysis(library, domain.ScanJob{TargetPath: test.target}); got != test.want {
+				t.Fatalf("scanShouldTriggerCatalogAnalysis(%q) = %v, want %v", test.target, got, test.want)
+			}
+		})
+	}
+}
+
 func TestEffectiveTargetsPathUsesLegacyFallback(t *testing.T) {
 	configDir := t.TempDir()
 	preferred := filepath.Join(configDir, "missing.json")

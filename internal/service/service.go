@@ -1413,6 +1413,21 @@ func (s *Service) OpenGameFile(id int64) (PageStream, error) {
 		}
 		return PageStream{Body: body, ContentType: "application/octet-stream"}, nil
 	}
+	if isZippedConsoleROM(game) {
+		files, err := s.store.GameFiles(id)
+		if err != nil {
+			return PageStream{}, err
+		}
+		expectedName := ""
+		if len(files) == 1 {
+			expectedName = files[0].Name
+		}
+		body, err := openConsoleROMFromZIP(game.FilePath, expectedName, game.Format, game.Size)
+		if err != nil {
+			return PageStream{}, err
+		}
+		return PageStream{Body: body, ContentType: "application/octet-stream"}, nil
+	}
 	body, err := os.Open(game.FilePath)
 	if err != nil {
 		return PageStream{}, err
@@ -1509,6 +1524,13 @@ func (s *Service) OpenGameFilePart(id int64, position int) (PageStream, domain.G
 		}
 		return PageStream{Body: body, ContentType: "application/octet-stream"}, file, nil
 	}
+	if isZippedConsoleROM(game) && file.Role == "entry" {
+		body, err := openConsoleROMFromZIP(game.FilePath, file.Name, game.Format, file.Size)
+		if err != nil {
+			return PageStream{}, domain.GameFile{}, err
+		}
+		return PageStream{Body: body, ContentType: "application/octet-stream"}, file, nil
+	}
 	body, err := os.Open(file.FilePath)
 	if err != nil {
 		return PageStream{}, domain.GameFile{}, err
@@ -1564,6 +1586,76 @@ func openN64ROMFromZIP(path string, expectedName string, expectedSize int64) (io
 		_ = body.Close()
 		_ = reader.Close()
 	}}, nil
+}
+
+func isZippedConsoleROM(game domain.GameAsset) bool {
+	if !strings.EqualFold(filepath.Ext(game.FilePath), ".zip") {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(game.Platform)) {
+	case "snes", "nes", "gb", "gbc", "gba", "md":
+		return isConsoleROMFormat(game.Format)
+	default:
+		return false
+	}
+}
+
+func isConsoleROMFormat(format string) bool {
+	switch strings.ToLower(strings.TrimPrefix(strings.TrimSpace(format), ".")) {
+	case "sfc", "smc", "nes", "gb", "gbc", "gba", "md", "gen", "bin":
+		return true
+	default:
+		return false
+	}
+}
+
+func openConsoleROMFromZIP(path string, expectedName string, format string, expectedSize int64) (io.ReadCloser, error) {
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		return nil, err
+	}
+	wantedExt := "." + strings.ToLower(strings.TrimPrefix(strings.TrimSpace(format), "."))
+	var match *zip.File
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() || isIgnoredGameArchiveEntry(file.Name) || !strings.EqualFold(filepath.Ext(file.Name), wantedExt) {
+			continue
+		}
+		if expectedName != "" && !strings.EqualFold(filepath.Base(file.Name), filepath.Base(expectedName)) {
+			continue
+		}
+		if match != nil {
+			_ = reader.Close()
+			return nil, fmt.Errorf("console ROM zip contains multiple matching entries")
+		}
+		match = file
+	}
+	if match == nil {
+		_ = reader.Close()
+		return nil, fmt.Errorf("console ROM entry %q not found", expectedName)
+	}
+	if expectedSize <= 0 || int64(match.UncompressedSize64) != expectedSize {
+		_ = reader.Close()
+		return nil, fmt.Errorf("console ROM entry size is %d, expected %d", match.UncompressedSize64, expectedSize)
+	}
+	body, err := match.Open()
+	if err != nil {
+		_ = reader.Close()
+		return nil, err
+	}
+	return cleanupReadCloser{ReadCloser: body, cleanup: func() {
+		_ = body.Close()
+		_ = reader.Close()
+	}}, nil
+}
+
+func isIgnoredGameArchiveEntry(name string) bool {
+	normalized := strings.Trim(strings.ReplaceAll(name, `\`, "/"), "/")
+	for _, part := range strings.Split(normalized, "/") {
+		if part == "__MACOSX" || part == ".DS_Store" || strings.HasPrefix(part, "._") {
+			return true
+		}
+	}
+	return false
 }
 
 func isN64ROMExtension(ext string) bool {

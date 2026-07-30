@@ -93,7 +93,7 @@ func IsDOSReady(launch domain.DOSLaunch) bool {
 
 func CatalogRole(game domain.GameAsset, dosLaunch *domain.DOSLaunch) string {
 	role := strings.ToLower(strings.TrimSpace(game.CatalogRole))
-	if role == RoleDependency || isKnownDependency(game.FilePath) {
+	if role == RoleDependency || IsKnownDependencyFile(game.FilePath) {
 		return RoleDependency
 	}
 	platform := strings.ToLower(strings.TrimSpace(game.Platform))
@@ -109,12 +109,17 @@ func CatalogRole(game domain.GameAsset, dosLaunch *domain.DOSLaunch) string {
 		}
 		return RoleNeedsCuration
 	}
+	if role == RoleNeedsCuration {
+		return RoleNeedsCuration
+	}
 	return RoleGame
 }
 
-func isKnownDependency(path string) bool {
+func IsKnownDependencyFile(path string) bool {
 	switch strings.ToLower(filepath.Base(strings.TrimSpace(path))) {
-	case "neogeo.zip", "segabill.zip", "ym2413_instruments.zip":
+	case "neogeo.zip", "segabill.zip", "ym2413_instruments.zip",
+		"qsound.zip", "qsound_hle.zip", "dl-1425.bin",
+		"coh1000c.zip", "coh3002c.zip":
 		return true
 	default:
 		return false

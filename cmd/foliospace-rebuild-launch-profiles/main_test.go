@@ -84,6 +84,52 @@ func TestBuildMAMEProfileUsesExactMobileRuntime(t *testing.T) {
 	}
 }
 
+func TestBuildMAMEProfileAcceptsAuditedSelfContainedClone(t *testing.T) {
+	cloneROM := []byte("clone-rom")
+	sharedROM := []byte("shared-rom")
+	biosROM := []byte("bios-rom")
+	dir := t.TempDir()
+	clonePath := filepath.Join(dir, "clone.zip")
+	writeMAMETestArchive(t, clonePath, map[string][]byte{"clone.bin": cloneROM, "shared.bin": sharedROM})
+	biosPath := filepath.Join(dir, "bios.zip")
+	writeMAMETestArchive(t, biosPath, map[string][]byte{"bios.bin": biosROM})
+	cloneInfo, _ := os.Stat(clonePath)
+	biosInfo, _ := os.Stat(biosPath)
+	parent := launchprofile.MAMEMachine{
+		Name: "parent", Runnable: true, DeviceRefs: []string{"bios"},
+		ROMs: []launchprofile.MAMEROM{
+			{Name: "parent-region.bin", Size: 6, CRC: "00000001"},
+			{Name: "shared.bin", Size: int64(len(sharedROM)), CRC: fmt.Sprintf("%08x", crc32.ChecksumIEEE(sharedROM))},
+		},
+	}
+	clone := launchprofile.MAMEMachine{
+		Name: "clone", CloneOf: "parent", ROMOf: "parent", Runnable: true,
+		ROMs: []launchprofile.MAMEROM{
+			{Name: "clone.bin", Size: int64(len(cloneROM)), CRC: fmt.Sprintf("%08x", crc32.ChecksumIEEE(cloneROM))},
+			{Name: "shared.bin", Merge: "shared.bin", Size: int64(len(sharedROM)), CRC: fmt.Sprintf("%08x", crc32.ChecksumIEEE(sharedROM))},
+		},
+	}
+	bios := launchprofile.MAMEMachine{
+		Name: "bios", IsDevice: true, Runnable: false,
+		ROMs: []launchprofile.MAMEROM{{Name: "bios.bin", Size: int64(len(biosROM)), CRC: fmt.Sprintf("%08x", crc32.ChecksumIEEE(biosROM))}},
+	}
+	catalog := launchprofile.MAMECatalog{
+		Build: "0.288 (mame0288)", SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Revision: 288, Machines: map[string]launchprofile.MAMEMachine{"clone": clone, "parent": parent, "bios": bios},
+	}
+	entry := domain.GameAsset{ID: 44, Platform: "mame", FilePath: clonePath, Size: cloneInfo.Size(), SHA1: "2123456789abcdef0123456789abcdef01234567"}
+	biosAsset := domain.GameAsset{ID: 45, Platform: "mame", FilePath: biosPath, Size: biosInfo.Size(), SHA1: "3123456789abcdef0123456789abcdef01234567"}
+	profile, err := buildMAMEProfile(catalog, clone, entry, map[string][]domain.GameAsset{
+		"clone": {entry}, "bios": {biosAsset},
+	}, defaultLaunchProfileTargets("mame")[0], launchprofile.MAMEPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.Files) != 2 || profile.Files[0].Name != "clone.zip" || profile.Files[1].Name != "bios.zip" {
+		t.Fatalf("unexpected self-contained clone profile: %+v", profile.Files)
+	}
+}
+
 func TestLaunchProfileTargetsRequireCanonicalIdentityAndExactFBNeoHash(t *testing.T) {
 	document := launchProfileTargetDocument{Targets: []launchProfileTarget{
 		{

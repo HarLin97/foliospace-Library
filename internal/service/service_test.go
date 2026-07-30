@@ -138,6 +138,69 @@ func TestOpenN64ZIPGameStreamsRawROMEntry(t *testing.T) {
 	}
 }
 
+func TestOpenConsoleZIPGameStreamsInnerROM(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "sf2.zip")
+	romName := "Street Fighter II (U)(1992)(Capcom).sfc"
+	rom := []byte("snes-rom-body")
+	if err := makeZipBytesAt(zipPath, map[string][]byte{
+		"README.txt": []byte("notes"),
+		romName:      rom,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("SNES", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Street Fighter II", Platform: "snes", ROMSetName: "SNES", Format: "sfc",
+		FilePath: zipPath, RelPath: romName, Size: int64(len(rom)), MTime: time.Now(),
+		EmulatorHint: "snes9x", Compatibility: "untested", CatalogRole: "game",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{{
+		Name: romName, FilePath: zipPath, Size: int64(len(rom)), MTime: time.Now(), Role: "entry", Position: 0,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := New(st).OpenGameFile(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	got, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, rom) {
+		t.Fatalf("OpenGameFile returned %x, want raw ROM %x", got, rom)
+	}
+
+	part, file, err := New(st).OpenGameFilePart(game.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer part.Body.Close()
+	gotPart, err := io.ReadAll(part.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Name != romName || !bytes.Equal(gotPart, rom) {
+		t.Fatalf("OpenGameFilePart file=%#v data=%x, want raw inner ROM", file, gotPart)
+	}
+}
+
 func TestBookShelvesSkipMissingOrModifiedFiles(t *testing.T) {
 	root := t.TempDir()
 	validPath := filepath.Join(root, "valid.cbz")

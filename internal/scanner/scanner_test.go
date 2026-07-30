@@ -2761,9 +2761,9 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 		{relPath: "FBNeo/arcade/mslug.zip", want: "neogeo"},
 		{relPath: "FBNeo/arcade/shinobi3.zip", want: "md"},
 		{relPath: "FBNeo/arcade/wof.zip", want: "arcade"},
-		{relPath: "CPS1 CPS2 CPS3/sf2.zip", want: "cps1"},
-		{relPath: "CPS1 CPS2 CPS3/sfa.zip", want: "cps2"},
-		{relPath: "CPS1 CPS2 CPS3/sfiii.zip", want: "cps3"},
+		{relPath: "CPS1 CPS2 CPS3/sf2.zip", want: "mame"},
+		{relPath: "CPS1 CPS2 CPS3/sfa.zip", want: "mame"},
+		{relPath: "CPS1 CPS2 CPS3/sfiii.zip", want: "mame"},
 		{relPath: "CPS1 CPS2 CPS3/sf2hack.zip", want: "mame"},
 		{relPath: "FBNeo/arcade/hypreact.zip", want: "mame"},
 		{relPath: "FBNeo/arcade/hypreac2.zip", want: "mame"},
@@ -2819,6 +2819,124 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 	}
 }
 
+func TestScanLibraryUsesZIPContentBeforeArcadeShortName(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "FBNeo", "snes", "sf2.zip")
+	romName := "Street Fighter II (U)(1992)(Capcom).sfc"
+	romBody := "snes-rom-body"
+	makeZip(t, path, map[string]string{
+		romName:              romBody,
+		"__MACOSX/._sf2.sfc": "ignored",
+		"README.txt":         "metadata",
+	})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("GameROMS", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 1 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want one SNES archive indexed", job)
+	}
+	game, err := st.GameByPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if game.Platform != "snes" || game.Format != "sfc" || game.EmulatorHint != "snes9x" || game.ROMSetName != "SNES" || game.CatalogRole != "game" || game.Size != int64(len(romBody)) {
+		t.Fatalf("game = %#v, want content-classified SNES ROM", game)
+	}
+	if game.Title != "Street Fighter II" {
+		t.Fatalf("title = %q, want normalized inner ROM title", game.Title)
+	}
+	files, err := st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Name != romName || files[0].Size != int64(len(romBody)) || files[0].SHA1 == "" {
+		t.Fatalf("files = %#v, want one checksummed inner ROM", files)
+	}
+
+	stale := game
+	stale.Platform = "cps1"
+	stale.Format = "zip"
+	stale.ROMSetName = "sf2"
+	stale.EmulatorHint = "mame"
+	stale.CatalogRole = "needs-curation"
+	if _, err := st.UpsertGame(stale); err != nil {
+		t.Fatal(err)
+	}
+	secondJob, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.IndexedFiles != 1 || secondJob.SkippedFiles != 0 || secondJob.ErrorCount != 0 {
+		t.Fatalf("second job = %#v, want unchanged stale record reclassified", secondJob)
+	}
+	repaired, err := st.GameByPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repaired.ID != game.ID || repaired.Platform != "snes" || repaired.Format != "sfc" || repaired.EmulatorHint != "snes9x" {
+		t.Fatalf("repaired = %#v, want same ID with SNES metadata", repaired)
+	}
+}
+
+func TestInspectConsoleROMZIPRecognizesCartridgeFormats(t *testing.T) {
+	tests := []struct {
+		name       string
+		entry      string
+		body       []byte
+		platform   string
+		format     string
+		emulator   string
+		romSetName string
+	}{
+		{name: "SNES", entry: "game.smc", body: []byte("rom"), platform: "snes", format: "smc", emulator: "snes9x", romSetName: "SNES"},
+		{name: "NES", entry: "game.nes", body: []byte("rom"), platform: "nes", format: "nes", emulator: "nestopia", romSetName: "NES"},
+		{name: "Game Boy", entry: "game.gb", body: []byte("rom"), platform: "gb", format: "gb", emulator: "gambatte", romSetName: "GB"},
+		{name: "Game Boy Color", entry: "game.gbc", body: []byte("rom"), platform: "gbc", format: "gbc", emulator: "gambatte", romSetName: "GBC"},
+		{name: "Game Boy Advance", entry: "game.gba", body: []byte("rom"), platform: "gba", format: "gba", emulator: "mgba", romSetName: "GBA"},
+		{name: "Mega Drive MD", entry: "game.md", body: []byte("rom"), platform: "md", format: "md", emulator: "genesisplusgx", romSetName: "Mega Drive"},
+		{name: "Mega Drive GEN", entry: "game.gen", body: []byte("rom"), platform: "md", format: "gen", emulator: "genesisplusgx", romSetName: "Mega Drive"},
+	}
+	megaDriveBIN := make([]byte, 0x200)
+	copy(megaDriveBIN[0x100:], []byte("SEGA"))
+	tests = append(tests, struct {
+		name       string
+		entry      string
+		body       []byte
+		platform   string
+		format     string
+		emulator   string
+		romSetName string
+	}{name: "Mega Drive BIN", entry: "game.bin", body: megaDriveBIN, platform: "md", format: "bin", emulator: "genesisplusgx", romSetName: "Mega Drive"})
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "rom.zip")
+			makeZip(t, path, map[string]string{test.entry: string(test.body)})
+			rom, detected, err := inspectConsoleROMZIP(path, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			romSetName, emulator := consolePlatformMetadata(rom.platform)
+			if !detected || !rom.definitive || rom.platform != test.platform || rom.format != test.format || emulator != test.emulator || romSetName != test.romSetName || rom.checksums.sha1 == "" {
+				t.Fatalf("rom = %#v detected=%v metadata=%q/%q", rom, detected, romSetName, emulator)
+			}
+		})
+	}
+}
+
 func TestScanLibraryCanonicalizesCPSAndMAMECatalog(t *testing.T) {
 	root := t.TempDir()
 	cpsDir := filepath.Join(root, "CPS1 CPS2 CPS3")
@@ -2858,9 +2976,9 @@ func TestScanLibraryCanonicalizesCPSAndMAMECatalog(t *testing.T) {
 		emulator string
 		role     string
 	}{
-		"sf2":        {platform: "cps1", romSet: "sf2", emulator: "fbneo", role: "needs-curation"},
-		"sfa":        {platform: "cps2", romSet: "sfa", emulator: "fbneo", role: "needs-curation"},
-		"sfiii":      {platform: "cps3", romSet: "sfiii", emulator: "fbneo", role: "needs-curation"},
+		"sf2":        {platform: "mame", romSet: "sf2", emulator: "mame", role: "needs-curation"},
+		"sfa":        {platform: "mame", romSet: "sfa", emulator: "mame", role: "needs-curation"},
+		"sfiii":      {platform: "mame", romSet: "sfiii", emulator: "mame", role: "needs-curation"},
 		"hypreact":   {platform: "mame", romSet: "hypreact", emulator: "mame", role: "needs-curation"},
 		"dependency": {platform: "mame", romSet: "ym2413_instruments", emulator: "mame", role: "dependency"},
 	}
@@ -2884,8 +3002,8 @@ func TestScanLibraryCanonicalizesCPSAndMAMECatalog(t *testing.T) {
 	for _, facet := range facets.Platforms {
 		counts[facet.Platform] = facet.Count
 	}
-	if facets.Total != 4 || counts["cps1"] != 1 || counts["cps2"] != 1 || counts["cps3"] != 1 || counts["mame"] != 1 {
-		t.Fatalf("facets = %#v, want one launchable game in each CPS family and MAME", facets)
+	if facets.Total != 4 || counts["mame"] != 4 {
+		t.Fatalf("facets = %#v, want four unaudited MAME candidates", facets)
 	}
 
 	legacyCPS := games["sf2"]

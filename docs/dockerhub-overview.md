@@ -4,6 +4,19 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.992 Release: Manifest Stability and Progressive Loading
+
+Release `0.992` stabilizes game delivery and reduces startup work on large self-hosted libraries.
+
+- Manifest-first game delivery remains the compatible default for existing and mobile clients; launch-profile resolution is explicitly capability-gated.
+- Arcade manifests include audited parent, BIOS, device, QSound, and Capcom ZN dependencies when required.
+- ZIP contents take precedence over filename guesses, preventing cartridge ROMs inside ZIP archives from being published as similarly named CPS/MAME sets.
+- Self-contained MAME clones can satisfy merged parent ROM requirements from their own archive.
+- Game searches prioritize launchable entries over same-name records that still require curation.
+- The Game Curation Center batches status queries, eliminating per-item SQLite reads on large pages.
+- The web home screen progressively loads first-screen sections, pages collections, defers maintenance data, and polls only active scan state.
+- Existing Client API response shapes remain backward compatible. Service, Client API, Web, and MCP metadata report version `0.992`.
+
 ## 0.991 Release: CPS Catalog Filter Hotfix
 
 Release `0.991` fixes CPS platform browsing in the web game catalog while preserving existing Client API behavior.
@@ -220,7 +233,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.991
+docker pull funland/foliospace-library:0.992
 ```
 
 ```bash
@@ -230,7 +243,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.991
+  funland/foliospace-library:0.992
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

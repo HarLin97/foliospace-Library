@@ -288,7 +288,12 @@ func buildMAMEProfile(catalog launchprofile.MAMECatalog, machine launchprofile.M
 	if err != nil {
 		return domain.GameLaunchProfile{}, err
 	}
+	selfContainedClone := machine.CloneOf != "" && machine.ROMOf == machine.CloneOf &&
+		launchprofile.ValidateMAMESelfContainedArchive(entry.FilePath, machine) == nil
 	for _, dependency := range dependencies {
+		if selfContainedClone && dependency.Name == machine.ROMOf {
+			continue
+		}
 		source, err := selectMAMEDependencySource(entry, dependency, bySet[dependency.Name])
 		if err != nil {
 			return domain.GameLaunchProfile{}, err
@@ -375,8 +380,7 @@ func eligibleFBNeoCandidate(game domain.GameAsset) bool {
 
 func isKnownDependency(game domain.GameAsset) bool {
 	return strings.EqualFold(strings.TrimSpace(game.CatalogRole), launchcatalog.RoleDependency) ||
-		canonicalSetName(game.FilePath) == "neogeo" || canonicalSetName(game.FilePath) == "segabill" ||
-		canonicalSetName(game.FilePath) == "ym2413_instruments"
+		launchcatalog.IsKnownDependencyFile(game.FilePath)
 }
 
 func validContainerIdentity(game domain.GameAsset) bool {

@@ -309,10 +309,20 @@ func normalizeMAMEMachine(parsed mameMachineXML) (MAMEMachine, error) {
 }
 
 func (m MAMEMachine) RequiredROMs() []MAMEROM {
+	return m.requiredROMs(false)
+}
+
+// RequiredSelfContainedROMs includes merged parent ROMs. A clone archive that
+// satisfies this set can run without shipping the parent archive separately.
+func (m MAMEMachine) RequiredSelfContainedROMs() []MAMEROM {
+	return m.requiredROMs(true)
+}
+
+func (m MAMEMachine) requiredROMs(includeMerged bool) []MAMEROM {
 	defaultBIOS := m.defaultBIOS()
 	required := make([]MAMEROM, 0, len(m.ROMs))
 	for _, rom := range m.ROMs {
-		if strings.TrimSpace(rom.Merge) != "" || rom.Optional || strings.EqualFold(rom.Status, "nodump") ||
+		if (!includeMerged && strings.TrimSpace(rom.Merge) != "") || rom.Optional || strings.EqualFold(rom.Status, "nodump") ||
 			strings.TrimSpace(rom.Name) == "" || rom.Size <= 0 || strings.TrimSpace(rom.CRC) == "" {
 			continue
 		}
@@ -398,6 +408,17 @@ func (c MAMECatalog) Dependencies(setName string) ([]MAMEMachine, error) {
 }
 
 func ValidateMAMEArchive(path string, machine MAMEMachine) error {
+	return validateMAMEArchiveROMs(path, machine, machine.RequiredROMs())
+}
+
+// ValidateMAMESelfContainedArchive verifies a non-merged clone package. It is
+// stricter than the normal split-set audit because merged parent ROMs must also
+// be present in the clone archive.
+func ValidateMAMESelfContainedArchive(path string, machine MAMEMachine) error {
+	return validateMAMEArchiveROMs(path, machine, machine.RequiredSelfContainedROMs())
+}
+
+func validateMAMEArchiveROMs(path string, machine MAMEMachine, requiredROMs []MAMEROM) error {
 	if disks := machine.RequiredDisks(); len(disks) > 0 {
 		return fmt.Errorf("%s requires %d CHD disk image(s), which ZIP-only audit cannot satisfy", machine.Name, len(disks))
 	}
@@ -412,7 +433,7 @@ func ValidateMAMEArchive(path string, machine MAMEMachine) error {
 		entries[strings.ToLower(filepath.Base(strings.ReplaceAll(file.Name, "\\", "/")))] = file
 		entriesByFingerprint[mameROMFingerprint(int64(file.UncompressedSize64), file.CRC32)] = file
 	}
-	for _, rom := range machine.RequiredROMs() {
+	for _, rom := range requiredROMs {
 		entry := entries[strings.ToLower(filepath.Base(strings.ReplaceAll(rom.Name, "\\", "/")))]
 		if entry == nil {
 			entry = entriesByFingerprint[mameROMFingerprint(rom.Size, parseMAMECRC(rom.CRC))]

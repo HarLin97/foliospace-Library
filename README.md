@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.991`.
+Current release branch: `0.992`.
 
 ## Screenshots
 
@@ -228,6 +228,19 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.992
+
+Release `0.992` stabilizes game delivery and improves responsiveness on large NAS libraries:
+
+- Game clients use the established manifest-first flow by default; the optional launch resolver remains capability-gated so older and mobile clients keep a safe fallback path.
+- Legacy manifests include required parent, BIOS, and device dependencies for audited arcade games, including Capcom QSound and ZN packages.
+- ZIP classification inspects archive contents before filename short-name guesses, preventing SNES, NES, Game Boy, GBA, and Mega Drive ROMs from being misclassified as CPS/MAME games.
+- Self-contained MAME clone sets can validate merged parent ROM content without requiring a separate parent archive.
+- Search results prefer launchable catalog games over same-name `needs-curation` records.
+- The Game Curation Center batches metadata, artwork, profile, file, and checksum status queries instead of issuing per-game database reads.
+- The web home screen loads core sections progressively, pages collections on the server, fetches maintenance data on demand, and refreshes only scan state while a job is running.
+- Existing Client API response shapes remain backward compatible, and Service, Client API, Web, and MCP metadata report version `0.992`.
+
 ## Release 0.991
 
 Release `0.991` is a focused web catalog hotfix for CPS libraries:
@@ -365,7 +378,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.991 ./scripts/build-mcp-release.sh
+VERSION=0.992 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -385,10 +398,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.991` image tag:
+Release `0.992` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.991
+docker pull funland/foliospace-library:0.992
 ```
 
 For local verification:
@@ -407,7 +420,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.991
+  funland/foliospace-library:0.992
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -422,11 +435,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.991
-git push github v0.991
+git tag v0.992
+git push github v0.992
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.991` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.992` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

@@ -236,6 +236,16 @@ export type ClientPreferences = {
   epubFontSize: number;
 };
 
+export type ClientHome = {
+  continueReading: Book[];
+  recentBooks: Book[];
+  favoriteBooks: Book[];
+  wantToRead: Book[];
+  gameShelf: GameAsset[];
+  videoShelf: VideoAsset[];
+  collections: Series[];
+};
+
 export type BookListPage = {
   items: Book[];
   total: number;
@@ -668,7 +678,7 @@ export const api = {
       body: JSON.stringify(input),
     }),
   directoryRoots: () => request<{ roots: DirectoryEntry[] }>("/api/config/directory-roots"),
-  profiles: () => request<Profile[]>("/api/profiles"),
+  profiles: (options?: RequestOptions) => request<Profile[]>("/api/profiles", options),
   createProfile: (name: string, avatar?: string, color?: string) =>
     request<Profile>("/api/profiles", {
       method: "POST",
@@ -685,7 +695,7 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
   deleteProfile: (profileId: number) => request<{ ok: boolean }>(`/api/profiles/${profileId}`, { method: "DELETE" }),
-  scanSettings: () => request<ScanSettings>("/api/settings/scan"),
+  scanSettings: (options?: RequestOptions) => request<ScanSettings>("/api/settings/scan", options),
   saveScanSettings: (settings: ScanSettings) =>
     request<ScanSettings>("/api/settings/scan", {
       method: "PUT",
@@ -737,14 +747,15 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(metadata),
     }),
-  clientPreferences: () => request<ClientPreferences>("/api/client/preferences"),
+  clientPreferences: (options?: RequestOptions) => request<ClientPreferences>("/api/client/preferences", options),
   saveClientPreferences: (preferences: ClientPreferences) =>
     request<ClientPreferences>("/api/client/preferences", {
       method: "PUT",
       body: JSON.stringify(preferences),
     }),
-  clientInfo: () => request<ClientInfo>("/api/client/info"),
-  libraries: () => request<Library[]>("/api/libraries"),
+  clientInfo: (options?: RequestOptions) => request<ClientInfo>("/api/client/info", options),
+  clientHome: (limit = 12, options?: RequestOptions) => request<ClientHome>(`/api/client/home?limit=${limit}`, options),
+  libraries: (options?: RequestOptions) => request<Library[]>("/api/libraries", options),
   createLibrary: (name: string, rootPath: string, assetType = "mixed", excludePatterns: string[] = []) =>
     request<Library>("/api/libraries", {
       method: "POST",
@@ -778,8 +789,8 @@ export const api = {
   resumeThumbnailWorker: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/resume", { method: "POST" }),
   cancelThumbnailJobs: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/cancel", { method: "POST" }),
   cleanupThumbnailOrphans: () => request<ThumbnailWorkerStatus>("/api/thumbnail-worker/cleanup-orphans", { method: "POST" }),
-  series: () => request<Series[]>("/api/collections"),
-  collectionsPage: (options: CollectionListOptions = {}) => {
+  series: (options?: RequestOptions) => request<Series[]>("/api/collections", options),
+  collectionsPage: (options: CollectionListOptions = {}, requestOptions?: RequestOptions) => {
     const params = new URLSearchParams();
     if (options.limit) params.set("limit", String(options.limit));
     if (options.offset) params.set("offset", String(options.offset));
@@ -787,7 +798,7 @@ export const api = {
     if (options.primaryType) params.set("primaryType", options.primaryType);
     if (options.sort) params.set("sort", options.sort);
     if (options.direction) params.set("direction", options.direction);
-    return request<CollectionListPage>(`/api/collections?${params.toString()}`);
+    return request<CollectionListPage>(`/api/collections?${params.toString()}`, requestOptions);
   },
   books: (seriesId: number) => request<Book[]>(`/api/collections/${seriesId}/volumes`),
   collectionAssets: (seriesId: number) => request<CollectionAssets>(`/api/collections/${seriesId}/assets`),
@@ -827,7 +838,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(state),
     }),
-  manualCollections: () => request<ManualCollection[]>("/api/client/manual-collections"),
+  manualCollections: (options?: RequestOptions) => request<ManualCollection[]>("/api/client/manual-collections", options),
   createManualCollection: (payload: Pick<ManualCollection, "name"> & Partial<Pick<ManualCollection, "description">>) =>
     request<ManualCollection>("/api/client/manual-collections", {
       method: "POST",
@@ -861,12 +872,12 @@ export const api = {
     request<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`),
   pages: (bookId: number) => request<Page[]>(`/api/books/${bookId}/pages`),
   epubManifest: (bookId: number) => request<EpubManifest>(`/api/books/${bookId}/epub/manifest`),
-  jobs: () => request<ScanJob[]>("/api/jobs"),
+  jobs: (options?: RequestOptions) => request<ScanJob[]>("/api/jobs", options),
   jobEvents: (jobId: number) => request<JobEvent[]>(`/api/jobs/${jobId}/events`),
   pauseJob: (jobId: number) => request<ScanJob>(`/api/jobs/${jobId}/pause`, { method: "POST" }),
   cancelJob: (jobId: number) => request<ScanJob>(`/api/jobs/${jobId}/cancel`, { method: "POST" }),
   resumeJob: (jobId: number) => request<ScanJob>(`/api/jobs/${jobId}/resume`, { method: "POST" }),
-  errors: () => request<FileError[]>("/api/errors"),
+  errors: (options?: RequestOptions) => request<FileError[]>("/api/errors", options),
   jobErrors: (jobId: number) => request<FileError[]>(`/api/errors?jobId=${jobId}`),
   readProgress: (bookId: number) => request<ReadProgress>(`/api/books/${bookId}/progress`),
   readingPositions: (bookId: number) => request<ReadingPositions>(`/api/books/${bookId}/reading-position`),

@@ -1059,6 +1059,34 @@ func TestStoreListsGamesPageWithFiltersAndSort(t *testing.T) {
 	}
 }
 
+func TestStoreSearchPrefersReadyGameOverNeedsCurationDuplicate(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, game := range []domain.GameAsset{
+		{LibraryID: lib.ID, Title: "sf2", Platform: "snes", Format: "sfc", FilePath: "/library/snes/sf2.zip", RelPath: "snes/sf2.sfc", MTime: time.Unix(1, 0), CatalogRole: "needs-curation"},
+		{LibraryID: lib.ID, Title: "sf2", Platform: "cps1", Format: "zip", FilePath: "/library/arcade/sf2.zip", RelPath: "arcade/sf2.zip", MTime: time.Unix(2, 0), CatalogRole: "game"},
+	} {
+		if _, err := s.UpsertGame(game); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.ListGamesPage(domain.GameListOptions{Query: "sf2", Sort: "title", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 || page.Items[0].CatalogRole != "game" || page.Items[0].Platform != "cps1" || page.Items[1].CatalogRole != "needs-curation" {
+		t.Fatalf("search page = %#v, want audited game before needs-curation duplicate", page)
+	}
+}
+
 func TestStoreClientCatalogSeparatesDiscoveryFromLaunchReadiness(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
@@ -1183,6 +1211,56 @@ func TestStoreListsPlayedGamesByProfileAndPlaytime(t *testing.T) {
 	}
 	if guestPage.Total != 1 || len(guestPage.Items) != 1 || guestPage.Items[0].Game.ID != first.ID || guestPage.Items[0].Stats.TotalPlaySeconds != 300 {
 		t.Fatalf("guest played page = %#v", guestPage)
+	}
+}
+
+func TestStoreLoadsGameCurationStatsInBulk(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready, err := s.UpsertGame(domain.GameAsset{LibraryID: lib.ID, Title: "Ready", Platform: "snes", Format: "zip", FilePath: "/library/ready.zip", RelPath: "ready.zip", MTime: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := s.UpsertGame(domain.GameAsset{LibraryID: lib.ID, Title: "Pending", Platform: "arcade", Format: "zip", FilePath: "/library/pending.zip", RelPath: "pending.zip", MTime: time.Unix(2, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertGameMetadata(domain.GameMetadata{GameID: ready.ID, DisplayTitle: "Ready Game"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertGameArtwork(domain.GameArtwork{GameID: ready.ID, Source: "local", Kind: "cover", CachePath: "/covers/ready.jpg", Selected: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceGameFiles(ready.ID, []domain.GameFile{{GameID: ready.ID, Name: "ready.zip", FilePath: "/library/ready.zip", Size: 100, MTime: time.Unix(1, 0), SHA1: "0123456789abcdef0123456789abcdef01234567", Role: "entry"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceGameFiles(pending.ID, []domain.GameFile{{GameID: pending.ID, Name: "pending.zip", FilePath: "/library/pending.zip", Size: 200, MTime: time.Unix(2, 0), Role: "entry"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReplaceGameLaunchProfiles("test", []domain.GameLaunchProfile{{
+		GameID: ready.ID, ID: "ready-profile", Revision: 1, Policy: "test", ClientName: "GameEMU", ClientPlatform: "ios", Architecture: "arm64",
+		Runtime: domain.GameRuntimeDescriptor{ID: "snes9x"}, EntryFile: "ready.zip", Status: "ready",
+	}}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := s.GameCurationStats([]int64{ready.ID, pending.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stats[ready.ID]; got.MetadataStatus != "matched" || got.ArtworkStatus != "ready" || got.ReadyProfiles != 1 || got.FileCount != 1 || got.Checksummed != 1 {
+		t.Fatalf("ready stats = %#v", got)
+	}
+	if got := stats[pending.ID]; got.MetadataStatus != "unmatched" || got.ArtworkStatus != "missing" || got.ReadyProfiles != 0 || got.FileCount != 1 || got.Checksummed != 0 {
+		t.Fatalf("pending stats = %#v", got)
 	}
 }
 
