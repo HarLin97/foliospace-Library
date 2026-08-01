@@ -465,7 +465,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		APIVersion:     "v1",
 		SupportedFormats: []string{
 			"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm",
-			"nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64",
+			"nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64",
 			"gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat",
 			"d88", "88d", "d98", "98d", "fdi", "xdf", "hdm", "dup", "2hd", "tfd", "nfd", "hd4", "hd5", "hd9", "fdd",
 			"h01", "hdb", "ddb", "dd6", "dcp", "dcu", "flp", "img", "ima", "fim", "thd", "nhd", "hdi", "vhd", "slh", "hdn", "cmd",
@@ -2770,7 +2770,7 @@ func clientPlayedGameItem(item domain.PlayedGame) clientPlayedGame {
 
 func clientGameItem(game domain.GameAsset) clientGame {
 	inputProfile := ""
-	if strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") || strings.EqualFold(game.Platform, "dos") || strings.EqualFold(game.Platform, "psp") || strings.EqualFold(game.Platform, "ngc") || strings.EqualFold(game.Platform, "ps2") {
+	if strings.EqualFold(game.Platform, "virtualboy") || strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") || strings.EqualFold(game.Platform, "dos") || strings.EqualFold(game.Platform, "psp") || strings.EqualFold(game.Platform, "ngc") || strings.EqualFold(game.Platform, "ps2") {
 		inputProfile = "standard"
 	} else if (strings.EqualFold(game.Platform, "model2") || strings.EqualFold(game.Platform, "naomi2")) && !strings.EqualFold(game.CatalogRole, "dependency") {
 		inputProfile = "operatorArcade"

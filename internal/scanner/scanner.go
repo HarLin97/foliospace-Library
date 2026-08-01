@@ -1255,7 +1255,7 @@ func isGamePackageExt(ext string) bool {
 
 func isGameExt(ext string) bool {
 	switch ext {
-	case ".nes", ".sfc", ".smc", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".z64", ".v64", ".n64", ".gdi", ".cdi", ".chd", ".iso", ".bin", ".cue", ".ccd", ".toc", ".m3u", ".img", ".pbp", ".cso", ".gcm", ".rvz":
+	case ".nes", ".sfc", ".smc", ".vb", ".vboy", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".z64", ".v64", ".n64", ".gdi", ".cdi", ".chd", ".iso", ".bin", ".cue", ".ccd", ".toc", ".m3u", ".img", ".pbp", ".cso", ".gcm", ".rvz":
 		return true
 	default:
 		return false
@@ -1458,6 +1458,10 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 			catalogRole = "dependency"
 			compatibility = "unknown"
 		}
+	} else if platform == "virtualboy" {
+		romSetName = "Virtual Boy"
+		emulatorHint = "virtualfriend"
+		compatibility = "untested"
 	} else if platform == "psp" {
 		romSetName = "PSP"
 		emulatorHint = "ppsspp"
@@ -2506,6 +2510,8 @@ func inspectConsoleROMZIP(path string, withChecksums bool) (consoleROMInfo, bool
 
 func consolePlatformForROMExtension(ext string) (platform string, format string, ok bool) {
 	switch strings.ToLower(strings.TrimSpace(ext)) {
+	case ".vb", ".vboy":
+		return "virtualboy", strings.TrimPrefix(strings.ToLower(ext), "."), true
 	case ".sfc", ".smc":
 		return "snes", strings.TrimPrefix(strings.ToLower(ext), "."), true
 	case ".nes":
@@ -2525,6 +2531,8 @@ func consolePlatformForROMExtension(ext string) (platform string, format string,
 
 func consolePlatformMetadata(platform string) (romSetName string, emulatorHint string) {
 	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "virtualboy":
+		return "Virtual Boy", "virtualfriend"
 	case "snes":
 		return "SNES", "snes9x"
 	case "nes":
@@ -4449,6 +4457,8 @@ func inferGamePlatform(ext string, relPath string) string {
 		switch part {
 		case "snes", "sfc", "super nintendo":
 			return "snes"
+		case "virtualboy", "virtual boy", "virtual-boy", "nintendo virtual boy":
+			return "virtualboy"
 		case "n64", "nintendo64", "nintendo 64":
 			return "n64"
 		case "psp", "playstation portable":
@@ -4502,6 +4512,8 @@ func inferGamePlatform(ext string, relPath string) string {
 		}
 	}
 	switch ext {
+	case ".vb", ".vboy":
+		return "virtualboy"
 	case ".gdi", ".cdi":
 		return "dreamcast"
 	case ".z64", ".v64", ".n64":
@@ -4551,6 +4563,10 @@ func inferLibraryGamePlatform(library domain.Library, ext string, relPath string
 	}
 	for _, value := range []string{library.Name, filepath.Base(filepath.Clean(library.RootPath))} {
 		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "virtualboy", "virtual boy", "virtual-boy", "nintendo virtual boy":
+			if ext == ".zip" || ext == ".vb" || ext == ".vboy" || ext == ".bin" {
+				return "virtualboy"
+			}
 		case "psp", "playstation portable":
 			return "psp"
 		case "ngc", "gamecube", "game cube", "nintendo gamecube", "nintendo game cube":

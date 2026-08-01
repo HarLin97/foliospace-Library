@@ -1593,7 +1593,7 @@ func isZippedConsoleROM(game domain.GameAsset) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(game.Platform)) {
-	case "snes", "nes", "gb", "gbc", "gba", "md":
+	case "virtualboy", "snes", "nes", "gb", "gbc", "gba", "md":
 		return isConsoleROMFormat(game.Format)
 	default:
 		return false
@@ -1602,7 +1602,7 @@ func isZippedConsoleROM(game domain.GameAsset) bool {
 
 func isConsoleROMFormat(format string) bool {
 	switch strings.ToLower(strings.TrimPrefix(strings.TrimSpace(format), ".")) {
-	case "sfc", "smc", "nes", "gb", "gbc", "gba", "md", "gen", "bin":
+	case "vb", "vboy", "sfc", "smc", "nes", "gb", "gbc", "gba", "md", "gen", "bin":
 		return true
 	default:
 		return false
@@ -2211,6 +2211,8 @@ func libretroPlaylist(platform string) (string, bool) {
 		return "Nintendo - Nintendo Entertainment System", true
 	case "snes":
 		return "Nintendo - Super Nintendo Entertainment System", true
+	case "virtualboy", "virtual-boy", "virtual boy":
+		return "Nintendo - Virtual Boy", true
 	case "n64", "nintendo64", "nintendo 64":
 		return "Nintendo - Nintendo 64", true
 	case "gb":

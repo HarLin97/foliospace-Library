@@ -201,6 +201,53 @@ func TestOpenConsoleZIPGameStreamsInnerROM(t *testing.T) {
 	}
 }
 
+func TestOpenVirtualBoyZIPGameStreamsInnerROM(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "3-D Tetris (USA).zip")
+	romName := "3-D Tetris (USA).vb"
+	rom := []byte("virtual-boy-rom")
+	if err := makeZipBytesAt(zipPath, map[string][]byte{romName: rom}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("VirtualBoy", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "3-D Tetris", Platform: "virtualboy", ROMSetName: "Virtual Boy", Format: "vb",
+		FilePath: zipPath, RelPath: romName, Size: int64(len(rom)), MTime: time.Now(),
+		EmulatorHint: "virtualfriend", Compatibility: "untested", CatalogRole: "game",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{{
+		Name: romName, FilePath: zipPath, Size: int64(len(rom)), MTime: time.Now(), Role: "entry", Position: 0,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := New(st).OpenGameFile(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	got, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, rom) {
+		t.Fatalf("OpenGameFile returned %x, want Virtual Boy ROM %x", got, rom)
+	}
+}
+
 func TestBookShelvesSkipMissingOrModifiedFiles(t *testing.T) {
 	root := t.TempDir()
 	validPath := filepath.Join(root, "valid.cbz")

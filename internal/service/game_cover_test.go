@@ -151,6 +151,23 @@ func TestLibretroArtworkCandidatesPreferListingExactMatch(t *testing.T) {
 	}
 }
 
+func TestLibretroArtworkCandidatesSupportVirtualBoy(t *testing.T) {
+	urls := libretroBoxartCandidatesFromListing(domain.GameAsset{
+		Title:    "3-D Tetris",
+		Platform: "virtualboy",
+		Region:   "USA",
+	}, []string{
+		"3-D Tetris (USA).png",
+		"Red Alarm (USA).png",
+	})
+	if len(urls) != 1 {
+		t.Fatalf("urls len = %d, want 1", len(urls))
+	}
+	if !strings.Contains(urls[0], "Nintendo%20-%20Virtual%20Boy/Named_Boxarts/3-D%20Tetris%20%28USA%29.png") {
+		t.Fatalf("url = %q, want exact Virtual Boy boxart match", urls[0])
+	}
+}
+
 func TestLibretroArtworkCandidatesUseFuzzyTagStrippedMatch(t *testing.T) {
 	urls := libretroBoxartCandidatesFromListing(domain.GameAsset{
 		Title:    "Legend of Zelda The Minish Cap",

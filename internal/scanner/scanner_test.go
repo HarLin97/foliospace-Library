@@ -2758,6 +2758,8 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 		{relPath: "FBNeo/snes/contra3.zip", want: "snes"},
 		{relPath: "FBNeo/nes/battlecity.zip", want: "nes"},
 		{relPath: "SFC/chrono-trigger.zip", want: "snes"},
+		{relPath: "VirtualBoy/3-D Tetris (USA).zip", want: "virtualboy"},
+		{relPath: "VirtualBoy/Red Alarm (USA).vb", want: "virtualboy"},
 		{relPath: "FBNeo/arcade/mslug.zip", want: "neogeo"},
 		{relPath: "FBNeo/arcade/shinobi3.zip", want: "md"},
 		{relPath: "FBNeo/arcade/wof.zip", want: "arcade"},
@@ -2812,6 +2814,10 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 	sharedGameLibrary := domain.Library{Name: "GameROMS", RootPath: "/games"}
 	if got := inferLibraryGamePlatform(sharedGameLibrary, ".zip", "NAOMI 2/vf4/vf4.zip"); got != "naomi2" {
 		t.Fatalf("inferLibraryGamePlatform(GameROMS NAOMI 2 ZIP) = %q, want naomi2", got)
+	}
+	virtualBoyLibrary := domain.Library{Name: "VirtualBoy", RootPath: "/games/VirtualBoy"}
+	if got := inferLibraryGamePlatform(virtualBoyLibrary, ".zip", "3-D Tetris (USA).zip"); got != "virtualboy" {
+		t.Fatalf("inferLibraryGamePlatform(VirtualBoy ZIP) = %q, want virtualboy", got)
 	}
 	arcadeLibrary := domain.Library{Name: "Arcade", RootPath: "/games/Arcade"}
 	if got := inferLibraryGamePlatform(arcadeLibrary, ".chd", "kinst.chd"); got != "disc" {
@@ -2891,6 +2897,53 @@ func TestScanLibraryUsesZIPContentBeforeArcadeShortName(t *testing.T) {
 	}
 }
 
+func TestScanLibraryIndexesVirtualBoyArchive(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "VirtualBoy", "3-D Tetris (USA).zip")
+	romName := "3-D Tetris (USA).vb"
+	romBody := "virtual-boy-rom"
+	makeZip(t, path, map[string]string{romName: romBody})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("GameROMS", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 1 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want one Virtual Boy archive indexed", job)
+	}
+	game, err := st.GameByPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if game.Title != "3-D Tetris" || game.Platform != "virtualboy" || game.Format != "vb" || game.ROMSetName != "Virtual Boy" || game.EmulatorHint != "virtualfriend" || game.CatalogRole != "game" {
+		t.Fatalf("game = %#v, want canonical Virtual Boy metadata", game)
+	}
+	files, err := st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Name != romName || files[0].Role != "entry" || files[0].SHA1 == "" {
+		t.Fatalf("files = %#v, want one checksummed Virtual Boy entry", files)
+	}
+	facets, err := st.ListGameFacets(domain.GameListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facets.Total != 1 || len(facets.Platforms) != 1 || facets.Platforms[0].Platform != "virtualboy" || facets.Platforms[0].Title != "Virtual Boy" || facets.Platforms[0].Count != 1 {
+		t.Fatalf("facets = %#v, want one Virtual Boy title", facets)
+	}
+}
+
 func TestInspectConsoleROMZIPRecognizesCartridgeFormats(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -2902,6 +2955,7 @@ func TestInspectConsoleROMZIPRecognizesCartridgeFormats(t *testing.T) {
 		romSetName string
 	}{
 		{name: "SNES", entry: "game.smc", body: []byte("rom"), platform: "snes", format: "smc", emulator: "snes9x", romSetName: "SNES"},
+		{name: "Virtual Boy", entry: "game.vb", body: []byte("rom"), platform: "virtualboy", format: "vb", emulator: "virtualfriend", romSetName: "Virtual Boy"},
 		{name: "NES", entry: "game.nes", body: []byte("rom"), platform: "nes", format: "nes", emulator: "nestopia", romSetName: "NES"},
 		{name: "Game Boy", entry: "game.gb", body: []byte("rom"), platform: "gb", format: "gb", emulator: "gambatte", romSetName: "GB"},
 		{name: "Game Boy Color", entry: "game.gbc", body: []byte("rom"), platform: "gbc", format: "gbc", emulator: "gambatte", romSetName: "GBC"},

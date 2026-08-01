@@ -3483,6 +3483,8 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "nes"
 	case GamePlatformCollectionID("snes"):
 		return "snes"
+	case GamePlatformCollectionID("virtualboy"):
+		return "virtualboy"
 	case GamePlatformCollectionID("gb"):
 		return "gb"
 	case GamePlatformCollectionID("gbc"):
@@ -3542,6 +3544,8 @@ func GamePlatformSortRank(platform string) int {
 		return 10
 	case "snes":
 		return 20
+	case "virtualboy", "virtual-boy", "virtual boy":
+		return 25
 	case "gb":
 		return 30
 	case "gbc":
@@ -3600,6 +3604,8 @@ func GamePlatformLabel(platform string) string {
 	switch value {
 	case "nes", "snes", "gb", "gbc", "gba":
 		return strings.ToUpper(value)
+	case "virtualboy", "virtual-boy", "virtual boy":
+		return "Virtual Boy"
 	case "md":
 		return "Mega Drive"
 	case "genesis", "mega-drive", "megadrive":
@@ -3699,6 +3705,8 @@ func (s *Store) CanSkipGameSet(path string, size int64, mtime time.Time, platfor
 
 func expectedGameEmulatorHint(platform string) string {
 	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "virtualboy":
+		return "virtualfriend"
 	case "pc-fx":
 		return "pcfx"
 	case "n64":

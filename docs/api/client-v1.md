@@ -249,7 +249,7 @@ Response:
   "serviceName": "FolioSpace Library",
   "serviceVersion": "0.992",
   "apiVersion": "v1",
-  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
+  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
   "capabilities": {
     "clientHome": true,
     "unifiedManifest": true,
@@ -498,7 +498,7 @@ Query:
 - `limit`: optional, default `50`, max `200`. Values above max are clamped and the response returns the actual limit.
 - `offset`: optional, default `0`.
 - `q`: optional search against `title`, archive filename/path, `romSetName`, `region`, `platform`, and `format`. A matching dependency-only package may be returned so a native client can resolve runtime files by shortname.
-- `platform`: optional exact platform filter, for example `nes`, `snes`, `n64`, `gba`, `md`, `neogeo`, `model2`, `arcade`, or `3ds`.
+- `platform`: optional exact platform filter, for example `nes`, `snes`, `virtualboy`, `n64`, `gba`, `md`, `neogeo`, `model2`, `arcade`, or `3ds`.
 - `romSetName`: optional exact ROM set filter.
 - `format`: optional exact format filter, for example `nes`, `sfc`, `gba`, `zip`, or `3ds`.
 - `sort`: optional. Supported values are `recent`, `oldest`, `title`, and `platform`. Unknown values fall back to `recent`.
@@ -596,6 +596,8 @@ New Saturn CUE scans use `platform: "saturn"`, `romSetName: "SS"`, `emulatorHint
 PC-FX scans use `platform: "pc-fx"`, `romSetName: "PC-FX"`, and `emulatorHint: "pcfx"`. CUE, CCD, TOC, CHD, and M3U files are launch entries; raw BIN/IMG/ISO tracks and `pcfx.rom` are never standalone catalog items. Adjacent `CD1`/`CD2` directories are exposed as one virtual M3U game, so facets count launchable titles rather than physical discs. Pegasus `metadata.pegasus.txt` files may provide title, description, developer, and `ignore-file` data.
 
 Nintendo 64 scans use `platform: "n64"`, `romSetName: "Nintendo 64"`, `emulatorHint: "mupen64plus"`, and `inputProfile: "standard"`. Raw `.z64`, `.v64`, and `.n64` files are validated by their byte-order header. If a legacy ROM has the wrong extension, the header remains authoritative and the catalog/download filename is normalized to the matching extension without changing the source file. A ZIP is treated as N64 only when its library/path identifies N64 and it contains exactly one valid raw ROM candidate; the catalog and download endpoint expose that raw entry's normalized filename, format, size, CRC32, SHA-1, and bytes rather than the ZIP container. ZIPs with zero or multiple candidates, unsafe paths, invalid ROM headers, or size-limit violations are reported as scan errors. Historical `nintendo64` and `nintendo 64` records are normalized to the canonical `n64` facet.
+
+Virtual Boy scans use `platform: "virtualboy"`, `romSetName: "Virtual Boy"`, `emulatorHint: "virtualfriend"`, and `inputProfile: "standard"`. Raw `.vb` and `.vboy` files are supported. A ZIP containing exactly one such ROM is indexed as one game and exposes the inner ROM name, size, checksums, and bytes through its manifest; the ZIP filename alone never overrides the inner cartridge format. Covers are matched lazily against Libretro's `Nintendo - Virtual Boy` boxart catalog and cached by FolioSpace.
 
 PSP scans use `platform: "psp"`, `romSetName: "PSP"`, `emulatorHint: "ppsspp"`, and `inputProfile: "standard"`. PSP `.iso` and `.cso` images are exposed as single-file manifests.
 

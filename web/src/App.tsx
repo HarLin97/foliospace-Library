@@ -4777,6 +4777,9 @@ function platformSortRank(platform: string) {
       return 10;
     case "snes":
       return 20;
+    case "virtualboy":
+    case "virtual-boy":
+      return 25;
     case "gb":
       return 30;
     case "gbc":
@@ -4829,6 +4832,9 @@ function gamePlatformLabel(game: GameAsset) {
   switch ((game.platform || "").toLowerCase()) {
     case "md":
       return "MEGA DRIVE";
+    case "virtualboy":
+    case "virtual-boy":
+      return "Virtual Boy";
     case "neogeo":
       return "NEO GEO";
     case "model2":
