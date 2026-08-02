@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${VERSION:-0.98}"
+VERSION="${VERSION:-0.993}"
 OUT_DIR="${OUT_DIR:-dist/releases}"
 BIN_NAME="foliospace-mcp"
 PACKAGE_PREFIX="foliospace-mcp"
@@ -69,6 +69,11 @@ $BIN_NAME
 EOF
 
   chmod +x "$work/$BIN_NAME"
+  if [ "$GOOS" = "darwin" ] && command -v codesign >/dev/null 2>&1; then
+    # Replace Go's linker signature with a stable ad-hoc signature so the
+    # extracted binary is accepted consistently across supported macOS hosts.
+    codesign --force --sign - "$work/$BIN_NAME"
+  fi
   tar -C "$OUT_ABS" -czf "$OUT_ABS/$name.tar.gz" "$name"
   rm -rf "$work"
 done <<EOF
