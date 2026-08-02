@@ -419,6 +419,63 @@ func TestOpenGameCoverPrefersSelectedArtworkCachePath(t *testing.T) {
 	}
 }
 
+func TestOpenGameCoverPrefersLocalBoxartOverSelectedNetworkArtwork(t *testing.T) {
+	root := t.TempDir()
+	romPath := filepath.Join(root, "VirtualBoy", "3-D Tetris (USA).vb")
+	localCoverPath := filepath.Join(root, "VirtualBoy", "boxart", "3D Tetris.png")
+	selectedCoverPath := filepath.Join(root, "cache", "selected.png")
+	if err := os.MkdirAll(filepath.Dir(localCoverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(selectedCoverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localCoverPath, []byte("local-cover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(selectedCoverPath, []byte("network-cover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "3-D Tetris", Platform: "virtualboy", Format: "vb",
+		FilePath: romPath, RelPath: "VirtualBoy/3-D Tetris (USA).vb", Size: 3,
+		MTime: time.Unix(22, 0), CRC32: "crc", SHA1: "sha", EmulatorHint: "virtualboy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertGameArtwork(domain.GameArtwork{
+		GameID: game.ID, Source: "libretro", Kind: "cover", CachePath: selectedCoverPath,
+		Selected: true, Confidence: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := NewWithConfig(st, t.TempDir()).OpenGameCover(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	data, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "local-cover" {
+		t.Fatalf("cover = %q, want local boxart", data)
+	}
+}
+
 func tinyPNG() []byte {
 	return []byte{
 		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,

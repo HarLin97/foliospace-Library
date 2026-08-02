@@ -247,7 +247,7 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.992",
+  "serviceVersion": "0.993",
   "apiVersion": "v1",
   "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
   "capabilities": {
@@ -581,7 +581,37 @@ The response is aggregate-only and never includes NAS paths, local file paths, o
 
 Facets contain exactly one entry per normalized `platform`. Its `count` is the number of launchable game records and therefore matches `GET /api/client/games?platform={platform}`; dependency files such as Dreamcast GDI tracks and Saturn CUE tracks never contribute to the count. When one platform contains multiple ROM-set names, formats, or emulator hints, the corresponding aggregate field is an empty string instead of producing duplicate platform rows.
 
-This is an inventory endpoint, not a declaration of every platform the server could recognize. A platform with no indexed launchable ROMs is omitted. Clients that need to show a static emulator capability catalog should own that catalog locally and use facets only for the library's available filters and counts.
+This is an inventory endpoint, not a declaration of every platform the server could recognize. A platform with no indexed launchable ROMs is omitted. Use the platform catalog below when a client needs the complete server-owned list.
+
+### `GET /api/client/games/platforms`
+
+Returns the server-owned game platform catalog. Clients should use this endpoint to build platform menus instead of maintaining a hard-coded platform allow-list. Unlike facets, it includes supported platforms that currently have no indexed games. Newly observed canonical platforms that are not yet in the declared catalog are appended automatically, so they remain discoverable by generic clients.
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "platform": "virtualboy",
+      "title": "Virtual Boy",
+      "aliases": ["virtual-boy", "virtual boy"],
+      "count": 71,
+      "available": true
+    },
+    {
+      "platform": "ps2",
+      "title": "PlayStation 2",
+      "aliases": ["playstation-2"],
+      "count": 0,
+      "available": false
+    }
+  ],
+  "total": 30
+}
+```
+
+Use `platform` as the value sent to `GET /api/client/games?platform=...`; `title` is display text, and aliases are normalization hints only. `count` describes client-visible indexed games and `available` is equivalent to `count > 0`. The `gamePlatformCatalog` capability in `/api/client/info` indicates that this endpoint is available. Older servers without that capability can continue to use `/api/client/games/facets`.
 
 Sega Model 2 scans use `platform: "model2"`, the ZIP filename stem as `romSetName`, `format: "zip"`, `emulatorHint: "model2"`, and `inputProfile: "operatorArcade"`. Known sets receive their MAME display title. Archive size, CRC32, SHA-1, and download bytes describe the original ZIP container. The `segabill.zip` firmware package remains stored as `catalogRole: "dependency"` for audited profile dependency closure, but it is not returned by client search, catalog pages, or facets. An exact MAME 0.288 listxml audit promotes compatible entries to `game`; failed parent/device/BIOS closures remain discoverable as `needs-curation` without being deleted or falsely certified.
 

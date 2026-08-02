@@ -4,6 +4,17 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.993 Release: Virtual Boy and Dynamic Platform Catalog
+
+Release `0.993` adds Nintendo Virtual Boy support and removes the need for clients to hard-code game-platform filters.
+
+- Virtual Boy `.vb` and `.vboy` ROMs are indexed with canonical `virtualboy` metadata and existing client-safe manifests.
+- Local `boxart` artwork uses normalized filename matching and takes priority over cached network artwork.
+- The authenticated `/api/client/games/platforms` endpoint publishes stable platform IDs, display titles, aliases, counts, and availability.
+- `/api/client/info` advertises `gamePlatformCatalog`; older integrations can continue using `/api/client/games/facets`.
+- MCP adds `foliospace.get_game_platform_catalog` for agents that need the complete server-owned platform catalog.
+- Existing Client API response shapes remain backward compatible. Service, Client API, Web, and MCP metadata report version `0.993`.
+
 ## 0.992 Release: Manifest Stability and Progressive Loading
 
 Release `0.992` stabilizes game delivery and reduces startup work on large self-hosted libraries.
@@ -233,7 +244,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.992
+docker pull funland/foliospace-library:0.993
 ```
 
 ```bash
@@ -243,7 +254,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.992
+  funland/foliospace-library:0.993
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

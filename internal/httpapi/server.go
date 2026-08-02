@@ -34,7 +34,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.992"
+const serviceVersion = "0.993"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -62,6 +62,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/client/search", s.handleClientSearch)
 	mux.HandleFunc("/api/client/manual-collections", s.handleClientManualCollections)
 	mux.HandleFunc("/api/client/manual-collections/", s.handleClientManualCollectionAction)
+	mux.HandleFunc("/api/client/games/platforms", s.handleClientGamePlatforms)
 	mux.HandleFunc("/api/client/games", s.handleClientGames)
 	mux.HandleFunc("/api/client/games/played", s.handleClientPlayedGames)
 	mux.HandleFunc("/api/client/games/", s.handleClientGameAction)
@@ -487,6 +488,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			CollectionCatalog:     true,
 			GameShelf:             true,
 			GameCatalog:           true,
+			GamePlatformCatalog:   true,
 			VideoCatalog:          true,
 			VideoHLS:              true,
 			PrivateState:          true,
@@ -1013,6 +1015,18 @@ func (s *Server) handleClientGames(w http.ResponseWriter, r *http.Request) {
 		Offset:  page.Offset,
 		HasMore: page.HasMore,
 	})
+}
+
+func (s *Server) handleClientGamePlatforms(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeClient(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	platforms, err := s.service.ListGamePlatforms()
+	writeJSONOrError(w, platforms, err)
 }
 
 func (s *Server) handleClientPlayedGames(w http.ResponseWriter, r *http.Request) {
@@ -2341,6 +2355,7 @@ type clientCapabilities struct {
 	CollectionCatalog     bool `json:"collectionCatalog"`
 	GameShelf             bool `json:"gameShelf"`
 	GameCatalog           bool `json:"gameCatalog"`
+	GamePlatformCatalog   bool `json:"gamePlatformCatalog"`
 	VideoCatalog          bool `json:"videoCatalog"`
 	VideoHLS              bool `json:"videoHls"`
 	PrivateState          bool `json:"privateState"`

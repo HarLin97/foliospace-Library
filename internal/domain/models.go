@@ -608,6 +608,19 @@ type GamePlatformFacet struct {
 	Count        int64  `json:"count"`
 }
 
+type GamePlatformCatalog struct {
+	Items []GamePlatformDefinition `json:"items"`
+	Total int                      `json:"total"`
+}
+
+type GamePlatformDefinition struct {
+	Platform  string   `json:"platform"`
+	Title     string   `json:"title"`
+	Aliases   []string `json:"aliases,omitempty"`
+	Count     int64    `json:"count"`
+	Available bool     `json:"available"`
+}
+
 type VideoListOptions struct {
 	Limit  int
 	Offset int

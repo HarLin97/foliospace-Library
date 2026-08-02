@@ -204,6 +204,25 @@ func TestLocalGameCoverCandidatesIncludeCommonSidecars(t *testing.T) {
 	}
 }
 
+func TestLocalGameCoverCandidatesMatchNormalizedSingularBoxart(t *testing.T) {
+	root := t.TempDir()
+	gamePath := filepath.Join(root, "VirtualBoy", "3-D Tetris (USA).vb")
+	coverPath := filepath.Join(root, "VirtualBoy", "boxart", "3D Tetris.png")
+	if err := os.MkdirAll(filepath.Dir(coverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(coverPath, []byte("cover"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, candidate := range localGameCoverCandidates(gamePath) {
+		if candidate == coverPath {
+			return
+		}
+	}
+	t.Fatalf("normalized boxart candidate %q not found", coverPath)
+}
+
 func TestNetworkCoverTaskHonorsLibretroSetting(t *testing.T) {
 	configDir := t.TempDir()
 	conn, err := db.Open(configDir)

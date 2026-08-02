@@ -755,7 +755,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 
 	infoBody := get(t, ts.URL+"/api/client/info")
-	if !strings.Contains(infoBody, `"serviceVersion":"0.992"`) ||
+	if !strings.Contains(infoBody, `"serviceVersion":"0.993"`) ||
 		!strings.Contains(infoBody, `"apiVersion":"v1"`) ||
 		!strings.Contains(infoBody, `"epub"`) ||
 		!strings.Contains(infoBody, `"pdf"`) ||
@@ -772,6 +772,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 		!strings.Contains(infoBody, `"compactReader":true`) ||
 		!strings.Contains(infoBody, `"scanSettings":true`) ||
 		!strings.Contains(infoBody, `"gameSaveSync":true`) ||
+		!strings.Contains(infoBody, `"gamePlatformCatalog":true`) ||
 		!strings.Contains(infoBody, `"gameMetadataProviders":true`) {
 		t.Fatalf("client info response %q does not include v1 capabilities", infoBody)
 	}
@@ -1077,6 +1078,58 @@ func TestAPIClientGameFacetsUseFullCatalog(t *testing.T) {
 	legacyDisc := authGet(t, ts.URL+"/api/client/games?platform=disc", "secret")
 	if !strings.Contains(legacyDisc, `"total":1`) || !strings.Contains(legacyDisc, `"title":"Legacy Disc E"`) {
 		t.Fatalf("legacy disc page = %q, want old platform query compatibility", legacyDisc)
+	}
+}
+
+func TestAPIClientGamePlatformsDeclareSupportedCatalog(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Games", "/library")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, game := range []domain.GameAsset{
+		{LibraryID: lib.ID, Title: "SNES A", Platform: "snes", Format: "sfc", FilePath: "/library/snes/a.sfc", RelPath: "snes/a.sfc", Size: 1, MTime: time.Unix(40, 0)},
+		{LibraryID: lib.ID, Title: "Future A", Platform: "futurebox", Format: "rom", FilePath: "/library/future/a.rom", RelPath: "future/a.rom", Size: 1, MTime: time.Unix(41, 0)},
+	} {
+		if _, err := st.UpsertGame(game); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	platforms := authGet(t, ts.URL+"/api/client/games/platforms", "secret")
+	for _, want := range []string{
+		`"platform":"snes","title":"SNES","aliases":["sfc","super-nintendo"],"count":1,"available":true`,
+		`"platform":"virtualboy","title":"Virtual Boy"`,
+		`"platform":"ps2","title":"PlayStation 2"`,
+		`"platform":"futurebox","title":"Futurebox","count":1,"available":true`,
+	} {
+		if !strings.Contains(platforms, want) {
+			t.Fatalf("platform catalog = %q, missing %s", platforms, want)
+		}
+	}
+	if !strings.Contains(platforms, `"platform":"virtualboy","title":"Virtual Boy","aliases":["virtual-boy","virtual boy"],"count":0,"available":false`) {
+		t.Fatalf("platform catalog = %q, want unavailable declared Virtual Boy entry", platforms)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/client/games/platforms", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("POST game platforms status = %d, want 405", response.StatusCode)
 	}
 }
 

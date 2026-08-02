@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"foliospace-reader/internal/archive"
 	"foliospace-reader/internal/domain"
@@ -1175,14 +1176,14 @@ func (s *Service) OpenGameCover(id int64) (PageStream, error) {
 	if err != nil {
 		return PageStream{}, err
 	}
-	if stream, ok := s.openSelectedGameCover(id); ok {
-		return stream, nil
-	}
 	for _, candidate := range localGameCoverCandidates(game.FilePath) {
 		file, err := os.Open(candidate)
 		if err == nil {
 			return PageStream{Body: file, ContentType: localImageContentType(candidate)}, nil
 		}
+	}
+	if stream, ok := s.openSelectedGameCover(id); ok {
+		return stream, nil
 	}
 	urls := libretroBoxartCandidates(game)
 	if len(urls) == 0 {
@@ -1264,13 +1265,19 @@ func localGameCoverCandidates(gamePath string) []string {
 	candidates := make([]string, 0, len(names)*len(mediaBases)*len(mediaDirs)+32)
 	seen := map[string]bool{}
 	imageExtensions := []string{".jpg", ".jpeg", ".png", ".webp"}
-	for _, coverDir := range []string{dir, filepath.Join(dir, "covers"), filepath.Join(dir, "boxarts"), filepath.Join(dir, "images")} {
+	for _, coverDir := range []string{dir, filepath.Join(dir, "boxart"), filepath.Join(dir, "covers"), filepath.Join(dir, "boxarts"), filepath.Join(dir, "images")} {
 		for _, extension := range imageExtensions {
 			path := filepath.Join(coverDir, base+extension)
 			if !seen[path] {
 				seen[path] = true
 				candidates = append(candidates, path)
 			}
+		}
+	}
+	for _, path := range normalizedNamedGameCoverCandidates(filepath.Join(dir, "boxart"), base) {
+		if !seen[path] {
+			seen[path] = true
+			candidates = append(candidates, path)
 		}
 	}
 	for _, mediaDir := range mediaDirs {
@@ -1291,6 +1298,45 @@ func localGameCoverCandidates(gamePath string) []string {
 		}
 	}
 	return candidates
+}
+
+func normalizedNamedGameCoverCandidates(coverDir string, gameBase string) []string {
+	entries, err := os.ReadDir(coverDir)
+	if err != nil {
+		return nil
+	}
+	targetKeys := map[string]bool{}
+	for _, name := range []string{gameBase, stripBracketedTags(gameBase)} {
+		if key := localArtworkMatchKey(name); key != "" {
+			targetKeys[key] = true
+		}
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		switch ext {
+		case ".jpg", ".jpeg", ".png", ".webp":
+		default:
+			continue
+		}
+		if targetKeys[localArtworkMatchKey(entry.Name())] {
+			return []string{filepath.Join(coverDir, entry.Name())}
+		}
+	}
+	return nil
+}
+
+func localArtworkMatchKey(name string) string {
+	name = strings.TrimSuffix(name, filepath.Ext(name))
+	var out strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
 }
 
 var pcfxCoverDiscSuffixPattern = regexp.MustCompile(`(?i)\s+CD\s*[0-9]+$`)
@@ -2322,7 +2368,7 @@ func libretroArchiveSearchNames(game domain.GameAsset) []string {
 		}
 		ext := strings.ToLower(filepath.Ext(name))
 		switch ext {
-		case ".sfc", ".smc", ".fig", ".swc", ".nes", ".gb", ".gbc", ".gba", ".md", ".gen", ".bin", ".z64", ".v64", ".n64":
+		case ".sfc", ".smc", ".fig", ".swc", ".nes", ".gb", ".gbc", ".gba", ".md", ".gen", ".bin", ".z64", ".v64", ".n64", ".vb", ".vboy":
 			base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
 			out = append(out, libretroExpandedRegionNames(base)...)
 		}

@@ -228,6 +228,26 @@ func TestServerCallsGamePlatformsTool(t *testing.T) {
 	}
 }
 
+func TestServerCallsGamePlatformCatalogTool(t *testing.T) {
+	var gotPath string
+	server := New("http://foliospace.test", "")
+	server.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.RequestURI()
+		return jsonResponse(`{"items":[{"platform":"virtualboy","title":"Virtual Boy","count":0,"available":false}],"total":30}`), nil
+	})}
+
+	response := server.Handle(context.Background(), toolCall(t, "foliospace.get_game_platform_catalog", nil))
+	if response.Error != nil {
+		t.Fatalf("tool call error = %#v", response.Error)
+	}
+	if gotPath != "/api/client/games/platforms" {
+		t.Fatalf("path = %s, want game platform catalog", gotPath)
+	}
+	if body := mustJSON(t, response.Result); !strings.Contains(body, "virtualboy") {
+		t.Fatalf("tool response %s missing platform catalog", body)
+	}
+}
+
 func TestServerCallsGameMetadataTools(t *testing.T) {
 	var paths []string
 	server := New("http://foliospace.test", "")
