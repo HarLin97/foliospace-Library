@@ -7,7 +7,7 @@ supports Linux AMD64 and ARM64.
 
 ```sh
 cp .env.example .env
-mkdir -p data/config data/library data/books data/games
+mkdir -p data/config data/library data/books data/games data/videos
 ```
 
 Edit `.env` and set each host path to the folder you want FolioSpace Library to
@@ -20,6 +20,7 @@ FOLIOSPACE_CONFIG_PATH=/volume1/docker/foliospace-library/config
 FOLIOSPACE_LIBRARY_PATH=/volume1/Media/Comics
 FOLIOSPACE_BOOKS_PATH=/volume1/Media/Books
 FOLIOSPACE_GAMES_PATH=/volume1/Media/GameROMS
+FOLIOSPACE_VIDEOS_PATH=/volume1/Media/Videos
 ```
 
 ## 2. Start the service
@@ -31,7 +32,7 @@ docker compose ps
 
 Open `http://YOUR-SERVER-IP:8080`. Complete first-run setup and create an access
 token. In the library picker, use container paths such as `/library`, `/books`,
-or `/games`, not the original NAS paths.
+`/games`, or `/videos`, not the original NAS paths.
 
 ## 3. Update
 

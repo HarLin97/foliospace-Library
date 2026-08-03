@@ -424,14 +424,14 @@ Edit `.env` and set the host directories that contain your media. Then start
 the service:
 
 ```bash
-mkdir -p data/config data/library data/books data/games
+mkdir -p data/config data/library data/books data/games data/videos
 docker compose up -d
 docker compose ps
 ```
 
 Open `http://<docker-host>:8080`. On a fresh `/config`, the setup page asks for
 an access key and lets you choose a container path such as `/library`, `/books`,
-or `/games`.
+`/games`, or `/videos`.
 
 The default deployment currently pins this image:
 
@@ -457,6 +457,7 @@ FOLIOSPACE_CONFIG_PATH=/volume1/docker/foliospace-library/config
 FOLIOSPACE_LIBRARY_PATH=/volume2/Media
 FOLIOSPACE_BOOKS_PATH=/volume2/ComicCenter
 FOLIOSPACE_GAMES_PATH=/volume2/GameROMS
+FOLIOSPACE_VIDEOS_PATH=/volume2/MovieCollection/Movies
 ```
 
 If port `8080` is already occupied, change only the host port:
@@ -473,7 +474,8 @@ docker run -p 8080:8080 \
   -v /volume2/ComicCenter:/library:ro \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
-  -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
+  -v /volume2/MovieCollection/Movies:/videos:ro \
+  -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
   funland/foliospace-library:0.993
 ```
 

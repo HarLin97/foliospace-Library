@@ -25,10 +25,14 @@ services:
         source: ${FOLIOSPACE_GAMES_PATH:-./data/games}
         target: /games
         read_only: true
+      - type: bind
+        source: ${FOLIOSPACE_VIDEOS_PATH:-./data/videos}
+        target: /videos
+        read_only: true
     environment:
       FOLIOSPACE_CONFIG_DIR: "/config"
       FOLIOSPACE_LIBRARY_DIR: "/library"
-      FOLIOSPACE_DIRECTORY_ROOTS: "/library,/books,/games"
+      FOLIOSPACE_DIRECTORY_ROOTS: "/library,/books,/games,/videos"
       FOLIOSPACE_ADDR: ":8080"
       FOLIOSPACE_API_TOKEN: ${FOLIOSPACE_API_TOKEN:-}
       FOLIOSPACE_SCAN_WORKERS: ${FOLIOSPACE_SCAN_WORKERS:-2}
