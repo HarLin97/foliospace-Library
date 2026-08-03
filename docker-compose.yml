@@ -1,21 +1,41 @@
 services:
   foliospace-library:
-    build: .
-    image: foliospace-library:0.993
-    mem_limit: 1536m
-    memswap_limit: 1536m
+    image: ${FOLIOSPACE_IMAGE:-funland/foliospace-library:0.993}
+    container_name: ${FOLIOSPACE_CONTAINER_NAME:-foliospace-library}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    mem_limit: ${FOLIOSPACE_CONTAINER_MEMORY_LIMIT:-1536m}
+    memswap_limit: ${FOLIOSPACE_CONTAINER_MEMORY_LIMIT:-1536m}
     ports:
-      - "8080:8080"
+      - "${FOLIOSPACE_PORT:-8080}:8080"
     volumes:
-      - ./data/config:/config
-      - ./data/library:/library:ro
-      - ./data/books:/books:ro
-      - ./data/games:/games:ro
+      - type: bind
+        source: ${FOLIOSPACE_CONFIG_PATH:-./data/config}
+        target: /config
+      - type: bind
+        source: ${FOLIOSPACE_LIBRARY_PATH:-./data/library}
+        target: /library
+        read_only: true
+      - type: bind
+        source: ${FOLIOSPACE_BOOKS_PATH:-./data/books}
+        target: /books
+        read_only: true
+      - type: bind
+        source: ${FOLIOSPACE_GAMES_PATH:-./data/games}
+        target: /games
+        read_only: true
     environment:
-      FOLIOSPACE_CONFIG_DIR: /config
-      FOLIOSPACE_LIBRARY_DIR: /library
-      FOLIOSPACE_DIRECTORY_ROOTS: /library,/books,/games
-      FOLIOSPACE_ADDR: :8080
-      FOLIOSPACE_API_TOKEN: ""
-      FOLIOSPACE_SCAN_WORKERS: "2"
-      FOLIOSPACE_MEMORY_LIMIT_MB: "768"
+      FOLIOSPACE_CONFIG_DIR: "/config"
+      FOLIOSPACE_LIBRARY_DIR: "/library"
+      FOLIOSPACE_DIRECTORY_ROOTS: "/library,/books,/games"
+      FOLIOSPACE_ADDR: ":8080"
+      FOLIOSPACE_API_TOKEN: ${FOLIOSPACE_API_TOKEN:-}
+      FOLIOSPACE_SCAN_WORKERS: ${FOLIOSPACE_SCAN_WORKERS:-2}
+      FOLIOSPACE_MEMORY_LIMIT_MB: ${FOLIOSPACE_MEMORY_LIMIT_MB:-768}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/setup/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

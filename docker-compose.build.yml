@@ -1,0 +1,5 @@
+services:
+  foliospace-library:
+    build:
+      context: .
+    image: foliospace-library:dev

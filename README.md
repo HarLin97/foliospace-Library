@@ -409,20 +409,63 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.993` image tag:
+The included Compose file is ready to use without cloning or building the
+application source. It pulls the published multi-architecture image for Linux
+AMD64 and ARM64 hosts.
+
+Download the two deployment files into an empty directory:
+
+```bash
+curl -O https://raw.githubusercontent.com/funland/foliospace-Library/main/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/funland/foliospace-Library/main/.env.example
+```
+
+Edit `.env` and set the host directories that contain your media. Then start
+the service:
+
+```bash
+mkdir -p data/config data/library data/books data/games
+docker compose up -d
+docker compose ps
+```
+
+Open `http://<docker-host>:8080`. On a fresh `/config`, the setup page asks for
+an access key and lets you choose a container path such as `/library`, `/books`,
+or `/games`.
+
+The default deployment currently pins this image:
 
 ```bash
 docker pull funland/foliospace-library:0.993
 ```
 
-For local verification:
+To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
 
 ```bash
-mkdir -p data/config data/library data/books data/games
-docker compose up --build
+docker compose pull
+docker compose up -d
 ```
 
-For a NAS deployment, mount your real libraries as read-only:
+The `/config` host directory is writable and persistent. Media directories are
+mounted read-only. Back up `/config` before an upgrade because it contains the
+SQLite database, generated covers, preferences, and runtime cache.
+
+Example Synology-style `.env` paths:
+
+```dotenv
+FOLIOSPACE_CONFIG_PATH=/volume1/docker/foliospace-library/config
+FOLIOSPACE_LIBRARY_PATH=/volume2/Media
+FOLIOSPACE_BOOKS_PATH=/volume2/ComicCenter
+FOLIOSPACE_GAMES_PATH=/volume2/GameROMS
+```
+
+If port `8080` is already occupied, change only the host port:
+
+```dotenv
+FOLIOSPACE_PORT=18080
+```
+
+For a one-off NAS deployment without Compose:
 
 ```bash
 docker run -p 8080:8080 \
@@ -434,7 +477,14 @@ docker run -p 8080:8080 \
   funland/foliospace-library:0.993
 ```
 
-Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
+If a directory is missing from the setup page, add its Docker volume mapping
+first. FolioSpace Library can only browse paths visible inside the container.
+
+For source development, overlay the build configuration explicitly:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
 
 ### Publishing
 
