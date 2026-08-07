@@ -59,6 +59,10 @@ export type Book = {
   thumbnailUrl: string;
   analyzed: boolean;
   filePath?: string;
+  contentHash?: string | null;
+  contentHashAlgorithm?: string | null;
+  fileSize?: number | null;
+  contentRevision?: string | null;
   addedAt: string;
   updatedAt: string;
   currentPage: number;

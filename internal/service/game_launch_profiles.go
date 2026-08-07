@@ -79,6 +79,14 @@ var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var errAuditedLaunchSourceUnavailable = errors.New("audited launch source unavailable")
 
+var atomiswaveBIOSLaunchFile = auditedGameLaunchFile{
+	SourceSHA1: "cdf247154e28c4b352b962a4a523587f2fde9305",
+	SourceName: "awbios.zip",
+	Name:       "awbios.zip",
+	Size:       34620,
+	Role:       "dependency",
+}
+
 var auditedGameLaunchProfiles = []auditedGameLaunchProfile{
 	{
 		ID:               "vstriker-windows-mame0288-v1",
@@ -347,6 +355,12 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 		if !available {
 			continue
 		}
+		resolvedFiles, err = s.appendAutomaticGameDependencies(game, resolvedFiles)
+		if err != nil {
+			missingDependency = atomiswaveBIOSLaunchFile.Name
+			continue
+		}
+		totalSize = resolvedLaunchFileTotalSize(resolvedFiles)
 		resolvedGame := game
 		resolvedGame.ROMSetName = profile.CanonicalSet
 		resolvedGame.Size = totalSize
@@ -383,6 +397,12 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 		if !candidateAvailable {
 			continue
 		}
+		resolvedFiles, err = s.appendAutomaticGameDependencies(game, resolvedFiles)
+		if err != nil {
+			missingDependency = atomiswaveBIOSLaunchFile.Name
+			continue
+		}
+		totalSize = resolvedLaunchFileTotalSize(resolvedFiles)
 		resolvedGame := game
 		if strings.TrimSpace(profile.Title) != "" {
 			resolvedGame.Title = profile.Title
@@ -423,22 +443,22 @@ func (s *Service) LegacyGameLaunchDependencies(gameID int64) ([]domain.GameLaunc
 	if err != nil {
 		return nil, err
 	}
+	dependencies := make([]domain.GameLaunchResolvedFile, 0, 2)
 	for _, profile := range legacyLaunchProfilesByPreference(profiles, game.EmulatorHint) {
 		files, available := s.availablePersistedLaunchProfileFiles(profile)
 		if !available {
 			continue
 		}
-		dependencies := make([]domain.GameLaunchResolvedFile, 0, len(files))
 		for _, file := range files {
 			if strings.EqualFold(strings.TrimSpace(file.Role), "dependency") {
 				dependencies = append(dependencies, file)
 			}
 		}
 		if len(dependencies) > 0 {
-			return dependencies, nil
+			break
 		}
 	}
-	return nil, nil
+	return s.appendAutomaticGameDependencies(game, dependencies)
 }
 
 func legacyLaunchProfilesByPreference(profiles []domain.GameLaunchProfile, emulatorHint string) []domain.GameLaunchProfile {
@@ -569,12 +589,51 @@ func (s *Service) resolvePragmaticGameLaunch(game domain.GameAsset, runtime doma
 			Size: file.Size, Role: file.Role, SHA1: strings.ToLower(strings.TrimSpace(file.SHA1)),
 		})
 	}
+	resolvedFiles, err = s.appendAutomaticGameDependencies(game, resolvedFiles)
+	if err != nil {
+		return domain.GameLaunchResolution{}, launchResolveError(
+			"dependency-missing", "A required launch file is missing.",
+			map[string]any{"gameId": game.ID, "file": atomiswaveBIOSLaunchFile.Name},
+		)
+	}
+	resolvedGame := game
+	resolvedGame.Size = resolvedLaunchFileTotalSize(resolvedFiles)
 
 	return domain.GameLaunchResolution{
 		LaunchProfileID: pragmaticLaunchProfileID(game, runtime, client),
 		ProfileRevision: pragmaticProfileRevision(game, files),
-		Runtime:         runtime, Game: game, EntryFile: entryFile, Files: resolvedFiles, DOSLaunch: dosLaunch,
+		Runtime:         runtime, Game: resolvedGame, EntryFile: entryFile, Files: resolvedFiles, DOSLaunch: dosLaunch,
 	}, nil
+}
+
+func (s *Service) appendAutomaticGameDependencies(game domain.GameAsset, files []domain.GameLaunchResolvedFile) ([]domain.GameLaunchResolvedFile, error) {
+	if !launchcatalog.RequiresAtomiswaveBIOS(game) {
+		return files, nil
+	}
+	for _, file := range files {
+		if strings.EqualFold(strings.TrimSpace(file.Name), atomiswaveBIOSLaunchFile.Name) {
+			return files, nil
+		}
+	}
+	source, err := s.resolveAuditedLaunchSource(atomiswaveBIOSLaunchFile)
+	if err != nil {
+		return nil, err
+	}
+	return append(files, domain.GameLaunchResolvedFile{
+		SourceGameID: source.ID,
+		Name:         atomiswaveBIOSLaunchFile.Name,
+		Size:         atomiswaveBIOSLaunchFile.Size,
+		Role:         atomiswaveBIOSLaunchFile.Role,
+		SHA1:         atomiswaveBIOSLaunchFile.SourceSHA1,
+	}), nil
+}
+
+func resolvedLaunchFileTotalSize(files []domain.GameLaunchResolvedFile) int64 {
+	var total int64
+	for _, file := range files {
+		total += file.Size
+	}
+	return total
 }
 
 func matchingPragmaticRuntime(game domain.GameAsset, req domain.GameLaunchResolveRequest) (domain.GameRuntimeDescriptor, bool) {
@@ -596,6 +655,7 @@ type pragmaticRuntimeRule struct {
 	RuntimeID  string
 	CoreID     string
 	MinVersion string
+	ContentSet string
 }
 
 var pragmaticRuntimeRules = []pragmaticRuntimeRule{
@@ -605,6 +665,7 @@ var pragmaticRuntimeRules = []pragmaticRuntimeRule{
 	{Platform: "model3", RuntimeID: "supermodel"},
 	{Platform: "ngc", RuntimeID: "dolphin"},
 	{Platform: "ps2", RuntimeID: "pcsx2", MinVersion: "2.6.3"},
+	{Platform: "konami-python1", RuntimeID: "pcsx2-reliquary", MinVersion: "1.5.1.0", ContentSet: "konami-python1"},
 	{Platform: "psp", RuntimeID: "ppsspp", MinVersion: "1.20.4"},
 	{Platform: "psp", RuntimeID: "libretro", CoreID: "ppsspp"},
 	{Platform: "dos", RuntimeID: "dosbox-staging", MinVersion: "0.82.2"},
@@ -639,7 +700,8 @@ func pragmaticRuntimeSupportsPlatform(runtime domain.GameRuntimeDescriptor, plat
 	version := canonicalPragmaticVersion(runtime.Version)
 	coreID := normalizeLaunchCoreID(runtime.CoreID)
 	for _, rule := range pragmaticRuntimeRules {
-		if rule.Platform != platform || rule.RuntimeID != runtimeID || (rule.CoreID != "" && rule.CoreID != coreID) {
+		if rule.Platform != platform || rule.RuntimeID != runtimeID || (rule.CoreID != "" && rule.CoreID != coreID) ||
+			(rule.ContentSet != "" && !strings.EqualFold(strings.TrimSpace(runtime.ContentSet), rule.ContentSet)) {
 			continue
 		}
 		if rule.MinVersion != "" {
@@ -652,6 +714,21 @@ func pragmaticRuntimeSupportsPlatform(runtime domain.GameRuntimeDescriptor, plat
 
 func pragmaticRuntimeAllowedForClient(runtime domain.GameRuntimeDescriptor, platform string, client domain.GameLaunchClient) bool {
 	runtimeID := strings.ToLower(strings.TrimSpace(runtime.ID))
+	if platform == "nds" {
+		if runtimeID != "libretro" || normalizeLaunchCoreID(runtime.CoreID) != "melondsds" {
+			return false
+		}
+		switch strings.ToLower(strings.TrimSpace(client.Name)) {
+		case "spatialemu.ios", "spatialemu.ipados", "spatialemu.visionos":
+			return true
+		default:
+			return false
+		}
+	}
+	if platform == "konami-python1" {
+		name := strings.ToLower(strings.TrimSpace(client.Name))
+		return runtimeID == "pcsx2-reliquary" && (name == "spatialemu.windows" || name == "spatialemu.macos")
+	}
 	if isAppleMobileClient(client) {
 		if (platform == "psp" || platform == "dos") && runtimeID != "libretro" {
 			return false
@@ -699,6 +776,12 @@ func ordinaryLibretroCoreSupportsPlatform(coreID string, platform string) bool {
 		},
 		"gba": {
 			"mgba": true, "vbanext": true,
+		},
+		"nds": {
+			"melondsds": true,
+		},
+		"3do": {
+			"opera": true,
 		},
 		"ps1": {
 			"swanstation": true, "beetlepsx": true, "beetlepsxhw": true, "pcsxrearmed": true,
@@ -941,6 +1024,10 @@ func pragmaticProfileRevision(game domain.GameAsset, files []domain.GameFile) in
 	for _, file := range files {
 		fmt.Fprintf(&key, "%d\x00%s\x00%d\x00%s\x00%s\x00", file.Position, file.Name, file.Size,
 			strings.ToLower(strings.TrimSpace(file.Role)), strings.ToLower(strings.TrimSpace(file.SHA1)))
+	}
+	if launchcatalog.RequiresAtomiswaveBIOS(game) {
+		fmt.Fprintf(&key, "automatic\x00%s\x00%d\x00%s\x00", atomiswaveBIOSLaunchFile.Name,
+			atomiswaveBIOSLaunchFile.Size, atomiswaveBIOSLaunchFile.SourceSHA1)
 	}
 	digest := sha256.Sum256([]byte(key.String()))
 	revision := int(uint32(digest[0])<<24|uint32(digest[1])<<16|uint32(digest[2])<<8|uint32(digest[3])) & 0x7fffffff

@@ -101,6 +101,11 @@ func Migrate(conn *sql.DB) error {
 			ext TEXT NOT NULL,
 			hash TEXT NOT NULL DEFAULT '',
 			hash_status TEXT NOT NULL DEFAULT 'pending',
+			content_hash TEXT NOT NULL DEFAULT '',
+			content_hash_algorithm TEXT NOT NULL DEFAULT '',
+			content_hash_status TEXT NOT NULL DEFAULT 'pending',
+			content_hash_error TEXT NOT NULL DEFAULT '',
+			content_revision TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -555,6 +560,27 @@ func Migrate(conn *sql.DB) error {
 	}
 	if err := addColumnIfMissing(conn, "game_dos_launch", "install_directory", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	if err := addColumnIfMissing(conn, "files", "content_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "files", "content_hash_algorithm", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "files", "content_hash_status", "TEXT NOT NULL DEFAULT 'pending'"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "files", "content_hash_error", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(conn, "files", "content_revision", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if _, err := conn.Exec(`CREATE INDEX IF NOT EXISTS idx_files_content_hash_status ON files(content_hash_status, id)`); err != nil {
+		return fmt.Errorf("create content hash index: %w", err)
+	}
+	if _, err := conn.Exec(`UPDATE files SET content_hash_status = 'pending', content_hash_error = '' WHERE content_hash_status = 'running'`); err != nil {
+		return fmt.Errorf("reset running content hashes: %w", err)
 	}
 	if _, err := conn.Exec(`INSERT OR IGNORE INTO profile_read_progress(profile_id, book_id, page_index, locator, progress_fraction, updated_at)
 		SELECT 1, book_id, page_index, locator, progress_fraction, updated_at FROM read_progress`); err != nil {

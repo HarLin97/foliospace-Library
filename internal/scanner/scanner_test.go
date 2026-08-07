@@ -18,6 +18,62 @@ import (
 	"golang.org/x/text/encoding/japanese"
 )
 
+func TestIdentifyProjectJusticeNaomiROMSet(t *testing.T) {
+	revA := projectJusticeNaomiROMSetCatalog[0]
+	members := cloneNaomiArchiveMembers(revA.members)
+
+	got, detected, err := identifyProjectJusticeNaomiROMSet(members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detected || got.romSetName != "pjustica" || got.parent != "pjustic" {
+		t.Fatalf("identity = %#v, detected = %v", got, detected)
+	}
+
+	delete(members, "mpr-23547.ic11")
+	if _, detected, err := identifyProjectJusticeNaomiROMSet(members); !detected || err == nil {
+		t.Fatalf("missing MPR detected = %v, err = %v", detected, err)
+	}
+}
+
+func TestIdentifyProjectJusticeNaomiROMSetRejectsMixedOrDamagedRevision(t *testing.T) {
+	revA := projectJusticeNaomiROMSetCatalog[0]
+	members := cloneNaomiArchiveMembers(revA.members)
+	members["epr-23548b.ic22"] = projectJusticeNaomiROMSetCatalog[1].members["epr-23548b.ic22"]
+	if _, detected, err := identifyProjectJusticeNaomiROMSet(members); !detected || err == nil {
+		t.Fatalf("mixed revisions detected = %v, err = %v", detected, err)
+	}
+
+	members = cloneNaomiArchiveMembers(revA.members)
+	members[revA.bootMember] = naomiArchiveMember{size: 0x0400000, crc32: 0xd0dbdf40}
+	if _, detected, err := identifyProjectJusticeNaomiROMSet(members); !detected || err == nil {
+		t.Fatalf("damaged boot ROM detected = %v, err = %v", detected, err)
+	}
+
+	if _, detected, err := identifyProjectJusticeNaomiROMSet(map[string]naomiArchiveMember{"unrelated.bin": {size: 1, crc32: 1}}); detected || err != nil {
+		t.Fatalf("unrelated archive detected = %v, err = %v", detected, err)
+	}
+}
+
+func TestProjectJusticeArchiveNameTriggersAuditOutsideNaomiDirectory(t *testing.T) {
+	for _, path := range []string{"/games/NAOMI/pjustic.zip", "/games/Arcade/PJUSTICA.ZIP"} {
+		if !isProjectJusticeArchiveName(path) {
+			t.Fatalf("isProjectJusticeArchiveName(%q) = false", path)
+		}
+	}
+	if isProjectJusticeArchiveName("/games/Arcade/unrelated.zip") {
+		t.Fatal("unrelated archive unexpectedly triggers Project Justice audit")
+	}
+}
+
+func cloneNaomiArchiveMembers(source map[string]naomiArchiveMember) map[string]naomiArchiveMember {
+	result := make(map[string]naomiArchiveMember, len(source))
+	for name, member := range source {
+		result[name] = member
+	}
+	return result
+}
+
 func TestScanLibraryIndexesValidArchivesAndRecordsEmptyFile(t *testing.T) {
 	root := t.TempDir()
 	makeZip(t, filepath.Join(root, "Series A", "book1.cbz"), map[string]string{"001.jpg": "image"})
@@ -1205,6 +1261,91 @@ func TestScanLibraryIndexesValidatedPC98MediaAndExcludesSupportFiles(t *testing.
 	}
 }
 
+func TestScanLibraryPackagesPC98UserDiskWithCUEAsOneGame(t *testing.T) {
+	root := t.TempDir()
+	gameDir := filepath.Join(root, "PC98", "Policenauts (1994)(Konami)")
+	if err := os.MkdirAll(gameDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userPath := filepath.Join(gameDir, "USER.FDI")
+	systemPath := filepath.Join(gameDir, "SYSTEM.FDI")
+	if err := os.WriteFile(userPath, syntheticPC98AnexImage(512, 4, 2, 10), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(systemPath, syntheticPC98AnexImage(512, 4, 2, 11), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gameDir, "USER.NFD"), []byte("unsupported installer disk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gameDir, "P_NAUTS.cue"), []byte("FILE \"P_NAUTS.BIN\" BINARY\n  TRACK 01 MODE1/2352\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gameDir, "P_NAUTS.BIN"), []byte("cd payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gameDir, "KAMON.GIF"), []byte("artwork payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ErrorCount != 0 || job.IndexedFiles != 1 {
+		t.Fatalf("job = %#v, want one PC-98 mixed-media package", job)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "pc98", Limit: 10})
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("games = %#v err=%v, want one game", page.Items, err)
+	}
+	game := page.Items[0]
+	if game.Title != "Policenauts" || game.FilePath != userPath || game.Format != "fdi" {
+		t.Fatalf("game = %#v, want USER.FDI launch entry", game)
+	}
+	files, err := st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNames := []string{"USER.FDI", "P_NAUTS.cue", "P_NAUTS.BIN", "KAMON.GIF"}
+	if len(files) != len(wantNames) {
+		t.Fatalf("files = %#v, want complete user-disk and CD package", files)
+	}
+	for index, wantName := range wantNames {
+		wantRole := "dependency"
+		if index == 0 {
+			wantRole = "entry"
+		}
+		if files[index].Name != wantName || files[index].Role != wantRole || files[index].SHA1 == "" {
+			t.Fatalf("file %d = %#v, want %s role=%s with checksum", index, files[index], wantName, wantRole)
+		}
+	}
+	if game.Size != gameFilesSize(files) {
+		t.Fatalf("game size = %d, want package size %d", game.Size, gameFilesSize(files))
+	}
+	if _, err := st.GameByPath(systemPath); err == nil {
+		t.Fatal("SYSTEM.FDI must not remain as a separately launchable game")
+	}
+
+	second, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.IndexedFiles != 0 || second.SkippedFiles != 1 || second.ErrorCount != 0 {
+		t.Fatalf("second scan = %#v, want unchanged package skipped", second)
+	}
+}
+
 func TestScanLibraryPackagesValidatedPC98FontAndTracksSidecarChanges(t *testing.T) {
 	root := t.TempDir()
 	gameDir := filepath.Join(root, "PC98", "Love Escalator AI汉化版")
@@ -2102,6 +2243,133 @@ func TestScanLibraryIndexesDreamcastGDIAsOneLaunchableGame(t *testing.T) {
 	}
 }
 
+func TestScanLibraryIndexesKonamiPython1DescriptorsAsThreeGames(t *testing.T) {
+	root := t.TempDir()
+	pythonRoot := filepath.Join(root, "KONAMI", "konami_python_1_collection", "kpython1")
+	if err := os.MkdirAll(pythonRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	type sample struct {
+		stem  string
+		title string
+		chd   string
+	}
+	samples := []sample{
+		{stem: "pesta", title: "Pro Evolution Soccer the Arcade", chd: "c18eaa03.chd"},
+		{stem: "wswe", title: "World Soccer Winning Eleven Arcade Game", chd: "c18jaa03.chd"},
+		{stem: "wswe2k3", title: "World Soccer Winning Eleven Arcade Game 2003", chd: "c27jaa03.chd"},
+	}
+	for _, sample := range samples {
+		gameDir := filepath.Join(pythonRoot, sample.stem)
+		if err := os.MkdirAll(gameDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		dependencies := []string{sample.chd, "m48t58y.u48", "b22a01.u42", "d72872gc.crom", "ds2430.u3", "kn00002.ps2", "kn00002.id"}
+		for _, name := range dependencies {
+			if err := os.WriteFile(filepath.Join(gameDir, name), []byte(sample.stem+"-"+name), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		descriptor := fmt.Sprintf(`[Game]
+Name=%s
+CfImagePath=%s/%s
+BbsRamPath=%s/m48t58y.u48
+IoBootRomPath=%s/b22a01.u42
+IoConfigRomPath=%s/d72872gc.crom
+InternalDonglePath=%s/ds2430.u3
+MemoryCardDonglePath=%s/kn00002.ps2
+MemoryCardIdPath=%s/kn00002.id
+`, sample.title, sample.stem, sample.chd, sample.stem, sample.stem, sample.stem, sample.stem, sample.stem, sample.stem)
+		if err := os.WriteFile(filepath.Join(pythonRoot, sample.stem+".py1"), []byte(descriptor), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, body := range map[string]string{
+		"coh.bin": "client-bios", "keys/global.key": "client-key", "@eaDir/cache.bin": "metadata",
+	} {
+		path := filepath.Join(pythonRoot, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("GameROMS", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := NewWithWorkerCount(st, func() int { return 2 }).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 3 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want three Python 1 games and no errors", job)
+	}
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "konami-python1", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 3 || len(page.Items) != 3 {
+		t.Fatalf("games = %#v, want exactly three Python 1 entries", page)
+	}
+	byTitle := make(map[string]domain.GameAsset, len(page.Items))
+	for _, game := range page.Items {
+		byTitle[game.Title] = game
+		if game.Platform != "konami-python1" || game.ROMSetName != "KONAMI-PYTHON1" || game.Format != "py1" || game.EmulatorHint != "pcsx2-reliquary" || game.CatalogRole != "game" {
+			t.Fatalf("game = %#v, want canonical Python 1 metadata", game)
+		}
+		files, err := st.GameFiles(game.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) != 8 || files[0].Role != "entry" || filepath.Ext(files[0].Name) != ".py1" {
+			t.Fatalf("files = %#v, want one descriptor plus seven dependencies", files)
+		}
+		for index, file := range files {
+			if len(file.SHA1) != 40 || file.Size <= 0 || file.Position != index {
+				t.Fatalf("file = %#v, want contiguous checksummed manifest", file)
+			}
+			if strings.Contains(strings.ToLower(file.Name), "keys/") || strings.Contains(strings.ToLower(file.Name), "bios") {
+				t.Fatalf("manifest leaked client runtime file: %#v", file)
+			}
+		}
+	}
+	if _, ok := byTitle["World Soccer Winning Eleven Arcade Game 2003"]; !ok {
+		t.Fatalf("titles = %#v, descriptor title was not imported", byTitle)
+	}
+	secondJob, err := NewWithWorkerCount(st, func() int { return 2 }).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondJob.IndexedFiles != 0 || secondJob.SkippedFiles != 3 || secondJob.ErrorCount != 0 {
+		t.Fatalf("second job = %#v, want three unchanged descriptors skipped", secondJob)
+	}
+}
+
+func TestKonamiPython1DescriptorRejectsDependencyPathEscape(t *testing.T) {
+	data := []byte(`[Game]
+Name=Unsafe
+CfImagePath=../bios/system.chd
+BbsRamPath=game/m48t58y.u48
+IoBootRomPath=game/b22a01.u42
+IoConfigRomPath=game/d72872gc.crom
+InternalDonglePath=game/ds2430.u3
+MemoryCardDonglePath=game/kn00002.ps2
+MemoryCardIdPath=game/kn00002.id
+`)
+	if _, err := parseKonamiPython1Descriptor(data); err == nil || !strings.Contains(err.Error(), "escapes game directory") {
+		t.Fatalf("parse error = %v, want path escape rejection", err)
+	}
+}
+
 func TestScanLibraryIndexesSaturnCUEAsOneLaunchableGame(t *testing.T) {
 	t.Setenv("FOLIOSPACE_SCAN_WORKERS", "2")
 	root := t.TempDir()
@@ -2198,6 +2466,190 @@ FILE "Guardian Heroes (Track 02).WAV" WAVE
 	}
 	if secondJob.IndexedFiles != 0 || secondJob.SkippedFiles != 1 || secondJob.ErrorCount != 0 {
 		t.Fatalf("second job = %#v, want one unchanged Saturn disc skipped", secondJob)
+	}
+}
+
+func TestScanLibraryIndexes3DOCUEAndSingleFileImages(t *testing.T) {
+	t.Setenv("FOLIOSPACE_SCAN_WORKERS", "2")
+	root := t.TempDir()
+	gameDir := filepath.Join(root, "3DO", "Gex")
+	if err := os.MkdirAll(gameDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"Gex.cue":     "FILE \"GEX.BIN\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n",
+		"gex.bin":     "3do-track",
+		"panafz1.bin": "3do-bios",
+	}
+	for name, contents := range files {
+		if err := os.WriteFile(filepath.Join(gameDir, name), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name := range map[string]struct{}{"Super Street Fighter II Turbo.iso": {}, "Yu Yu Hakusho.chd": {}} {
+		if err := os.WriteFile(filepath.Join(root, "3DO", name), []byte("disc-image"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 3 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want three 3DO games without BIOS entries", job)
+	}
+	games, err := st.ListRecentGames(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 3 {
+		t.Fatalf("games = %#v, want CUE, ISO, and CHD only", games)
+	}
+	for _, game := range games {
+		if game.Platform != "3do" || game.ROMSetName != "3DO" || game.EmulatorHint != "opera" || game.CatalogRole != "game" {
+			t.Fatalf("game = %#v, want canonical 3DO metadata", game)
+		}
+		if game.Title == "panafz1" {
+			t.Fatal("3DO BIOS was published as a game")
+		}
+		if game.Format == "cue" {
+			indexed, err := st.GameFiles(game.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(indexed) != 2 || indexed[0].Name != "Gex.cue" || indexed[0].Role != "entry" || indexed[1].Name != "GEX.BIN" || indexed[1].Role != "dependency" {
+				t.Fatalf("3DO CUE files = %#v", indexed)
+			}
+		}
+	}
+}
+
+func TestGameTitlePreservingDiscLabel(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		want string
+	}{
+		{"D no Shokutaku (Japan) (Disc 1).cue", "D no Shokutaku (Disc 1)"},
+		{"D no Shokutaku (Japan) (Disc 2).cue", "D no Shokutaku (Disc 2)"},
+		{"Gex (Europe).cue", "Gex"},
+	} {
+		if got := gameTitlePreservingDiscLabel(test.name); got != test.want {
+			t.Fatalf("gameTitlePreservingDiscLabel(%q) = %q, want %q", test.name, got, test.want)
+		}
+	}
+}
+
+func TestScanLibraryIndexesNDSAsSingleFileGame(t *testing.T) {
+	root := t.TempDir()
+	ndsDir := filepath.Join(root, "Nintendo DS")
+	if err := os.MkdirAll(ndsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, contents := range map[string]string{
+		"Mario Kart DS.nds": "nds-rom",
+		"bios7.bin":         "bios",
+		"bios9.bin":         "bios",
+		"firmware.bin":      "firmware",
+		"nand.dsi":          "dsi-nand",
+	} {
+		if err := os.WriteFile(filepath.Join(ndsDir, name), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 1 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want one NDS game and no firmware entries", job)
+	}
+	games, err := st.ListRecentGames(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("games = %#v, want one NDS game", games)
+	}
+	game := games[0]
+	if game.Platform != "nds" || game.ROMSetName != "Nintendo DS" || game.EmulatorHint != "melonds-ds" || game.Format != "nds" {
+		t.Fatalf("game = %#v, want canonical NDS metadata", game)
+	}
+	indexed, err := st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(indexed) != 1 || indexed[0].Name != "Mario Kart DS.nds" || indexed[0].Role != "entry" {
+		t.Fatalf("NDS files = %#v", indexed)
+	}
+}
+
+func TestScanLibraryIndexesSingleNDSROMInsideZIP(t *testing.T) {
+	root := t.TempDir()
+	ndsDir := filepath.Join(root, "NDS")
+	archivePath := filepath.Join(ndsDir, "(NDS) 0001 - Electroplankton (J)(Trashman).zip")
+	romName := "0001 - Electroplankton (J)(Trashman).nds"
+	romBody := "nds-rom-body"
+	makeZip(t, archivePath, map[string]string{
+		romName:                  romBody,
+		"__MACOSX/._ignored.nds": "resource-fork",
+	})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 1 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want one zipped NDS game", job)
+	}
+	games, err := st.ListRecentGames(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(games) != 1 {
+		t.Fatalf("games = %#v, want one zipped NDS game", games)
+	}
+	game := games[0]
+	if game.Title != "Electroplankton" || game.Platform != "nds" || game.Region != "Japan" || game.Format != "nds" || game.Size != int64(len(romBody)) || game.FilePath != archivePath {
+		t.Fatalf("game = %#v, want normalized zipped NDS metadata", game)
+	}
+	files, err := st.GameFiles(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Name != romName || files[0].FilePath != archivePath || files[0].Role != "entry" || files[0].Size != int64(len(romBody)) {
+		t.Fatalf("files = %#v, want inner NDS entry", files)
 	}
 }
 
@@ -2960,6 +3412,7 @@ func TestInspectConsoleROMZIPRecognizesCartridgeFormats(t *testing.T) {
 		{name: "Game Boy", entry: "game.gb", body: []byte("rom"), platform: "gb", format: "gb", emulator: "gambatte", romSetName: "GB"},
 		{name: "Game Boy Color", entry: "game.gbc", body: []byte("rom"), platform: "gbc", format: "gbc", emulator: "gambatte", romSetName: "GBC"},
 		{name: "Game Boy Advance", entry: "game.gba", body: []byte("rom"), platform: "gba", format: "gba", emulator: "mgba", romSetName: "GBA"},
+		{name: "Nintendo DS", entry: "game.nds", body: []byte("rom"), platform: "nds", format: "nds", emulator: "melonds-ds", romSetName: "Nintendo DS"},
 		{name: "Mega Drive MD", entry: "game.md", body: []byte("rom"), platform: "md", format: "md", emulator: "genesisplusgx", romSetName: "Mega Drive"},
 		{name: "Mega Drive GEN", entry: "game.gen", body: []byte("rom"), platform: "md", format: "gen", emulator: "genesisplusgx", romSetName: "Mega Drive"},
 	}

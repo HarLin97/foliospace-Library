@@ -201,6 +201,53 @@ func TestOpenConsoleZIPGameStreamsInnerROM(t *testing.T) {
 	}
 }
 
+func TestOpenNDSZIPGameStreamsInnerROM(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "Elite Beat Agents (USA).zip")
+	romName := "Elite Beat Agents (USA).nds"
+	rom := []byte("nds-rom-body")
+	if err := makeZipBytesAt(zipPath, map[string][]byte{romName: rom}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("NDS", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Elite Beat Agents", Platform: "nds", ROMSetName: "Nintendo DS", Format: "nds",
+		FilePath: zipPath, RelPath: romName, Size: int64(len(rom)), MTime: time.Now(),
+		EmulatorHint: "melonds-ds", Compatibility: "untested", CatalogRole: "game",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{{
+		Name: romName, FilePath: zipPath, Size: int64(len(rom)), MTime: time.Now(), Role: "entry", Position: 0,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := New(st).OpenGameFile(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	got, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, rom) {
+		t.Fatalf("OpenGameFile returned %q, want %q", got, rom)
+	}
+}
+
 func TestOpenVirtualBoyZIPGameStreamsInnerROM(t *testing.T) {
 	root := t.TempDir()
 	zipPath := filepath.Join(root, "3-D Tetris (USA).zip")

@@ -4,6 +4,19 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.994 Release: Offline Identity and Expanded Game Delivery
+
+Release `0.994` expands native game delivery and adds stable offline identity for books and comics.
+
+- Nintendo DS `.nds` files and supported single-ROM ZIP packages are indexed as canonical `nds` games, matched against Nintendo DS artwork, and negotiated only with the exact `melonds-ds` core on supported physical Apple clients.
+- 3DO `.cue`, `.iso`, and `.chd` images are indexed as canonical `3do` games. CUE manifests preserve every referenced track, exclude BIOS files from the public catalog, and require an Opera-compatible client runtime.
+- Konami Python 1 `.py1` descriptors are indexed as one game with their seven validated relative dependencies, complete file checksums, and an explicit `pcsx2-reliquary` launch contract.
+- PC-98 mixed packages containing `USER.FDI` plus CUE/BIN CD media are published as one launchable game with a complete ordered manifest instead of separate or missing entries.
+- Audited NAOMI Project Justice revisions preserve canonical clone and parent identities, while Atomiswave manifests include the shared `awbios.zip` dependency when required.
+- Game file downloads support HTTP Range requests, enabling resumable downloads and large-image streaming without restarting from byte zero.
+- Book, EPUB, PDF, CBZ, and ZIP DTOs add nullable `contentHash`, `contentHashAlgorithm`, `fileSize`, and `contentRevision` fields. A serialized background worker computes full-file SHA-256 values without blocking list or manifest requests and invalidates them when source bytes or page manifests change.
+- Existing Client API routes remain backward compatible. Service, Client API, Web, and MCP metadata report version `0.994`.
+
 ## 0.993 Release: Virtual Boy and Dynamic Platform Catalog
 
 Release `0.993` adds Nintendo Virtual Boy support and removes the need for clients to hard-code game-platform filters.
@@ -244,7 +257,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.993
+docker pull funland/foliospace-library:0.994
 ```
 
 ```bash
@@ -254,7 +267,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.993
+  funland/foliospace-library:0.994
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

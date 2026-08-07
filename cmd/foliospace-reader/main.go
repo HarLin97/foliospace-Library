@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"runtime/debug"
@@ -32,7 +33,12 @@ func main() {
 		log.Printf("marked %d interrupted scan job(s) as cancelled", count)
 	}
 
-	api := httpapi.NewWithOptions(service.NewWithConfig(appStore, cfg.ConfigDir), http.FileServer(http.Dir("web/dist")), httpapi.Options{
+	appService := service.NewWithConfig(appStore, cfg.ConfigDir)
+	if err := appService.RetryFailedContentHashes(); err != nil {
+		log.Printf("failed to requeue content hashes: %v", err)
+	}
+	appService.StartContentHashWorker(context.Background())
+	api := httpapi.NewWithOptions(appService, http.FileServer(http.Dir("web/dist")), httpapi.Options{
 		APIToken:                  cfg.APIToken,
 		DisableGameLaunchResolver: cfg.DisableGameLaunchResolver,
 	})

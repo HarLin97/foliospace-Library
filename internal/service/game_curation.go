@@ -249,6 +249,9 @@ func gameCurationIssue(game domain.GameAsset, readyProfiles int, policies []doma
 }
 
 func (s *Service) handleCompletedScan(library domain.Library, job domain.ScanJob) {
+	// A completed scan is also a safe retry point for files that failed hashing
+	// earlier because a mount or permission was temporarily unavailable.
+	_ = s.store.RetryFailedContentHashes()
 	if library.AssetType != "game" && library.AssetType != "mixed" {
 		return
 	}

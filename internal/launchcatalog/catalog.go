@@ -117,11 +117,47 @@ func CatalogRole(game domain.GameAsset, dosLaunch *domain.DOSLaunch) string {
 
 func IsKnownDependencyFile(path string) bool {
 	switch strings.ToLower(filepath.Base(strings.TrimSpace(path))) {
-	case "neogeo.zip", "segabill.zip", "ym2413_instruments.zip",
+	case "neogeo.zip", "awbios.zip", "segabill.zip", "ym2413_instruments.zip",
 		"qsound.zip", "qsound_hle.zip", "dl-1425.bin",
 		"coh1000c.zip", "coh3002c.zip":
 		return true
 	default:
 		return false
+	}
+}
+
+var atomiswaveROMSetNames = map[string]struct{}{
+	"anmlbskt": {}, "anmlbskta": {}, "basschal": {}, "basschalo": {},
+	"blokpong": {}, "claychal": {}, "demofist": {}, "dirtypig": {},
+	"dolphin": {}, "fotns": {}, "ftspeed": {}, "ggisuka": {}, "ggx15": {},
+	"kofnw": {}, "kofnwj": {}, "kofxi": {}, "kov7sprt": {}, "maxspeed": {},
+	"mslug6": {}, "ngbc": {}, "ngbcj": {}, "rangrmsn": {}, "rumblef": {},
+	"rumblef2": {}, "rumblefp": {}, "rumblf2p": {}, "salmankt": {},
+	"samsptk": {}, "sprtshot": {}, "sushibar": {}, "vfurlong": {},
+	"waidrive": {}, "xtrmhnt2": {}, "xtrmhunt": {},
+}
+
+// RequiresAtomiswaveBIOS identifies the Atomiswave sets that currently share
+// the NAOMI catalog and therefore require awbios.zip at launch time.
+func RequiresAtomiswaveBIOS(game domain.GameAsset) bool {
+	if !strings.EqualFold(strings.TrimSpace(game.Platform), "naomi") {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(filepath.Base(game.FilePath), filepath.Ext(game.FilePath))))
+	_, ok := atomiswaveROMSetNames[name]
+	return ok
+}
+
+// ParentROMSetName exposes parent/clone relationships that are part of the
+// runtime ROM-set identity but do not need a separate database column.
+func ParentROMSetName(game domain.GameAsset) string {
+	if !strings.EqualFold(strings.TrimSpace(game.Platform), "naomi") {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(game.ROMSetName)) {
+	case "pjustica":
+		return "pjustic"
+	default:
+		return ""
 	}
 }

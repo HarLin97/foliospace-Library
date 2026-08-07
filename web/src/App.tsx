@@ -4799,6 +4799,8 @@ function platformSortRank(platform: string) {
       return 72;
     case "ps2":
       return 73;
+	case "konami-python1":
+	  return 735;
     case "ngc":
       return 74;
     case "dreamcast":
@@ -4851,6 +4853,8 @@ function gamePlatformLabel(game: GameAsset) {
       return "Nintendo GameCube";
     case "ps2":
       return "PlayStation 2";
+	case "konami-python1":
+	  return "Konami Python 1";
     case "pc-fx":
       return "PC-FX";
     case "pc98":

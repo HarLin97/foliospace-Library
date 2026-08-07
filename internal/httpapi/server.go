@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"foliospace-reader/internal/domain"
+	"foliospace-reader/internal/launchcatalog"
 	"foliospace-reader/internal/service"
 )
 
@@ -34,7 +35,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.993"
+const serviceVersion = "0.994"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -470,6 +471,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			"gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat",
 			"d88", "88d", "d98", "98d", "fdi", "xdf", "hdm", "dup", "2hd", "tfd", "nfd", "hd4", "hd5", "hd9", "fdd",
 			"h01", "hdb", "ddb", "dd6", "dcp", "dcu", "flp", "img", "ima", "fim", "thd", "nhd", "hdi", "vhd", "slh", "hdn", "cmd",
+			"py1",
 		},
 		Capabilities: clientCapabilities{
 			ClientHome:            true,
@@ -935,20 +937,18 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		defer stream.Body.Close()
-		w.Header().Set("Content-Type", stream.ContentType)
+		size := int64(-1)
+		name := clientGameFileName(game)
 		if game.Platform == "n64" || game.Platform == "pc98" || game.Platform == "dos" {
-			size := game.Size
-			name := clientGameFileName(game)
+			size = game.Size
 			if game.Platform == "pc98" {
 				if files, filesErr := s.service.GameFiles(id); filesErr == nil && len(files) > 0 {
 					size = files[0].Size
 					name = files[0].Name
 				}
 			}
-			w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(name, `"`, "")))
 		}
-		_, _ = io.Copy(w, stream.Body)
+		serveGameStream(w, r, stream, size, name)
 		return
 	}
 	if strings.HasPrefix(tail, "files/") && r.Method == http.MethodGet {
@@ -963,13 +963,23 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		defer stream.Body.Close()
-		w.Header().Set("Content-Type", stream.ContentType)
-		w.Header().Set("Content-Length", strconv.FormatInt(file.Size, 10))
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(filepathBase(file.Name), `"`, "")))
-		_, _ = io.Copy(w, stream.Body)
+		serveGameStream(w, r, stream, file.Size, filepathBase(file.Name))
 		return
 	}
 	http.NotFound(w, r)
+}
+
+func serveGameStream(w http.ResponseWriter, r *http.Request, stream service.PageStream, size int64, name string) {
+	w.Header().Set("Content-Type", stream.ContentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(name, `"`, "")))
+	if seeker, ok := stream.Body.(io.ReadSeeker); ok {
+		http.ServeContent(w, r, name, time.Time{}, seeker)
+		return
+	}
+	if size >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	}
+	_, _ = io.Copy(w, stream.Body)
 }
 
 func logGameLaunchDecision(gameID int64, req domain.GameLaunchResolveRequest, profileID string, revision int, rejection string) {
@@ -2421,32 +2431,36 @@ type clientCollectionListPageResponse struct {
 }
 
 type clientBook struct {
-	ID               int64    `json:"id"`
-	CollectionID     int64    `json:"collectionId"`
-	SeriesID         int64    `json:"seriesId"`
-	CollectionTitle  string   `json:"collectionTitle,omitempty"`
-	Title            string   `json:"title"`
-	Creator          string   `json:"creator,omitempty"`
-	Description      string   `json:"description,omitempty"`
-	BookType         string   `json:"bookType"`
-	Format           string   `json:"format"`
-	PageCount        int      `json:"pageCount"`
-	CoverStatus      string   `json:"coverStatus"`
-	CoverURL         string   `json:"coverUrl"`
-	ThumbnailStatus  string   `json:"thumbnailStatus"`
-	ThumbnailURL     string   `json:"thumbnailUrl"`
-	ManifestURL      string   `json:"manifestUrl"`
-	Analyzed         bool     `json:"analyzed"`
-	AddedAt          string   `json:"addedAt"`
-	UpdatedAt        string   `json:"updatedAt"`
-	CurrentPage      int      `json:"currentPage"`
-	ProgressFraction float64  `json:"progressFraction"`
-	LastReadAt       string   `json:"lastReadAt"`
-	PrivateStatus    string   `json:"privateStatus"`
-	Favorite         bool     `json:"favorite"`
-	Rating           int      `json:"rating"`
-	Tags             []string `json:"tags"`
-	Summary          string   `json:"summary"`
+	ID                   int64    `json:"id"`
+	CollectionID         int64    `json:"collectionId"`
+	SeriesID             int64    `json:"seriesId"`
+	CollectionTitle      string   `json:"collectionTitle,omitempty"`
+	Title                string   `json:"title"`
+	Creator              string   `json:"creator,omitempty"`
+	Description          string   `json:"description,omitempty"`
+	BookType             string   `json:"bookType"`
+	Format               string   `json:"format"`
+	PageCount            int      `json:"pageCount"`
+	CoverStatus          string   `json:"coverStatus"`
+	CoverURL             string   `json:"coverUrl"`
+	ThumbnailStatus      string   `json:"thumbnailStatus"`
+	ThumbnailURL         string   `json:"thumbnailUrl"`
+	ManifestURL          string   `json:"manifestUrl"`
+	Analyzed             bool     `json:"analyzed"`
+	AddedAt              string   `json:"addedAt"`
+	UpdatedAt            string   `json:"updatedAt"`
+	CurrentPage          int      `json:"currentPage"`
+	ProgressFraction     float64  `json:"progressFraction"`
+	LastReadAt           string   `json:"lastReadAt"`
+	PrivateStatus        string   `json:"privateStatus"`
+	Favorite             bool     `json:"favorite"`
+	Rating               int      `json:"rating"`
+	Tags                 []string `json:"tags"`
+	Summary              string   `json:"summary"`
+	ContentHash          *string  `json:"contentHash"`
+	ContentHashAlgorithm *string  `json:"contentHashAlgorithm"`
+	FileSize             *int64   `json:"fileSize"`
+	ContentRevision      *string  `json:"contentRevision"`
 }
 
 type clientBookListPageResponse struct {
@@ -2469,26 +2483,27 @@ type clientBookManifestResponse struct {
 }
 
 type clientGame struct {
-	ID            int64  `json:"id"`
-	AssetType     string `json:"assetType"`
-	Title         string `json:"title"`
-	Platform      string `json:"platform"`
-	ROMSetName    string `json:"romSetName,omitempty"`
-	Region        string `json:"region,omitempty"`
-	Format        string `json:"format"`
-	FileName      string `json:"fileName,omitempty"`
-	Size          int64  `json:"size"`
-	CRC32         string `json:"crc32"`
-	SHA1          string `json:"sha1"`
-	EmulatorHint  string `json:"emulatorHint"`
-	InputProfile  string `json:"inputProfile,omitempty"`
-	Compatibility string `json:"compatibility"`
-	CatalogRole   string `json:"catalogRole,omitempty"`
-	CoverURL      string `json:"coverUrl,omitempty"`
-	ManifestURL   string `json:"manifestUrl"`
-	DownloadURL   string `json:"downloadUrl,omitempty"`
-	Favorite      bool   `json:"favorite"`
-	Liked         bool   `json:"liked"`
+	ID               int64  `json:"id"`
+	AssetType        string `json:"assetType"`
+	Title            string `json:"title"`
+	Platform         string `json:"platform"`
+	ROMSetName       string `json:"romSetName,omitempty"`
+	ParentROMSetName string `json:"parentRomSetName,omitempty"`
+	Region           string `json:"region,omitempty"`
+	Format           string `json:"format"`
+	FileName         string `json:"fileName,omitempty"`
+	Size             int64  `json:"size"`
+	CRC32            string `json:"crc32"`
+	SHA1             string `json:"sha1"`
+	EmulatorHint     string `json:"emulatorHint"`
+	InputProfile     string `json:"inputProfile,omitempty"`
+	Compatibility    string `json:"compatibility"`
+	CatalogRole      string `json:"catalogRole,omitempty"`
+	CoverURL         string `json:"coverUrl,omitempty"`
+	ManifestURL      string `json:"manifestUrl"`
+	DownloadURL      string `json:"downloadUrl,omitempty"`
+	Favorite         bool   `json:"favorite"`
+	Liked            bool   `json:"liked"`
 }
 
 type clientGameManifestResponse struct {
@@ -2785,7 +2800,7 @@ func clientPlayedGameItem(item domain.PlayedGame) clientPlayedGame {
 
 func clientGameItem(game domain.GameAsset) clientGame {
 	inputProfile := ""
-	if strings.EqualFold(game.Platform, "virtualboy") || strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") || strings.EqualFold(game.Platform, "dos") || strings.EqualFold(game.Platform, "psp") || strings.EqualFold(game.Platform, "ngc") || strings.EqualFold(game.Platform, "ps2") {
+	if strings.EqualFold(game.Platform, "virtualboy") || strings.EqualFold(game.Platform, "nds") || strings.EqualFold(game.Platform, "3do") || strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") || strings.EqualFold(game.Platform, "dos") || strings.EqualFold(game.Platform, "psp") || strings.EqualFold(game.Platform, "ngc") || strings.EqualFold(game.Platform, "ps2") || strings.EqualFold(game.Platform, "konami-python1") {
 		inputProfile = "standard"
 	} else if (strings.EqualFold(game.Platform, "model2") || strings.EqualFold(game.Platform, "naomi2")) && !strings.EqualFold(game.CatalogRole, "dependency") {
 		inputProfile = "operatorArcade"
@@ -2793,26 +2808,27 @@ func clientGameItem(game domain.GameAsset) clientGame {
 		inputProfile = "mahjong"
 	}
 	return clientGame{
-		ID:            game.ID,
-		AssetType:     "game",
-		Title:         game.Title,
-		Platform:      game.Platform,
-		ROMSetName:    game.ROMSetName,
-		Region:        game.Region,
-		Format:        game.Format,
-		FileName:      clientGameFileName(game),
-		Size:          game.Size,
-		CRC32:         game.CRC32,
-		SHA1:          game.SHA1,
-		EmulatorHint:  game.EmulatorHint,
-		InputProfile:  inputProfile,
-		Compatibility: game.Compatibility,
-		CatalogRole:   game.CatalogRole,
-		CoverURL:      gameCoverURL(game.ID, game.Platform),
-		ManifestURL:   fmt.Sprintf("/api/client/games/%d/manifest", game.ID),
-		DownloadURL:   fmt.Sprintf("/api/client/games/%d/file", game.ID),
-		Favorite:      game.Favorite,
-		Liked:         game.Liked,
+		ID:               game.ID,
+		AssetType:        "game",
+		Title:            game.Title,
+		Platform:         game.Platform,
+		ROMSetName:       game.ROMSetName,
+		ParentROMSetName: launchcatalog.ParentROMSetName(game),
+		Region:           game.Region,
+		Format:           game.Format,
+		FileName:         clientGameFileName(game),
+		Size:             game.Size,
+		CRC32:            game.CRC32,
+		SHA1:             game.SHA1,
+		EmulatorHint:     game.EmulatorHint,
+		InputProfile:     inputProfile,
+		Compatibility:    game.Compatibility,
+		CatalogRole:      game.CatalogRole,
+		CoverURL:         gameCoverURL(game.ID, game.Platform),
+		ManifestURL:      fmt.Sprintf("/api/client/games/%d/manifest", game.ID),
+		DownloadURL:      fmt.Sprintf("/api/client/games/%d/file", game.ID),
+		Favorite:         game.Favorite,
+		Liked:            game.Liked,
 	}
 }
 
@@ -2860,7 +2876,9 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunc
 			Name: file.Name, Size: file.Size, Role: file.Role,
 			URL: fmt.Sprintf("/api/client/games/%d/files/%d", game.ID, file.Position),
 		}
-		if game.Platform == "dos" && file.Position == 0 {
+		if sha1 := strings.ToLower(strings.TrimSpace(file.SHA1)); sha1 != "" {
+			clientFile.Checksum = "sha1:" + sha1
+		} else if game.Platform == "dos" && file.Position == 0 {
 			clientFile.Checksum = game.SHA1
 		}
 		if game.Platform == "pc98" && file.Role != "font" && isPC98FloppyManifestFile(file.Name) {
@@ -3159,33 +3177,42 @@ func htmlEscape(value string) string {
 }
 
 func clientBookItem(book domain.Book) clientBook {
+	var fileSize *int64
+	if strings.TrimSpace(book.FilePath) != "" {
+		size := book.FileSize
+		fileSize = &size
+	}
 	return clientBook{
-		ID:               book.ID,
-		CollectionID:     book.SeriesID,
-		SeriesID:         book.SeriesID,
-		CollectionTitle:  book.CollectionTitle,
-		Title:            book.Title,
-		Creator:          book.Creator,
-		Description:      book.Description,
-		BookType:         book.BookType,
-		Format:           book.Format,
-		PageCount:        book.PageCount,
-		CoverStatus:      book.CoverStatus,
-		CoverURL:         clientCoverURL(book.ID),
-		ThumbnailStatus:  thumbnailStatus(book),
-		ThumbnailURL:     clientThumbnailURL(book.ID, "small"),
-		ManifestURL:      fmt.Sprintf("/api/client/books/%d/manifest", book.ID),
-		Analyzed:         book.Analyzed,
-		AddedAt:          formatClientTime(book.AddedAt),
-		UpdatedAt:        formatClientTime(book.UpdatedAt),
-		CurrentPage:      book.CurrentPage,
-		ProgressFraction: book.ProgressFraction,
-		LastReadAt:       formatClientTime(book.LastReadAt),
-		PrivateStatus:    book.PrivateStatus,
-		Favorite:         book.Favorite,
-		Rating:           book.Rating,
-		Tags:             book.Tags,
-		Summary:          book.Summary,
+		ID:                   book.ID,
+		CollectionID:         book.SeriesID,
+		SeriesID:             book.SeriesID,
+		CollectionTitle:      book.CollectionTitle,
+		Title:                book.Title,
+		Creator:              book.Creator,
+		Description:          book.Description,
+		BookType:             book.BookType,
+		Format:               book.Format,
+		PageCount:            book.PageCount,
+		CoverStatus:          book.CoverStatus,
+		CoverURL:             clientCoverURL(book.ID),
+		ThumbnailStatus:      thumbnailStatus(book),
+		ThumbnailURL:         clientThumbnailURL(book.ID, "small"),
+		ManifestURL:          fmt.Sprintf("/api/client/books/%d/manifest", book.ID),
+		Analyzed:             book.Analyzed,
+		AddedAt:              formatClientTime(book.AddedAt),
+		UpdatedAt:            formatClientTime(book.UpdatedAt),
+		CurrentPage:          book.CurrentPage,
+		ProgressFraction:     book.ProgressFraction,
+		LastReadAt:           formatClientTime(book.LastReadAt),
+		PrivateStatus:        book.PrivateStatus,
+		Favorite:             book.Favorite,
+		Rating:               book.Rating,
+		Tags:                 book.Tags,
+		Summary:              book.Summary,
+		ContentHash:          book.ContentHash,
+		ContentHashAlgorithm: book.ContentHashAlgorithm,
+		FileSize:             fileSize,
+		ContentRevision:      book.ContentRevision,
 	}
 }
 

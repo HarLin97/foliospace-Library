@@ -387,6 +387,47 @@ func TestAPIResolvesPragmaticConsoleDiscAndDOSProfiles(t *testing.T) {
 	}
 }
 
+func TestAtomiswaveBIOSIsIncludedInResolverAndLegacyManifest(t *testing.T) {
+	ts, games, _ := pragmaticLaunchProfileTestServer(t)
+	defer ts.Close()
+
+	request := domain.GameLaunchResolveRequest{
+		Client:   domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"},
+		Runtimes: []domain.GameRuntimeDescriptor{{ID: "flycast", Version: "2.6"}},
+	}
+	response := postLaunchResolve(t, ts.URL, games["atomiswave"].ID, "secret", request, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("resolve status=%d body=%s", response.StatusCode, response.Body)
+	}
+	var resolved clientGameLaunchResolutionResponse
+	if err := json.Unmarshal(response.Body, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.Manifest.Files) != 2 || resolved.Manifest.Files[1].Name != "awbios.zip" || resolved.Manifest.Files[1].Role != "dependency" ||
+		resolved.Manifest.Files[1].URL != "/api/client/games/"+itoa(games["awbios"].ID)+"/file" {
+		t.Fatalf("resolved manifest=%+v", resolved.Manifest)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/client/games/"+itoa(games["atomiswave"].ID)+"/manifest", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	legacyResponse, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacyResponse.Body.Close()
+	legacyBody, err := io.ReadAll(legacyResponse.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyResponse.StatusCode != http.StatusOK || !strings.Contains(string(legacyBody), `"name":"awbios.zip"`) ||
+		!strings.Contains(string(legacyBody), `"role":"dependency"`) {
+		t.Fatalf("legacy status=%d body=%s", legacyResponse.StatusCode, legacyBody)
+	}
+}
+
 func TestAPIResolvesPragmaticProfilesForAppleMobileClients(t *testing.T) {
 	ts, games, _ := pragmaticLaunchProfileTestServer(t)
 	defer ts.Close()
@@ -619,6 +660,18 @@ func pragmaticLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[strin
 	addGame("psp", "psp", "iso", "mgs.iso")
 	addGame("ngc", "ngc", "iso", "twin-snakes.iso")
 	addGame("dreamcast", "dreamcast", "chd", "crazy-taxi.chd")
+	addGame("atomiswave", "naomi", "zip", "kofxi.zip")
+	biosContents := strings.Repeat("b", 34620)
+	biosPath := createFile("awbios.zip", biosContents)
+	bios, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "awbios", Platform: "naomi", ROMSetName: "awbios", Format: "zip",
+		FilePath: biosPath, RelPath: "awbios.zip", Size: int64(len(biosContents)), MTime: time.Unix(1, 0),
+		SHA1: "cdf247154e28c4b352b962a4a523587f2fde9305", EmulatorHint: "flycast", Compatibility: "unknown", CatalogRole: "dependency",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	games["awbios"] = bios
 	dos := addGame("dos", "dos", "zip", "dos-game.zip")
 	if err := st.UpsertDOSLaunch(domain.DOSLaunch{
 		GameID: dos.ID, EntryFile: "GAME/START.BAT", EntrySource: "curated", WorkingDirectory: "GAME",

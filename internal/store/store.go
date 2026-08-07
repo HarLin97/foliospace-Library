@@ -3417,6 +3417,15 @@ func (s *Store) UpdateGameCatalogRole(gameID int64, role string) error {
 	return err
 }
 
+func (s *Store) UpdateGameCatalogRoleByPath(filePath string, role string) error {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role != "game" && role != "needs-curation" && role != "dependency" {
+		return fmt.Errorf("unsupported game catalog role %q", role)
+	}
+	_, err := s.db.Exec(`UPDATE games SET catalog_role = ?, compatibility = 'unknown', updated_at = CURRENT_TIMESTAMP WHERE file_path = ?`, role, filePath)
+	return err
+}
+
 func splitFilterValues(value string) []string {
 	parts := strings.Split(value, ",")
 	out := make([]string, 0, len(parts))
@@ -3491,6 +3500,8 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "gbc"
 	case GamePlatformCollectionID("gba"):
 		return "gba"
+	case GamePlatformCollectionID("nds"):
+		return "nds"
 	case GamePlatformCollectionID("md"):
 		return "md"
 	case GamePlatformCollectionID("neogeo"):
@@ -3503,6 +3514,8 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "cps3"
 	case GamePlatformCollectionID("32x"):
 		return "32x"
+	case GamePlatformCollectionID("3do"):
+		return "3do"
 	case GamePlatformCollectionID("model2"):
 		return "model2"
 	case GamePlatformCollectionID("model3"):
@@ -3521,6 +3534,8 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "ngc"
 	case GamePlatformCollectionID("ps2"):
 		return "ps2"
+	case GamePlatformCollectionID("konami-python1"):
+		return "konami-python1"
 	case GamePlatformCollectionID("dreamcast"):
 		return "dreamcast"
 	case GamePlatformCollectionID("pc-fx"):
@@ -3552,16 +3567,22 @@ func GamePlatformSortRank(platform string) int {
 		return 40
 	case "gba":
 		return 50
+	case "nds":
+		return 55
 	case "md", "genesis", "mega-drive", "megadrive":
 		return 60
 	case "32x":
 		return 65
+	case "3do":
+		return 68
 	case "saturn":
 		return 70
 	case "n64":
 		return 72
 	case "ps2":
 		return 73
+	case "konami-python1":
+		return 735
 	case "ngc":
 		return 74
 	case "dreamcast":
@@ -3604,6 +3625,10 @@ func GamePlatformLabel(platform string) string {
 	switch value {
 	case "nes", "snes", "gb", "gbc", "gba":
 		return strings.ToUpper(value)
+	case "nds", "ds", "nintendo-ds", "nintendo ds", "nintendods":
+		return "Nintendo DS"
+	case "3do", "panasonic 3do", "the 3do company - 3do", "3do interactive multiplayer":
+		return "3DO"
 	case "virtualboy", "virtual-boy", "virtual boy":
 		return "Virtual Boy"
 	case "md":
@@ -3646,6 +3671,8 @@ func GamePlatformLabel(platform string) string {
 		return "Nintendo GameCube"
 	case "ps2":
 		return "PlayStation 2"
+	case "konami-python1":
+		return "Konami Python 1"
 	case "arcade":
 		return "Arcade"
 	case "mame":
@@ -3705,6 +3732,10 @@ func (s *Store) CanSkipGameSet(path string, size int64, mtime time.Time, platfor
 
 func expectedGameEmulatorHint(platform string) string {
 	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "nds":
+		return "melonds-ds"
+	case "3do":
+		return "opera"
 	case "virtualboy":
 		return "virtualfriend"
 	case "pc-fx":
@@ -3717,6 +3748,8 @@ func expectedGameEmulatorHint(platform string) string {
 		return "dolphin"
 	case "ps2":
 		return "pcsx2"
+	case "konami-python1":
+		return "pcsx2-reliquary"
 	case "pc98":
 		return "np2kai"
 	case "dos":
@@ -3743,7 +3776,14 @@ func scanBooks(rows *sql.Rows) ([]domain.Book, error) {
 
 func (s *Store) UpsertFile(bookID int64, libraryID int64, absPath string, relPath string, size int64, mtime time.Time, ext string) (domain.File, error) {
 	_, err := s.db.Exec(`INSERT INTO files(book_id, library_id, abs_path, rel_path, size, mtime, ext) VALUES(?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(abs_path) DO UPDATE SET book_id = excluded.book_id, library_id = excluded.library_id, rel_path = excluded.rel_path, size = excluded.size, mtime = excluded.mtime, ext = excluded.ext, updated_at = CURRENT_TIMESTAMP`,
+		ON CONFLICT(abs_path) DO UPDATE SET book_id = excluded.book_id, library_id = excluded.library_id, rel_path = excluded.rel_path,
+			size = excluded.size, mtime = excluded.mtime, ext = excluded.ext,
+			content_hash = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN '' ELSE files.content_hash END,
+			content_hash_algorithm = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN '' ELSE files.content_hash_algorithm END,
+			content_hash_status = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN 'pending' ELSE files.content_hash_status END,
+			content_hash_error = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN '' ELSE files.content_hash_error END,
+			content_revision = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN '' ELSE files.content_revision END,
+			updated_at = CURRENT_TIMESTAMP`,
 		bookID, libraryID, absPath, relPath, size, mtime.Format(time.RFC3339Nano), ext)
 	if err != nil {
 		return domain.File{}, err
@@ -3781,7 +3821,14 @@ func (s *Store) UpsertBasicBookFile(libraryID int64, seriesTitle string, directo
 	}
 
 	if _, err := tx.Exec(`INSERT INTO files(book_id, library_id, abs_path, rel_path, size, mtime, ext) VALUES(?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(abs_path) DO UPDATE SET book_id = excluded.book_id, library_id = excluded.library_id, rel_path = excluded.rel_path, size = excluded.size, mtime = excluded.mtime, ext = excluded.ext, updated_at = CURRENT_TIMESTAMP`,
+		ON CONFLICT(abs_path) DO UPDATE SET book_id = excluded.book_id, library_id = excluded.library_id, rel_path = excluded.rel_path,
+			size = excluded.size, mtime = excluded.mtime, ext = excluded.ext,
+			content_hash = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN '' ELSE files.content_hash END,
+			content_hash_algorithm = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN '' ELSE files.content_hash_algorithm END,
+			content_hash_status = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN 'pending' ELSE files.content_hash_status END,
+			content_hash_error = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN '' ELSE files.content_hash_error END,
+			content_revision = CASE WHEN files.size <> excluded.size OR files.mtime <> excluded.mtime THEN '' ELSE files.content_revision END,
+			updated_at = CURRENT_TIMESTAMP`,
 		bookID, libraryID, absPath, relPath, size, mtime.Format(time.RFC3339Nano), ext); err != nil {
 		return domain.Book{}, err
 	}
@@ -3888,7 +3935,10 @@ func (s *Store) ReplacePages(bookID int64, pages []domain.Page) error {
 		_ = tx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.RefreshBookContentRevision(bookID)
 }
 
 func (s *Store) ListPages(bookID int64) ([]domain.Page, error) {
@@ -4692,6 +4742,9 @@ func scanBook(row scanner) (domain.Book, error) {
 	var updatedAt string
 	var lastReadAt string
 	var fileMTime string
+	var contentHash string
+	var contentHashAlgorithm string
+	var contentRevision string
 	var tags string
 	if err := row.Scan(
 		&book.ID,
@@ -4707,6 +4760,9 @@ func scanBook(row scanner) (domain.Book, error) {
 		&book.FilePath,
 		&book.FileSize,
 		&fileMTime,
+		&contentHash,
+		&contentHashAlgorithm,
+		&contentRevision,
 		&addedAt,
 		&updatedAt,
 		&book.CurrentPage,
@@ -4728,10 +4784,21 @@ func scanBook(row scanner) (domain.Book, error) {
 	book.Favorite = favorite != 0
 	book.Tags = decodeTags(tags)
 	book.FileMTime = parseTime(fileMTime)
+	book.ContentHash = optionalString(contentHash)
+	book.ContentHashAlgorithm = optionalString(contentHashAlgorithm)
+	book.ContentRevision = optionalString(contentRevision)
 	book.AddedAt = parseTime(addedAt)
 	book.UpdatedAt = parseTime(updatedAt)
 	book.LastReadAt = parseTime(lastReadAt)
 	return book, nil
+}
+
+func optionalString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func encodeTags(tags []string) string {
@@ -4775,7 +4842,9 @@ func profileIDSQL(profileID int64) string {
 func bookSelectSQL(profileID int64) string {
 	profileIDValue := profileIDSQL(profileID)
 	return `SELECT b.id, b.series_id, s.title, b.title, b.creator, b.description, b.format, b.page_count, b.cover_status, b.analyzed,
-			COALESCE(f.abs_path, ''), COALESCE(f.size, 0), COALESCE(f.mtime, ''), b.created_at, b.updated_at,
+				COALESCE(f.abs_path, ''), COALESCE(f.size, 0), COALESCE(f.mtime, ''),
+				COALESCE(NULLIF(f.content_hash, ''), ''), COALESCE(NULLIF(f.content_hash_algorithm, ''), ''), COALESCE(NULLIF(f.content_revision, ''), ''),
+				b.created_at, b.updated_at,
 			COALESCE(rp.page_index, 0), COALESCE(rp.progress_fraction, 0), COALESCE(rp.updated_at, ''),
 			COALESCE(ps.private_status, ''), COALESCE(ps.favorite, 0), COALESCE(ps.rating, 0),
 			TRIM(COALESCE(b.tags, '') ||

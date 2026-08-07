@@ -25,6 +25,82 @@ import (
 	"foliospace-reader/internal/store"
 )
 
+func TestServeGameStreamSupportsRangeRequests(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "game-*.nds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("0123456789"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/client/games/1/files/0", nil)
+	req.Header.Set("Range", "bytes=2-5")
+	recorder := httptest.NewRecorder()
+	serveGameStream(recorder, req, service.PageStream{Body: file, ContentType: "application/octet-stream"}, 10, "game.nds")
+	resp := recorder.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusPartialContent || string(body) != "2345" || resp.Header.Get("Accept-Ranges") != "bytes" {
+		t.Fatalf("range response status=%d body=%q headers=%v", resp.StatusCode, body, resp.Header)
+	}
+}
+
+func TestProjectJusticeRevAManifestUsesCanonicalCloneName(t *testing.T) {
+	game := domain.GameAsset{
+		ID:           15961,
+		Title:        "Project Justice / Moero! Justice Gakuen (Rev A)",
+		Platform:     "naomi",
+		ROMSetName:   "pjustica",
+		Format:       "zip",
+		RelPath:      "NAOMI/pjustica.zip",
+		FilePath:     "/games/NAOMI/pjustic.zip",
+		EmulatorHint: "flycast",
+		CatalogRole:  "game",
+	}
+	manifest := clientGameManifest(game, []domain.GameFile{{
+		Name: "pjustica.zip", FilePath: game.FilePath, Role: "entry", Position: 0,
+	}}, nil)
+	if manifest.Game.FileName != "pjustica.zip" || manifest.Game.ParentROMSetName != "pjustic" {
+		t.Fatalf("manifest game = %#v", manifest.Game)
+	}
+	if manifest.EntryFile == nil || *manifest.EntryFile != "pjustica.zip" || len(manifest.Files) != 1 || manifest.Files[0].Name != "pjustica.zip" {
+		t.Fatalf("manifest = %#v", manifest)
+	}
+}
+
+func TestKonamiPython1ManifestPreservesRelativeDependenciesAndChecksums(t *testing.T) {
+	game := domain.GameAsset{
+		ID: 19001, Title: "World Soccer Winning Eleven Arcade Game", Platform: "konami-python1",
+		ROMSetName: "KONAMI-PYTHON1", Format: "py1", RelPath: "KONAMI/kpython1/wswe.py1",
+		FilePath: "/games/KONAMI/kpython1/wswe.py1", EmulatorHint: "pcsx2-reliquary", CatalogRole: "game",
+	}
+	files := []domain.GameFile{
+		{Name: "wswe.py1", Size: 100, SHA1: strings.Repeat("1", 40), Role: "entry", Position: 0},
+		{Name: "wswe/c18jaa03.chd", Size: 200, SHA1: strings.Repeat("2", 40), Role: "dependency", Position: 1},
+		{Name: "wswe/m48t58y.u48", Size: 10, SHA1: strings.Repeat("3", 40), Role: "dependency", Position: 2},
+		{Name: "wswe/b22a01.u42", Size: 10, SHA1: strings.Repeat("4", 40), Role: "dependency", Position: 3},
+		{Name: "wswe/d72872gc.crom", Size: 10, SHA1: strings.Repeat("5", 40), Role: "dependency", Position: 4},
+		{Name: "wswe/ds2430.u3", Size: 10, SHA1: strings.Repeat("6", 40), Role: "dependency", Position: 5},
+		{Name: "wswe/kn00002.ps2", Size: 10, SHA1: strings.Repeat("7", 40), Role: "dependency", Position: 6},
+		{Name: "wswe/kn00002.id", Size: 10, SHA1: strings.Repeat("8", 40), Role: "dependency", Position: 7},
+	}
+	manifest := clientGameManifest(game, files, nil)
+	if manifest.EntryFile == nil || *manifest.EntryFile != "wswe.py1" || manifest.Game.InputProfile != "standard" || len(manifest.Files) != 8 {
+		t.Fatalf("manifest = %#v", manifest)
+	}
+	if manifest.Files[1].Name != "wswe/c18jaa03.chd" || manifest.Files[1].Checksum != "sha1:"+strings.Repeat("2", 40) {
+		t.Fatalf("dependency = %#v", manifest.Files[1])
+	}
+}
+
 func TestAPIIndexesAndStreamsCBZPages(t *testing.T) {
 	root := t.TempDir()
 	makeZip(t, filepath.Join(root, "Series A", "book1.cbz"), map[string]string{"001.jpg": "image"})
@@ -755,7 +831,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 
 	infoBody := get(t, ts.URL+"/api/client/info")
-	if !strings.Contains(infoBody, `"serviceVersion":"0.993"`) ||
+	if !strings.Contains(infoBody, `"serviceVersion":"0.994"`) ||
 		!strings.Contains(infoBody, `"apiVersion":"v1"`) ||
 		!strings.Contains(infoBody, `"epub"`) ||
 		!strings.Contains(infoBody, `"pdf"`) ||

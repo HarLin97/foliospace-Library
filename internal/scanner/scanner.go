@@ -1007,6 +1007,25 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 	if platform == "naomi2" {
 		return s.canSkipNaomi2Game(path, info)
 	}
+	if ext == ".zip" && (platform == "naomi" || isProjectJusticeArchiveName(path)) {
+		identity, detected, err := inspectNaomiROMZIP(path)
+		if err != nil {
+			return false
+		}
+		if detected {
+			game, err := s.store.GameByPath(path)
+			if err != nil {
+				return false
+			}
+			files, err := s.store.GameFiles(game.ID)
+			canonicalName := identity.romSetName + ".zip"
+			return err == nil && game.Size == info.Size() && game.MTime.Equal(info.ModTime()) &&
+				game.Title == identity.title && game.Platform == "naomi" && game.ROMSetName == identity.romSetName &&
+				game.Format == "zip" && game.EmulatorHint == "flycast" && strings.EqualFold(game.CatalogRole, launchcatalog.RoleGame) &&
+				game.CRC32 != "" && game.SHA1 != "" && len(files) == 1 && files[0].Role == "entry" &&
+				files[0].Name == canonicalName && files[0].FilePath == path && files[0].Size == info.Size() && files[0].SHA1 != ""
+		}
+	}
 	if platform == "n64" && ext == ".zip" {
 		game, err := s.store.GameByPath(path)
 		if err != nil || !game.MTime.Equal(info.ModTime()) || game.Platform != "n64" || game.EmulatorHint != "mupen64plus" || game.CRC32 == "" || game.SHA1 == "" || !isN64RawExt("."+game.Format) {
@@ -1016,6 +1035,16 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 		return err == nil && len(files) == 1 && files[0].Role == "entry" && files[0].Size == game.Size
 	}
 	if platform == "pc98" {
+		if pkg, matched := pc98MixedCDPackageForPath(path); matched && sameFilePath(path, pkg.entryPath) {
+			game, err := s.store.GameByPath(path)
+			if err != nil {
+				return false
+			}
+			storedFiles, err := s.store.GameFiles(game.ID)
+			if err != nil || !samePC98MixedCDPackageFiles(pkg.files, storedFiles) {
+				return false
+			}
+		}
 		fonts, err := pc98PackageFontFiles(path)
 		if err != nil {
 			return false
@@ -1153,7 +1182,7 @@ func (s *Scanner) applyScanControl(job *domain.ScanJob) error {
 }
 
 func classifyFileKind(library domain.Library, path string, ext string) string {
-	if shouldSkipScanFile(path) || isDiscTrackDependency(path) || isPegasusIgnoredFile(path) {
+	if shouldSkipScanFile(path) || isPegasusIgnoredFile(path) {
 		return ""
 	}
 	if library.AssetType == "game" {
@@ -1177,9 +1206,21 @@ func classifyFileKind(library domain.Library, path string, ext string) string {
 			if hasPC98NegativePathSignal(relPath) || isPC98ExcludedFile(path) {
 				return ""
 			}
+			if pkg, matched := pc98MixedCDPackageForPath(path); matched {
+				if sameFilePath(path, pkg.entryPath) {
+					return "game"
+				}
+				return ""
+			}
+			if isDiscTrackDependency(path) {
+				return ""
+			}
 			if isPC98MediaExt(ext) || ext == ".zip" {
 				return "game"
 			}
+			return ""
+		}
+		if isDiscTrackDependency(path) {
 			return ""
 		}
 		relPath, err := filepath.Rel(library.RootPath, path)
@@ -1198,6 +1239,9 @@ func classifyFileKind(library domain.Library, path string, ext string) string {
 		if isGameExt(ext) || isGamePackageExt(ext) {
 			return "game"
 		}
+		return ""
+	}
+	if isDiscTrackDependency(path) {
 		return ""
 	}
 	if library.AssetType == "video" {
@@ -1225,7 +1269,7 @@ func classifyFileKind(library domain.Library, path string, ext string) string {
 
 func isDedicatedDiscPlatform(platform string) bool {
 	switch platform {
-	case "psp", "ngc", "ps2":
+	case "nds", "3do", "psp", "ngc", "ps2", "konami-python1":
 		return true
 	default:
 		return false
@@ -1234,12 +1278,18 @@ func isDedicatedDiscPlatform(platform string) bool {
 
 func isDedicatedDiscPlatformFormat(platform, ext string) bool {
 	switch platform {
+	case "nds":
+		return ext == ".nds" || ext == ".zip"
+	case "3do":
+		return ext == ".cue" || ext == ".iso" || ext == ".chd"
 	case "psp":
 		return ext == ".iso" || ext == ".cso"
 	case "ngc":
 		return ext == ".iso" || ext == ".gcm" || ext == ".rvz"
 	case "ps2":
 		return ext == ".iso" || ext == ".chd"
+	case "konami-python1":
+		return ext == ".py1"
 	default:
 		return false
 	}
@@ -1255,7 +1305,7 @@ func isGamePackageExt(ext string) bool {
 
 func isGameExt(ext string) bool {
 	switch ext {
-	case ".nes", ".sfc", ".smc", ".vb", ".vboy", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".z64", ".v64", ".n64", ".gdi", ".cdi", ".chd", ".iso", ".bin", ".cue", ".ccd", ".toc", ".m3u", ".img", ".pbp", ".cso", ".gcm", ".rvz":
+	case ".nes", ".sfc", ".smc", ".vb", ".vboy", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".z64", ".v64", ".n64", ".gdi", ".cdi", ".chd", ".iso", ".bin", ".cue", ".ccd", ".toc", ".m3u", ".img", ".pbp", ".cso", ".gcm", ".rvz", ".py1":
 		return true
 	default:
 		return false
@@ -1361,6 +1411,15 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	if platform == "naomi2" {
 		return s.indexNaomi2GameFile(library, path, info, relPath)
 	}
+	naomiIdentity := naomiROMSetIdentity{}
+	naomiROMDetected := false
+	if ext == ".zip" && (platform == "naomi" || isProjectJusticeArchiveName(path)) {
+		naomiIdentity, naomiROMDetected, err = inspectNaomiROMZIP(path)
+		if err != nil {
+			_ = s.store.UpdateGameCatalogRoleByPath(path, launchcatalog.RoleNeedsCuration)
+			return err
+		}
+	}
 	consoleROM := consoleROMInfo{}
 	consoleROMDetected := false
 	if ext == ".zip" {
@@ -1380,6 +1439,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	compatibility := "unknown"
 	catalogRole := "game"
 	bootabilityChecked := false
+	var pc98Package *pc98MixedCDPackage
 	if consoleROMDetected {
 		romSetName, emulatorHint = consolePlatformMetadata(platform)
 		if consoleROM.definitive {
@@ -1393,6 +1453,18 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		} else {
 			catalogRole = launchcatalog.RoleNeedsCuration
 		}
+	}
+	if naomiROMDetected {
+		title = naomiIdentity.title
+		platform = "naomi"
+		romSetName = naomiIdentity.romSetName
+		emulatorHint = "flycast"
+		format = "zip"
+		compatibility = "playable"
+		catalogRole = launchcatalog.RoleGame
+		canonicalName := naomiIdentity.romSetName + ".zip"
+		gameFiles = []domain.GameFile{{Name: canonicalName, FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0}}
+		relPath = filepath.Join(filepath.Dir(relPath), canonicalName)
 	}
 	if canonicalROMSetName, canonicalEmulatorHint, canonicalCatalogRole, ok := canonicalArcadeCatalogMetadata(platform, path, ext); ok {
 		romSetName = canonicalROMSetName
@@ -1433,6 +1505,11 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		compatibility = media.compatibility
 		bootabilityChecked = media.bootabilityChecked
 		gameFiles = []domain.GameFile{{Name: media.name, FilePath: path, Size: media.size, MTime: info.ModTime(), Role: "entry", Position: 0}}
+		if pkg, matched := pc98MixedCDPackageForPath(path); matched && sameFilePath(path, pkg.entryPath) {
+			pc98Package = &pkg
+			gameFiles = pkg.files
+			totalSize = gameFilesSize(gameFiles)
+		}
 		if ext == ".zip" {
 			relPath = filepath.Join(filepath.Dir(relPath), media.name)
 		}
@@ -1443,7 +1520,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		}
 	}
 	pegasus, hasPegasus := pegasusEntryForGame(library.RootPath, path)
-	if hasPegasus && strings.TrimSpace(pegasus.Name) != "" {
+	if hasPegasus && strings.TrimSpace(pegasus.Name) != "" && !naomiROMDetected {
 		title = strings.TrimSpace(pegasus.Name)
 	}
 	if platform == "model2" {
@@ -1462,6 +1539,22 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		romSetName = "Virtual Boy"
 		emulatorHint = "virtualfriend"
 		compatibility = "untested"
+	} else if platform == "nds" {
+		if consoleROMDetected && consoleROM.definitive {
+			title = ndsGameTitle(consoleROM.name)
+		} else {
+			title = ndsGameTitle(path)
+		}
+		romSetName = "Nintendo DS"
+		emulatorHint = "melonds-ds"
+		compatibility = "untested"
+	} else if platform == "3do" {
+		if !hasPegasus {
+			title = gameTitlePreservingDiscLabel(path)
+		}
+		romSetName = "3DO"
+		emulatorHint = "opera"
+		compatibility = "untested"
 	} else if platform == "psp" {
 		romSetName = "PSP"
 		emulatorHint = "ppsspp"
@@ -1471,6 +1564,15 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	} else if platform == "ps2" {
 		romSetName = "PS2"
 		emulatorHint = "pcsx2"
+	} else if platform == "konami-python1" {
+		descriptor, descriptorErr := readKonamiPython1Descriptor(path)
+		if descriptorErr != nil {
+			return descriptorErr
+		}
+		title = descriptor.Name
+		romSetName = "KONAMI-PYTHON1"
+		emulatorHint = "pcsx2-reliquary"
+		compatibility = "untested"
 	} else if platform == "dreamcast" {
 		romSetName = "DC"
 	} else if platform == "saturn" {
@@ -1482,7 +1584,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 			title = pcfxDirectoryTitle(library.RootPath, path)
 		}
 	}
-	if platform != "n64" && platform != "pc98" && !(consoleROMDetected && consoleROM.definitive) {
+	if platform != "n64" && platform != "pc98" && !(consoleROMDetected && consoleROM.definitive) && !naomiROMDetected {
 		gameFiles, totalSize, err = indexedGameFiles(path, info, ext)
 		if err != nil {
 			return err
@@ -1497,17 +1599,21 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 			format = "m3u"
 		}
 	}
-	if platform != "pc98" {
+	if platform != "pc98" || pc98Package != nil {
 		if err := populateGameFileSHA1(gameFiles, path, checksums.sha1, format); err != nil {
 			return err
 		}
+	}
+	regionSource := path
+	if consoleROMDetected && consoleROM.definitive {
+		regionSource = consoleROM.name
 	}
 	gameAsset := domain.GameAsset{
 		LibraryID:     library.ID,
 		Title:         title,
 		Platform:      platform,
 		ROMSetName:    romSetName,
-		Region:        inferRegion(path),
+		Region:        inferRegion(regionSource),
 		Format:        format,
 		FilePath:      path,
 		RelPath:       filepath.ToSlash(relPath),
@@ -1526,6 +1632,13 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	}
 	var game domain.GameAsset
 	if platform == "pc98" {
+		if pc98Package != nil {
+			for _, stalePath := range pc98Package.staleSourcePaths {
+				if err := s.store.DeleteGameByPath(stalePath); err != nil {
+					return err
+				}
+			}
+		}
 		sourceTitle, groupKey, diskOrder := pc98SourceIdentity(library.RootPath, path, mediaName(gameFiles, path))
 		if isBlockedPC98SpecialDiskTitle(sourceTitle) {
 			_ = s.store.DeleteGameByPath(path)
@@ -1534,7 +1647,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		gameAsset.Title = sourceTitle
 		game, err = s.store.UpsertPC98GameSource(gameAsset, domain.GameSource{
 			LibraryID: library.ID, Title: sourceTitle, FilePath: path, RelPath: gameAsset.RelPath,
-			EntryName: mediaName(gameFiles, path), Format: gameAsset.Format, Size: totalSize, ContainerSize: info.Size(),
+			EntryName: mediaName(gameFiles, path), Format: gameAsset.Format, Size: gameFiles[0].Size, ContainerSize: info.Size(),
 			MTime: info.ModTime(), CRC32: checksums.crc32, SHA1: checksums.sha1, GroupKey: groupKey, DiskOrder: diskOrder,
 			Compatibility: compatibility, BootabilityChecked: bootabilityChecked,
 		})
@@ -1545,6 +1658,11 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		return err
 	}
 	if platform == "pc98" {
+		if pc98Package != nil {
+			if err := s.store.ReplaceGameFiles(game.ID, gameFiles); err != nil {
+				return err
+			}
+		}
 		if err := s.syncPC98SupportFiles(game.ID); err != nil {
 			return err
 		}
@@ -1972,6 +2090,127 @@ type pc98MediaInfo struct {
 	checksums          checksumPair
 	compatibility      string
 	bootabilityChecked bool
+}
+
+// Some PC-98 CD releases boot from a prepared USER.FDI while loading game data
+// from a sibling CUE/BIN image. Treat that directory as one launchable package.
+type pc98MixedCDPackage struct {
+	entryPath        string
+	files            []domain.GameFile
+	staleSourcePaths []string
+}
+
+func pc98MixedCDPackageForPath(path string) (pc98MixedCDPackage, bool) {
+	dir := filepath.Dir(path)
+	entryPath, ok := caseInsensitiveSiblingPath(dir, "USER.FDI")
+	if !ok {
+		return pc98MixedCDPackage{}, false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return pc98MixedCDPackage{}, false
+	}
+	var cuePaths []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".cue") {
+			cuePaths = append(cuePaths, filepath.Join(dir, entry.Name()))
+		}
+	}
+	if len(cuePaths) != 1 {
+		return pc98MixedCDPackage{}, false
+	}
+	entryInfo, err := os.Stat(entryPath)
+	if err != nil || entryInfo.IsDir() {
+		return pc98MixedCDPackage{}, false
+	}
+	cueInfo, err := os.Stat(cuePaths[0])
+	if err != nil || cueInfo.IsDir() {
+		return pc98MixedCDPackage{}, false
+	}
+	cueFiles, _, err := indexedGameFiles(cuePaths[0], cueInfo, ".cue")
+	if err != nil || len(cueFiles) < 2 {
+		return pc98MixedCDPackage{}, false
+	}
+	files := []domain.GameFile{{
+		Name: filepath.Base(entryPath), FilePath: entryPath, Size: entryInfo.Size(), MTime: entryInfo.ModTime(), Role: "entry", Position: 0,
+	}}
+	files = append(files, domain.GameFile{
+		Name: filepath.Base(cuePaths[0]), FilePath: cuePaths[0], Size: cueInfo.Size(), MTime: cueInfo.ModTime(), Role: "dependency", Position: 1,
+	})
+	for _, file := range cueFiles[1:] {
+		file.Role = "dependency"
+		file.Position = len(files)
+		files = append(files, file)
+	}
+	if artworkPath, found := caseInsensitiveSiblingPath(dir, "KAMON.GIF"); found {
+		if artworkInfo, statErr := os.Stat(artworkPath); statErr == nil && !artworkInfo.IsDir() {
+			files = append(files, domain.GameFile{
+				Name: filepath.Base(artworkPath), FilePath: artworkPath, Size: artworkInfo.Size(), MTime: artworkInfo.ModTime(), Role: "dependency", Position: len(files),
+			})
+		}
+	}
+	stalePaths := make([]string, 0, 2)
+	for _, name := range []string{"SYSTEM.FDI", "USER.NFD"} {
+		if stalePath, found := caseInsensitiveSiblingPath(dir, name); found && !sameFilePath(stalePath, entryPath) {
+			stalePaths = append(stalePaths, stalePath)
+		}
+	}
+	managed := append([]string{entryPath}, cuePaths...)
+	for _, file := range files[2:] {
+		managed = append(managed, file.FilePath)
+	}
+	managed = append(managed, stalePaths...)
+	for _, managedPath := range managed {
+		if sameFilePath(path, managedPath) {
+			return pc98MixedCDPackage{entryPath: entryPath, files: files, staleSourcePaths: stalePaths}, true
+		}
+	}
+	return pc98MixedCDPackage{}, false
+}
+
+func caseInsensitiveSiblingPath(dir string, name string) (string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.EqualFold(entry.Name(), name) {
+			return filepath.Join(dir, entry.Name()), true
+		}
+	}
+	return "", false
+}
+
+func sameFilePath(left string, right string) bool {
+	return filepath.Clean(left) == filepath.Clean(right)
+}
+
+func gameFilesSize(files []domain.GameFile) int64 {
+	var size int64
+	for _, file := range files {
+		size += file.Size
+	}
+	return size
+}
+
+func samePC98MixedCDPackageFiles(expected []domain.GameFile, stored []domain.GameFile) bool {
+	actual := make([]domain.GameFile, 0, len(stored))
+	for _, file := range stored {
+		if file.Role != "font" {
+			actual = append(actual, file)
+		}
+	}
+	if len(expected) != len(actual) {
+		return false
+	}
+	for index := range expected {
+		if !sameFilePath(expected[index].FilePath, actual[index].FilePath) ||
+			expected[index].Name != actual[index].Name || expected[index].Role != actual[index].Role ||
+			expected[index].Size != actual[index].Size || !expected[index].MTime.Equal(actual[index].MTime) || actual[index].SHA1 == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func inspectPC98Media(path string, info fs.FileInfo, ext string) (pc98MediaInfo, error) {
@@ -2403,7 +2642,7 @@ func isPC98MediaExt(ext string) bool {
 const (
 	consoleArchiveMaxEntries           = 4096
 	consoleArchiveMaxUncompressedBytes = uint64(1 << 30)
-	consoleROMMaxBytes                 = uint64(128 << 20)
+	consoleROMMaxBytes                 = uint64(512 << 20)
 )
 
 type consoleROMInfo struct {
@@ -2413,6 +2652,100 @@ type consoleROMInfo struct {
 	size       int64
 	checksums  checksumPair
 	definitive bool
+}
+
+type naomiArchiveMember struct {
+	size  uint64
+	crc32 uint32
+}
+
+type naomiROMSetIdentity struct {
+	romSetName string
+	parent     string
+	title      string
+	bootMember string
+	members    map[string]naomiArchiveMember
+}
+
+var projectJusticeNaomiROMSetCatalog = []naomiROMSetIdentity{
+	projectJusticeNaomiROMSetIdentity("pjustica", "pjustic", "Project Justice / Moero! Justice Gakuen (Rev A)", "epr-23548a.ic22", 0xf4ccf1ec),
+	projectJusticeNaomiROMSetIdentity("pjustic", "", "Project Justice / Moero! Justice Gakuen", "epr-23548b.ic22", 0xd0dbdf40),
+}
+
+func isProjectJusticeArchiveName(path string) bool {
+	name := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	return name == "pjustic" || name == "pjustica"
+}
+
+func projectJusticeNaomiROMSetIdentity(romSetName string, parent string, title string, bootMember string, bootCRC uint32) naomiROMSetIdentity {
+	members := map[string]naomiArchiveMember{
+		bootMember:       {size: 0x0400000, crc32: bootCRC},
+		"mpr-23537.ic1":  {size: 0x1000000, crc32: 0xa2462770},
+		"mpr-23538.ic2":  {size: 0x1000000, crc32: 0xe4480832},
+		"mpr-23539.ic3":  {size: 0x1000000, crc32: 0x97e3f7f5},
+		"mpr-23540.ic4":  {size: 0x1000000, crc32: 0xb9e92d21},
+		"mpr-23541.ic5":  {size: 0x1000000, crc32: 0x95b8a9c6},
+		"mpr-23542.ic6":  {size: 0x1000000, crc32: 0xdfd490f5},
+		"mpr-23543.ic7":  {size: 0x1000000, crc32: 0x66847ebd},
+		"mpr-23544.ic8":  {size: 0x1000000, crc32: 0xd1f5b460},
+		"mpr-23545.ic9":  {size: 0x1000000, crc32: 0x60bd692f},
+		"mpr-23546.ic10": {size: 0x1000000, crc32: 0x85db2248},
+		"mpr-23547.ic11": {size: 0x1000000, crc32: 0x18b369c7},
+	}
+	return naomiROMSetIdentity{romSetName: romSetName, parent: parent, title: title, bootMember: bootMember, members: members}
+}
+
+func inspectNaomiROMZIP(path string) (naomiROMSetIdentity, bool, error) {
+	reader, err := stdzip.OpenReader(path)
+	if err != nil {
+		return naomiROMSetIdentity{}, false, fmt.Errorf("open NAOMI ROM zip: %w", err)
+	}
+	defer reader.Close()
+
+	members := make(map[string]naomiArchiveMember, len(reader.File))
+	for _, file := range reader.File {
+		if err := validateArchiveEntryName(file.Name); err != nil {
+			return naomiROMSetIdentity{}, false, err
+		}
+		if file.FileInfo().IsDir() || isIgnoredArchiveEntry(file.Name) {
+			continue
+		}
+		if file.Mode()&os.ModeSymlink != 0 || file.Flags&0x1 != 0 {
+			return naomiROMSetIdentity{}, false, fmt.Errorf("unsupported NAOMI ROM zip entry: %s", file.Name)
+		}
+		name := strings.ToLower(filepath.Base(filepath.Clean(strings.ReplaceAll(file.Name, `\`, "/"))))
+		if _, exists := members[name]; exists {
+			return naomiROMSetIdentity{}, false, fmt.Errorf("NAOMI ROM zip contains duplicate member %s", name)
+		}
+		members[name] = naomiArchiveMember{size: file.UncompressedSize64, crc32: file.CRC32}
+	}
+	return identifyProjectJusticeNaomiROMSet(members)
+}
+
+func identifyProjectJusticeNaomiROMSet(members map[string]naomiArchiveMember) (naomiROMSetIdentity, bool, error) {
+	matched := make([]naomiROMSetIdentity, 0, 1)
+	for _, identity := range projectJusticeNaomiROMSetCatalog {
+		if _, exists := members[identity.bootMember]; exists {
+			matched = append(matched, identity)
+		}
+	}
+	if len(matched) == 0 {
+		return naomiROMSetIdentity{}, false, nil
+	}
+	if len(matched) != 1 {
+		return naomiROMSetIdentity{}, true, errors.New("Project Justice archive contains boot ROMs from multiple revisions")
+	}
+	identity := matched[0]
+	for name, expected := range identity.members {
+		actual, exists := members[name]
+		if !exists {
+			return naomiROMSetIdentity{}, true, fmt.Errorf("Project Justice %s archive is missing %s", identity.romSetName, name)
+		}
+		if actual.size != expected.size || actual.crc32 != expected.crc32 {
+			return naomiROMSetIdentity{}, true, fmt.Errorf("Project Justice %s member %s has size/CRC %d/%08x, expected %d/%08x", identity.romSetName, name, actual.size, actual.crc32, expected.size, expected.crc32)
+		}
+	}
+	return identity, true, nil
 }
 
 // inspectConsoleROMZIP treats explicit cartridge ROM content as stronger
@@ -2522,6 +2855,8 @@ func consolePlatformForROMExtension(ext string) (platform string, format string,
 		return "gbc", "gbc", true
 	case ".gba":
 		return "gba", "gba", true
+	case ".nds":
+		return "nds", "nds", true
 	case ".md", ".gen":
 		return "md", strings.TrimPrefix(strings.ToLower(ext), "."), true
 	default:
@@ -2543,6 +2878,8 @@ func consolePlatformMetadata(platform string) (romSetName string, emulatorHint s
 		return "GBC", "gambatte"
 	case "gba":
 		return "GBA", "mgba"
+	case "nds":
+		return "Nintendo DS", "melonds-ds"
 	case "md":
 		return "Mega Drive", "genesisplusgx"
 	default:
@@ -2834,7 +3171,7 @@ func resolveDiscDependencyPath(dir string, cleanName string) (string, error) {
 }
 
 func isMultiFileGameDescriptor(ext string) bool {
-	return ext == ".gdi" || ext == ".cue" || ext == ".ccd" || ext == ".toc" || ext == ".m3u"
+	return ext == ".gdi" || ext == ".cue" || ext == ".ccd" || ext == ".toc" || ext == ".m3u" || ext == ".py1"
 }
 
 func discDescriptorDependencyNames(ext string, data []byte) ([]string, error) {
@@ -2849,9 +3186,98 @@ func discDescriptorDependencyNames(ext string, data []byte) ([]string, error) {
 		return tocDependencyNames(data)
 	case ".m3u":
 		return m3uDependencyNames(data)
+	case ".py1":
+		descriptor, err := parseKonamiPython1Descriptor(data)
+		if err != nil {
+			return nil, err
+		}
+		return descriptor.Dependencies, nil
 	default:
 		return nil, fmt.Errorf("unsupported descriptor format %s", ext)
 	}
+}
+
+type konamiPython1Descriptor struct {
+	Name         string
+	Dependencies []string
+}
+
+var konamiPython1DependencyKeys = []string{
+	"cfimagepath",
+	"bbsrampath",
+	"iobootrompath",
+	"ioconfigrompath",
+	"internaldonglepath",
+	"memorycarddonglepath",
+	"memorycardidpath",
+}
+
+func readKonamiPython1Descriptor(path string) (konamiPython1Descriptor, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return konamiPython1Descriptor{}, err
+	}
+	descriptor, err := parseKonamiPython1Descriptor(data)
+	if err != nil {
+		return konamiPython1Descriptor{}, fmt.Errorf("parse py1 descriptor %s: %w", path, err)
+	}
+	return descriptor, nil
+}
+
+func parseKonamiPython1Descriptor(data []byte) (konamiPython1Descriptor, error) {
+	values := make(map[string]string)
+	inGameSection := false
+	lines := strings.Split(strings.ReplaceAll(strings.TrimPrefix(string(data), "\ufeff"), "\r\n", "\n"), "\n")
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			inGameSection = strings.EqualFold(strings.TrimSpace(line[1:len(line)-1]), "Game")
+			continue
+		}
+		if !inGameSection {
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		if _, exists := values[key]; exists {
+			return konamiPython1Descriptor{}, fmt.Errorf("contains duplicate %s", key)
+		}
+		values[key] = value
+	}
+	name := strings.TrimSpace(values["name"])
+	if name == "" {
+		return konamiPython1Descriptor{}, errors.New("contains no Game.Name")
+	}
+	dependencies := make([]string, 0, len(konamiPython1DependencyKeys))
+	seen := make(map[string]struct{}, len(konamiPython1DependencyKeys))
+	for _, key := range konamiPython1DependencyKeys {
+		value := strings.TrimSpace(values[key])
+		if value == "" {
+			return konamiPython1Descriptor{}, fmt.Errorf("contains no Game.%s", key)
+		}
+		cleanName, err := cleanDiscDependencyName(value)
+		if err != nil {
+			return konamiPython1Descriptor{}, err
+		}
+		normalized := filepath.ToSlash(cleanName)
+		lookupKey := strings.ToLower(normalized)
+		if _, exists := seen[lookupKey]; exists {
+			return konamiPython1Descriptor{}, fmt.Errorf("contains duplicate dependency %s", value)
+		}
+		seen[lookupKey] = struct{}{}
+		dependencies = append(dependencies, normalized)
+	}
+	return konamiPython1Descriptor{Name: name, Dependencies: dependencies}, nil
 }
 
 func tocDependencyNames(data []byte) ([]string, error) {
@@ -4305,6 +4731,27 @@ func gameTitle(path string) string {
 	return strings.TrimSpace(title)
 }
 
+var ndsReleaseNumberPattern = regexp.MustCompile(`(?i)^\s*(?:\(nds\)\s*)?\d{1,5}\s*-\s*`)
+
+func ndsGameTitle(path string) string {
+	title := gameTitle(path)
+	title = ndsReleaseNumberPattern.ReplaceAllString(title, "")
+	return strings.TrimSpace(title)
+}
+
+func gameTitlePreservingDiscLabel(path string) string {
+	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	title = regexp.MustCompile(`\s*\(([^)]*)\)`).ReplaceAllStringFunc(title, func(value string) string {
+		label := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "("), ")"))
+		if strings.HasPrefix(strings.ToLower(label), "disc ") {
+			return " (" + label + ")"
+		}
+		return ""
+	})
+	title = regexp.MustCompile(`\s*\[[^]]*]`).ReplaceAllString(title, "")
+	return strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(title, " "))
+}
+
 var (
 	pc98DiskSuffixPattern          = regexp.MustCompile(`(?i)[\s._-]*(?:disk|disc|data|fd|floppy|ディスク|データ|枚目|面)[\s._-]*([0-9０-９]+|[a-z])$`)
 	pc98BareAlphaDiskSuffixPattern = regexp.MustCompile(`(?i)[._-]([a-z])$`)
@@ -4467,6 +4914,8 @@ func inferGamePlatform(ext string, relPath string) string {
 			return "ngc"
 		case "ps2", "playstation 2", "playstation2":
 			return "ps2"
+		case "konami-python1", "konami python 1", "konami_python_1_collection", "kpython1":
+			return "konami-python1"
 		case "nes", "famicom":
 			return "nes"
 		case "md", "megadrive", "mega drive", "mega-drive":
@@ -4477,8 +4926,10 @@ func inferGamePlatform(ext string, relPath string) string {
 			return "gbc"
 		case "gb", "game boy":
 			return "gb"
-		case "nds", "nintendo ds":
+		case "nds", "ds", "nintendo ds", "nintendo-ds", "nintendods":
 			return "nds"
+		case "3do", "panasonic 3do", "the 3do company - 3do", "3do interactive multiplayer":
+			return "3do"
 		case "3ds", "nintendo 3ds":
 			return "3ds"
 		case "mame", "mahjong":
@@ -4536,6 +4987,8 @@ func inferGamePlatform(ext string, relPath string) string {
 		return "disc"
 	case ".pbp":
 		return "ps1"
+	case ".py1":
+		return "konami-python1"
 	case ".zip", ".7z":
 		return "mame"
 	default:
@@ -4563,6 +5016,10 @@ func inferLibraryGamePlatform(library domain.Library, ext string, relPath string
 	}
 	for _, value := range []string{library.Name, filepath.Base(filepath.Clean(library.RootPath))} {
 		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "3do", "panasonic 3do", "the 3do company - 3do", "3do interactive multiplayer":
+			if ext == ".cue" || ext == ".iso" || ext == ".chd" {
+				return "3do"
+			}
 		case "virtualboy", "virtual boy", "virtual-boy", "nintendo virtual boy":
 			if ext == ".zip" || ext == ".vb" || ext == ".vboy" || ext == ".bin" {
 				return "virtualboy"
@@ -4573,6 +5030,8 @@ func inferLibraryGamePlatform(library domain.Library, ext string, relPath string
 			return "ngc"
 		case "ps2", "playstation 2", "playstation2":
 			return "ps2"
+		case "konami-python1", "konami python 1", "konami_python_1_collection", "kpython1":
+			return "konami-python1"
 		case "model2", "model2roms", "model 2", "sega model 2":
 			if ext == ".zip" {
 				return "model2"
@@ -4695,6 +5154,12 @@ func isNeoGeoShortName(name string) bool {
 func inferROMSetName(relPath string) string {
 	parts := strings.Split(filepath.ToSlash(relPath), "/")
 	if len(parts) > 1 {
+		for _, part := range parts[:len(parts)-1] {
+			switch strings.ToLower(strings.TrimSpace(part)) {
+			case "konami-python1", "konami python 1", "konami_python_1_collection", "kpython1":
+				return "KONAMI-PYTHON1"
+			}
+		}
 		switch strings.ToLower(strings.TrimSpace(parts[0])) {
 		case "mahjong", "mame":
 			return gameROMSetStem(relPath, filepath.Ext(relPath))
@@ -4780,11 +5245,11 @@ func model2Region(shortName string) string {
 func inferRegion(path string) string {
 	lower := strings.ToLower(filepath.Base(path))
 	switch {
-	case strings.Contains(lower, "(usa)") || strings.Contains(lower, "[usa]"):
+	case strings.Contains(lower, "(usa)") || strings.Contains(lower, "[usa]") || strings.Contains(lower, "(u)"):
 		return "USA"
-	case strings.Contains(lower, "(japan)") || strings.Contains(lower, "[japan]"):
+	case strings.Contains(lower, "(japan)") || strings.Contains(lower, "[japan]") || strings.Contains(lower, "(j)"):
 		return "Japan"
-	case strings.Contains(lower, "(europe)") || strings.Contains(lower, "[europe]"):
+	case strings.Contains(lower, "(europe)") || strings.Contains(lower, "[europe]") || strings.Contains(lower, "(e)"):
 		return "Europe"
 	default:
 		return ""

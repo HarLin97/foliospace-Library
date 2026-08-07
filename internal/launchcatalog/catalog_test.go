@@ -31,6 +31,7 @@ func TestExplicitNeedsCurationSurvivesForNonArcadeContent(t *testing.T) {
 
 func TestCapcomAudioAndZNBIOSFilesAreDependencies(t *testing.T) {
 	for _, path := range []string{
+		"/games/NAOMI/awbios.zip",
 		"/games/Capcom BIOS/qsound.zip",
 		"/games/Capcom BIOS/qsound_hle.zip",
 		"/games/Capcom BIOS/dl-1425.bin",
@@ -41,5 +42,33 @@ func TestCapcomAudioAndZNBIOSFilesAreDependencies(t *testing.T) {
 		if got := CatalogRole(game, nil); got != RoleDependency {
 			t.Fatalf("CatalogRole(%q) = %q, want %q", path, got, RoleDependency)
 		}
+	}
+}
+
+func TestAtomiswaveSetsRequireSharedBIOS(t *testing.T) {
+	for _, path := range []string{
+		"/games/NAOMI/kofxi.zip",
+		"/games/NAOMI/rumblef2.zip",
+		"/games/NAOMI/samsptk.zip",
+	} {
+		if !RequiresAtomiswaveBIOS(domain.GameAsset{Platform: "naomi", FilePath: path}) {
+			t.Fatalf("RequiresAtomiswaveBIOS(%q) = false", path)
+		}
+	}
+	if RequiresAtomiswaveBIOS(domain.GameAsset{Platform: "naomi", FilePath: "/games/NAOMI/ikaruga.zip"}) {
+		t.Fatal("ordinary NAOMI game unexpectedly requires awbios.zip")
+	}
+	if RequiresAtomiswaveBIOS(domain.GameAsset{Platform: "dreamcast", FilePath: "/games/DC/kofxi.zip"}) {
+		t.Fatal("non-NAOMI platform unexpectedly requires awbios.zip")
+	}
+}
+
+func TestProjectJusticeRevAExposesParentROMSet(t *testing.T) {
+	game := domain.GameAsset{Platform: "naomi", ROMSetName: "pjustica"}
+	if got := ParentROMSetName(game); got != "pjustic" {
+		t.Fatalf("ParentROMSetName = %q, want pjustic", got)
+	}
+	if got := ParentROMSetName(domain.GameAsset{Platform: "naomi", ROMSetName: "pjustic"}); got != "" {
+		t.Fatalf("parent set ParentROMSetName = %q, want empty", got)
 	}
 }

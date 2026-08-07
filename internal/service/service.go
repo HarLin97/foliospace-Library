@@ -1639,7 +1639,7 @@ func isZippedConsoleROM(game domain.GameAsset) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(game.Platform)) {
-	case "virtualboy", "snes", "nes", "gb", "gbc", "gba", "md":
+	case "virtualboy", "snes", "nes", "gb", "gbc", "gba", "nds", "md":
 		return isConsoleROMFormat(game.Format)
 	default:
 		return false
@@ -1648,7 +1648,7 @@ func isZippedConsoleROM(game domain.GameAsset) bool {
 
 func isConsoleROMFormat(format string) bool {
 	switch strings.ToLower(strings.TrimPrefix(strings.TrimSpace(format), ".")) {
-	case "vb", "vboy", "sfc", "smc", "nes", "gb", "gbc", "gba", "md", "gen", "bin":
+	case "vb", "vboy", "sfc", "smc", "nes", "gb", "gbc", "gba", "nds", "md", "gen", "bin":
 		return true
 	default:
 		return false
@@ -2269,6 +2269,8 @@ func libretroPlaylist(platform string) (string, bool) {
 		return "Nintendo - Game Boy Advance", true
 	case "nds", "ds":
 		return "Nintendo - Nintendo DS", true
+	case "3do", "panasonic 3do", "the 3do company - 3do", "3do interactive multiplayer":
+		return "The 3DO Company - 3DO", true
 	case "md", "genesis", "mega-drive", "megadrive":
 		return "Sega - Mega Drive - Genesis", true
 	case "ps1", "psx", "playstation":
@@ -2368,7 +2370,7 @@ func libretroArchiveSearchNames(game domain.GameAsset) []string {
 		}
 		ext := strings.ToLower(filepath.Ext(name))
 		switch ext {
-		case ".sfc", ".smc", ".fig", ".swc", ".nes", ".gb", ".gbc", ".gba", ".md", ".gen", ".bin", ".z64", ".v64", ".n64", ".vb", ".vboy":
+		case ".sfc", ".smc", ".fig", ".swc", ".nes", ".gb", ".gbc", ".gba", ".nds", ".md", ".gen", ".bin", ".z64", ".v64", ".n64", ".vb", ".vboy":
 			base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
 			out = append(out, libretroExpandedRegionNames(base)...)
 		}

@@ -247,9 +247,9 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.993",
+  "serviceVersion": "0.994",
   "apiVersion": "v1",
-  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd"],
+  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd", "py1"],
   "capabilities": {
     "clientHome": true,
     "unifiedManifest": true,
@@ -489,6 +489,44 @@ Response:
 
 Like other `/api/client/*` book DTOs, this response does not expose local NAS file paths. Use `manifestUrl` to open the item and preserve all query parameters on returned cover and thumbnail URLs.
 
+#### Offline identity fields
+
+All book DTOs returned by `/api/client/books`, `/api/client/home`,
+`/api/client/search`, `/api/collections/{collectionId}/volumes`, and the
+nested `book` object in `/api/client/books/{bookId}/manifest` may include these
+additive fields:
+
+```json
+{
+  "contentHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "contentHashAlgorithm": "sha256",
+  "fileSize": 12345678,
+  "contentRevision": "sha256:..."
+}
+```
+
+`contentHash` is the lowercase SHA-256 of the complete original EPUB, PDF,
+CBZ, or ZIP file. It is not a path hash, sampled hash, or extracted-content
+hash. `contentHashAlgorithm` is currently `sha256`. `fileSize` is the original
+file size in bytes. `contentRevision` is an opaque server revision for the
+offline-readable content; it changes when the source bytes or indexed page
+collection changes.
+
+These fields are nullable. The server computes the complete hash in a
+serialized background worker, so list and manifest requests never read a whole
+large book synchronously. While a hash is pending or has failed, clients must
+accept `null` and continue to use the existing book id and manifest URLs.
+Scanning a file whose size or modification time changed clears the previous
+identity and queues it again. A later scan can retry failed work. Once both
+`contentHashAlgorithm == "sha256"` and `contentHash` match, a client may
+associate a downloaded copy or manually imported copy with the same local
+file. A hash match does not replace the stable server identity
+`serverProfileID + remoteBookID`.
+
+Clients should use `contentRevision` to mark an offline copy as stale while
+preserving its progress, bookmarks, and annotations. Similar titles, creators,
+or ISBNs are only duplicate hints and must not be auto-merged.
+
 ### `GET /api/client/games`
 
 Returns a paginated client-safe ROM catalog for Vision Pro, iPad, and GameEMU native clients. Use this endpoint for full game directory browsing instead of the limited `gameShelf` on `/api/client/home`.
@@ -629,11 +667,17 @@ Nintendo 64 scans use `platform: "n64"`, `romSetName: "Nintendo 64"`, `emulatorH
 
 Virtual Boy scans use `platform: "virtualboy"`, `romSetName: "Virtual Boy"`, `emulatorHint: "virtualfriend"`, and `inputProfile: "standard"`. Raw `.vb` and `.vboy` files are supported. A ZIP containing exactly one such ROM is indexed as one game and exposes the inner ROM name, size, checksums, and bytes through its manifest; the ZIP filename alone never overrides the inner cartridge format. Covers are matched lazily against Libretro's `Nintendo - Virtual Boy` boxart catalog and cached by FolioSpace.
 
+Nintendo DS scans use `platform: "nds"`, `romSetName: "Nintendo DS"`, `format: "nds"`, `emulatorHint: "melonds-ds"`, and `inputProfile: "standard"`. Each `.nds` file is one single-entry game manifest. BIOS, firmware, DSi NAND, and unrelated sibling files are never indexed or packaged. Resolver matching requires the exact Libretro `melonds-ds` core and is limited to physical iOS, iPadOS, and visionOS clients that explicitly report that runtime; desktop melonDS, tvOS, simulators, and generic archive runtimes are not substituted.
+
+3DO scans use `platform: "3do"`, `romSetName: "3DO"`, `emulatorHint: "opera"`, and `inputProfile: "standard"`. Platform assignment comes from a 3DO library root or explicit platform metadata rather than the shared `.cue`, `.iso`, or `.chd` extensions alone. A CUE is published as one game with all referenced tracks in its ordered manifest; dependency lookup is case-insensitive on disk while logical filenames preserve the CUE declarations. Referenced tracks and known 3DO BIOS files are never published as standalone games or included as game dependencies. Resolver matching requires a client-reported Libretro `opera` core; catalog browsing remains available when the client does not bundle Opera.
+
 PSP scans use `platform: "psp"`, `romSetName: "PSP"`, `emulatorHint: "ppsspp"`, and `inputProfile: "standard"`. PSP `.iso` and `.cso` images are exposed as single-file manifests.
 
 Nintendo GameCube scans use `platform: "ngc"`, `romSetName: "NGC"`, `emulatorHint: "dolphin"`, and `inputProfile: "standard"`. GameCube `.iso`, `.gcm`, and `.rvz` images are exposed as single-file manifests.
 
 PlayStation 2 scans use `platform: "ps2"`, `romSetName: "PS2"`, `emulatorHint: "pcsx2"`, and `inputProfile: "standard"`. PS2 `.iso` and `.chd` images are exposed as single-file manifests.
+
+Konami Python 1 scans use `platform: "konami-python1"`, `romSetName: "KONAMI-PYTHON1"`, `format: "py1"`, `emulatorHint: "pcsx2-reliquary"`, and `inputProfile: "standard"`. A `.py1` descriptor is the only catalog entry. Its manifest preserves the seven relative dependency paths declared by `CfImagePath`, `BbsRamPath`, `IoBootRomPath`, `IoConfigRomPath`, `InternalDonglePath`, `MemoryCardDonglePath`, and `MemoryCardIdPath`; dependency CHDs, ROMs, dongles, global keys, and COH-H BIOS files are never published as standalone games. All eight files include size and SHA-1. Launch resolution requires a Windows or macOS client reporting `pcsx2-reliquary` version `1.5.1.0` or newer with `contentSet: "konami-python1"`; it never falls back to ordinary PCSX2.
 
 IBM-compatible DOS archive scans use `platform: "dos"`, `romSetName: "DOS"`, and `emulatorHint: "dosbox-staging"`. ZIP and DOSZ archives remain one catalog item and are never extracted or executed by the server. When a nearby controlled `games.json` matches the exact archive by SHA-256 plus byte size, FolioSpace imports its localized title, release year, key help, cover, curated launch command, and optional virtual DOS `installDirectory`. An install directory is one validated DOS directory name, never a host path. Archive candidates and paths are bounded, normalized, path-traversal-safe, and unique under case-insensitive comparison. PC-98 remains a separate `pc98` platform.
 

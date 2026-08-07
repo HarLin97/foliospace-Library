@@ -10,7 +10,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.993`.
+Current release branch: `0.994`.
 
 ## Screenshots
 
@@ -228,6 +228,19 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.994
+
+Release `0.994` expands native game delivery and adds stable offline identity for books and comics:
+
+- Nintendo DS `.nds` files and supported single-ROM ZIP packages are indexed as canonical `nds` games, matched against Nintendo DS artwork, and negotiated only with the exact `melonds-ds` core on supported physical Apple clients.
+- 3DO `.cue`, `.iso`, and `.chd` images are indexed as canonical `3do` games. CUE manifests preserve every referenced track, exclude BIOS files from the public catalog, and require an Opera-compatible client runtime.
+- Konami Python 1 `.py1` descriptors are indexed as one game with their seven validated relative dependencies, complete file checksums, and an explicit `pcsx2-reliquary` launch contract.
+- PC-98 mixed packages containing `USER.FDI` plus CUE/BIN CD media are published as one launchable game with a complete ordered manifest instead of separate or missing entries.
+- Audited NAOMI Project Justice revisions preserve canonical clone and parent identities, while Atomiswave manifests include the shared `awbios.zip` dependency when required.
+- Game file downloads support HTTP Range requests, enabling resumable downloads and large-image streaming without restarting from byte zero.
+- Book, EPUB, PDF, CBZ, and ZIP DTOs add nullable `contentHash`, `contentHashAlgorithm`, `fileSize`, and `contentRevision` fields. A serialized background worker computes full-file SHA-256 values without blocking list or manifest requests and invalidates them when source bytes or page manifests change.
+- Existing Client API routes remain backward compatible. Service, Client API, Web, and MCP metadata report version `0.994`.
+
 ## Release 0.993
 
 Release `0.993` adds Nintendo Virtual Boy support and a server-owned game-platform catalog:
@@ -389,7 +402,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.993 ./scripts/build-mcp-release.sh
+VERSION=0.994 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -409,10 +422,10 @@ ROM support is for indexing and launching user-owned local content. FolioSpace L
 
 ## Docker
 
-Release `0.993` image tag:
+Release `0.994` image tag:
 
 ```bash
-docker pull funland/foliospace-library:0.993
+docker pull funland/foliospace-library:0.994
 ```
 
 For local verification:
@@ -431,7 +444,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.993
+  funland/foliospace-library:0.994
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, the setup page asks for an access key and lets you choose a container path such as `/library`, `/books`, or `/games`. If a directory is missing from the setup page, add a Docker volume mapping first; FolioSpace Library can only browse paths visible inside the container.
@@ -446,16 +459,16 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.993
-git push github v0.993
+git tag v0.994
+git push github v0.994
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.993` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.994` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 
 - P0 reading formats: `.cbz`, `.zip`, `.epub`.
-- P0 game formats: `.nes`, `.sfc`, `.smc`, `.gba`, `.gb`, `.gbc`, `.nds`, `.3ds`, `.cia`, `.gdi`, `.cdi`, `.chd`, `.iso`, `.bin`, `.cue`, plus validated PC-98 floppy and hard-disk image formats. `.zip` and `.7z` are treated as ROM sets only when the library type is `game`; PC-98 ZIP ingestion is limited to one validated media image and does not accept `.7z`, RAR, or TAR containers.
+- P0 game formats: `.nes`, `.sfc`, `.smc`, `.gba`, `.gb`, `.gbc`, `.nds`, `.3ds`, `.cia`, `.gdi`, `.cdi`, `.chd`, `.iso`, `.bin`, `.cue`, plus validated PC-98 floppy and hard-disk image formats. Nintendo DS `.nds` files are exposed as single-entry games for the exact `melonds-ds` mobile runtime. 3DO `.cue`, `.iso`, and `.chd` images use canonical `3do` metadata; CUE tracks remain dependencies and require a client-reported Opera core. `.zip` and `.7z` are treated as ROM sets only when the library type is `game`; PC-98 ZIP ingestion is limited to one validated media image and does not accept `.7z`, RAR, or TAR containers.
 - Series derivation: immediate parent directory, with root-level files grouped under `Unsorted`.
 - Reading: backend streams one ZIP image entry or EPUB resource at a time.
 - Games: backend indexes local ROM metadata and checksums, exposes client-safe launch manifests without NAS paths, and lazily caches supported Libretro boxart under `/config/cache/game-covers`. Dreamcast `.gdi`, Saturn `.cue`, and PC-FX `.cue`/`.m3u` sets are indexed as one launchable game; referenced track files remain dependencies instead of separate catalog records. PC-FX multi-disc folders are merged into one virtual M3U package, and Pegasus metadata plus local `media/.../boxFront.*` or `PC-FX Covers/* [正面].jpg` artwork is used when available. PC-98 media uses canonical `pc98` / `PC-98` / `np2kai` metadata, decodes CP932 archive names, rejects firmware/tool/DOS support files, merges byte-identical mirrors by raw-image SHA-1, and groups explicitly numbered disks into one ordered launch manifest.

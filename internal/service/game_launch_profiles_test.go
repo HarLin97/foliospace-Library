@@ -18,6 +18,32 @@ func TestAuditedGameLaunchProfilesAreValid(t *testing.T) {
 	}
 }
 
+func TestKonamiPython1RuntimeRequiresReliquaryContentSetOnDesktop(t *testing.T) {
+	game := domain.GameAsset{Platform: "konami-python1", CatalogRole: "game"}
+	base := domain.GameLaunchResolveRequest{
+		Client:   domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.306", Platform: "windows-x64", Architecture: "x64"},
+		Runtimes: []domain.GameRuntimeDescriptor{{ID: "pcsx2-reliquary", Version: "1.5.1.0", ContentSet: "konami-python1"}},
+	}
+	if runtime, ok := matchingPragmaticRuntime(game, base); !ok || runtime.ID != "pcsx2-reliquary" {
+		t.Fatalf("runtime = %#v ok=%v, want Reliquary", runtime, ok)
+	}
+	wrongRuntime := base
+	wrongRuntime.Runtimes = []domain.GameRuntimeDescriptor{{ID: "pcsx2", Version: "2.6.3"}}
+	if _, ok := matchingPragmaticRuntime(game, wrongRuntime); ok {
+		t.Fatal("ordinary PCSX2 was accepted for Konami Python 1")
+	}
+	wrongContent := base
+	wrongContent.Runtimes = []domain.GameRuntimeDescriptor{{ID: "pcsx2-reliquary", Version: "1.5.1.0", ContentSet: "ps2"}}
+	if _, ok := matchingPragmaticRuntime(game, wrongContent); ok {
+		t.Fatal("wrong Reliquary content set was accepted")
+	}
+	mobile := base
+	mobile.Client = domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.306", Platform: "ipados-arm64", Architecture: "arm64"}
+	if _, ok := matchingPragmaticRuntime(game, mobile); ok {
+		t.Fatal("mobile client was accepted for desktop-only Reliquary runtime")
+	}
+}
+
 func TestLogicalLaunchNamesRejectUnsafeAndCollidingPaths(t *testing.T) {
 	for _, name := range []string{"", ".", "..", "../rom.zip", `folder\\rom.zip`, `/rom.zip`, `C:\\rom.zip`, "bad\x00name.zip"} {
 		if validLogicalLaunchName(name) {
@@ -90,6 +116,43 @@ func TestSFCSupportsWindowsBSNES(t *testing.T) {
 	runtime := domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "bsnes"}
 	if !pragmaticRuntimeSupportsPlatform(runtime, "snes") {
 		t.Fatal("expected SFC/SNES to accept the Windows bsnes core")
+	}
+}
+
+func Test3DOAndNDSRuntimeSelectionIsExact(t *testing.T) {
+	threeDO := domain.GameAsset{Platform: "3do", CatalogRole: "game"}
+	windows := domain.GameLaunchResolveRequest{
+		Client:   domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"},
+		Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "opera"}},
+	}
+	if runtime, ok := matchingPragmaticRuntime(threeDO, windows); !ok || normalizeLaunchCoreID(runtime.CoreID) != "opera" {
+		t.Fatalf("3DO runtime = %#v ok=%v, want Opera", runtime, ok)
+	}
+	windows.Runtimes[0].CoreID = "generic-disc"
+	if _, ok := matchingPragmaticRuntime(threeDO, windows); ok {
+		t.Fatal("3DO accepted a non-Opera core")
+	}
+
+	nds := domain.GameAsset{Platform: "nds", CatalogRole: "game"}
+	ipad := domain.GameLaunchResolveRequest{
+		Client:   domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.40", Platform: "ipados-arm64", Architecture: "arm64"},
+		Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "melonds-ds"}},
+	}
+	if runtime, ok := matchingPragmaticRuntime(nds, ipad); !ok || normalizeLaunchCoreID(runtime.CoreID) != "melondsds" {
+		t.Fatalf("NDS runtime = %#v ok=%v, want melonDS DS", runtime, ok)
+	}
+	ipad.Runtimes[0].CoreID = "melonds"
+	if _, ok := matchingPragmaticRuntime(nds, ipad); ok {
+		t.Fatal("NDS accepted desktop melonDS instead of melonds-ds")
+	}
+	windows.Runtimes[0].CoreID = "melonds-ds"
+	if _, ok := matchingPragmaticRuntime(nds, windows); ok {
+		t.Fatal("NDS mobile profile was exposed to Windows")
+	}
+	tv := ipad
+	tv.Client = domain.GameLaunchClient{Name: "SpatialEMU.tvOS", Version: "1.40", Platform: "tvos-arm64", Architecture: "arm64"}
+	if _, ok := matchingPragmaticRuntime(nds, tv); ok {
+		t.Fatal("NDS mobile profile was exposed to tvOS")
 	}
 }
 
