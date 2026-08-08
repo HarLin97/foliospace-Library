@@ -1,16 +1,27 @@
 # FolioSpace Library
 
-[Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md) · [Game curation](docs/operations/game-catalog-curation.md)
+[Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [FolioSpace on the App Store](https://apps.apple.com/app/foliospace/id6765784590) · [Reader](https://reader.foliospace.app/) · [SpatialEMU downloads](https://spatialemu.com/downloads.html) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md)
 
 ![FolioSpace Library hero](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/hero.png)
 
-FolioSpace Library is a personal digital asset library that runs on a NAS, Docker host, or local server. It provides a unified indexing layer and stable client service layer for Apple-device experiences across reading, games, spatial media, documents, photos, videos, and related audio collections.
+FolioSpace Library is a self-hosted personal digital asset library that runs on a NAS, Docker host, or local server. One service keeps your collection, metadata, progress, and private state available to the web, Vision Pro, iPad, iPhone, SpatialEMU, and MCP agents.
 
 It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The first priority is personal asset indexing: scanning, identifying, covers/thumbnails, classification, search, favorites, recent access, progress, and private state. Dedicated clients such as a reader app, GameEMU, and Vision Pro experiences own the actual consumption UI.
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
 Current release branch: `0.994`.
+
+## Clients and Downloads
+
+FolioSpace Library is the server layer. Your files stay on your own NAS or local server; clients connect to that service instead of turning FolioSpace into a hosted cloud library.
+
+- **FolioSpace Reader**: Read EPUB, PDF, and ZIP/CBZ comics on [Vision Pro, iPad, and iPhone through the App Store](https://apps.apple.com/app/foliospace/id6765784590), or open the [Reader web experience](https://reader.foliospace.app/).
+- **SpatialEMU**: Browse the game catalog exposed by FolioSpace and import compatible titles into the native emulator. Download [SpatialEMU](https://spatialemu.com/downloads.html) and see the [FolioSpace connection guide](https://spatialemu.com/foliospace.html#connect).
+- **Web UI and API**: Use the built-in web interface or integrate another native client through the [Client API](docs/api/client-v1.md).
+- **AI agents**: Install and configure the local MCP client with the [MCP guide](docs/mcp/usage.md).
+
+FolioSpace Library indexes and serves metadata for user-owned local files. It does not host or distribute books, comics, ROMs, games, or other copyrighted media.
 
 ## Screenshots
 
