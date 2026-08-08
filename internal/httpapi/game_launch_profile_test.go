@@ -413,7 +413,7 @@ func TestAtomiswaveBIOSIsIncludedInResolverAndLegacyManifest(t *testing.T) {
 			Name: "GameEMU.Android", Version: "0.1.0-dev", Platform: "android-arm64", Architecture: "arm64",
 		},
 		Runtimes: []domain.GameRuntimeDescriptor{{
-			ID: "flycast", Version: "2.6", CoreBuildID: "flycast-392a429-android-v3-arm64-gles3-hle-vmu",
+			ID: "flycast", Version: "2.6", CoreBuildID: "flycast-392a429-android-v4-arm64-gles3-hle-vmu-arcade-save-bundle",
 		}},
 	}
 	androidResponse := postLaunchResolve(t, ts.URL, games["atomiswave"].ID, "secret", androidRequest, nil)
@@ -493,7 +493,7 @@ func TestAPIResolvesAndroidDreamcastWithStableFlycastIdentity(t *testing.T) {
 	runtime := domain.GameRuntimeDescriptor{
 		ID:          "flycast",
 		Version:     "2.6",
-		CoreBuildID: "flycast-392a429-android-v3-arm64-gles3-hle-vmu",
+		CoreBuildID: "flycast-392a429-android-v4-arm64-gles3-hle-vmu-arcade-save-bundle",
 	}
 	request := domain.GameLaunchResolveRequest{
 		Client: domain.GameLaunchClient{

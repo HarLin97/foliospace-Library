@@ -1020,7 +1020,7 @@ Runtime descriptors accept the optional additive `coreBuildId` field. When both 
 
 `coreBuildId` must identify the core source revision, compatibility-affecting patch/configuration digest, ABI, and build configuration. It must not include the application version, signature, or unrelated UI object code. When the resolver is enabled, the server advertises `stableRuntimeIdentityV1: true`; deployed clients must require both that flag and `gameLaunchResolver: true` before sending stable build identities, and must retain the legacy manifest fallback for `404`, `405`, or `501` responses.
 
-The Android ARM64 Dreamcast runtime reports Flycast 2.6 with `coreBuildId: "flycast-392a429-android-v3-arm64-gles3-hle-vmu"`. Successful resolution preserves that exact runtime tuple and returns the canonical manifest nested under `manifest`.
+The Android ARM64 Dreamcast runtime reports Flycast 2.6 with `coreBuildId: "flycast-392a429-android-v4-arm64-gles3-hle-vmu-arcade-save-bundle"`. Successful resolution preserves that exact runtime tuple and returns the canonical manifest nested under `manifest`.
 
 MAME and FBNeo profiles remain target-specific and audited. Adding an Apple client identity does not make a Windows arcade profile portable: each mobile target needs a persisted profile matching its exact client identity and runtime tuple. Current Apple builds report `mame/0.287/mame-0.287`; FBNeo additionally requires the exact client-reported `coreSha256`. The server can persist these alongside Windows MAME 0.288 and FBNeo profiles without replacing or weakening either policy.
 
