@@ -2,15 +2,37 @@
 
 [Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [FolioSpace on the App Store](https://apps.apple.com/app/foliospace/id6765784590) · [Reader](https://reader.foliospace.app/) · [SpatialEMU downloads](https://spatialemu.com/downloads.html) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md)
 
-![FolioSpace Library hero](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/hero.png)
-
 FolioSpace Library is a self-hosted personal digital asset library that runs on a NAS, Docker host, or local server. One service keeps your collection, metadata, progress, and private state available to the web, Vision Pro, iPad, iPhone, SpatialEMU, and MCP agents.
 
 It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The first priority is personal asset indexing: scanning, identifying, covers/thumbnails, classification, search, favorites, recent access, progress, and private state. Dedicated clients such as a reader app, GameEMU, and Vision Pro experiences own the actual consumption UI.
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release branch: `0.994`.
+Current release: [`0.994`](https://github.com/funland/foliospace-Library/releases/tag/v0.994).
+
+## Quick Answers
+
+### What is FolioSpace Library?
+
+FolioSpace Library is a self-hosted NAS and Docker service for indexing and accessing user-owned books, comics, games, videos, documents, photos, and other personal digital assets across multiple clients.
+
+### Is FolioSpace a cloud storage service?
+
+No. FolioSpace runs on your NAS, Docker host, or local server. Your files remain under your control, and clients receive authenticated service URLs instead of exposed NAS paths.
+
+### Which clients can connect to FolioSpace?
+
+The same FolioSpace Library service can connect to the web UI, FolioSpace Reader on Vision Pro, iPad, and iPhone, SpatialEMU for compatible game catalogs, and MCP-enabled AI agents.
+
+### How do I install FolioSpace Library?
+
+The fastest deployment path is the published multi-architecture Docker image. Follow the [Docker setup](#docker), then open `http://<docker-host>:8080` and complete first-run setup.
+
+### Does FolioSpace distribute books, ROMs, or other media?
+
+No. FolioSpace indexes and serves metadata for files that you already own and store locally. It does not host, share, or provide download sources for copyrighted media.
+
+![FolioSpace Library hero](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/hero.png)
 
 ## Clients and Downloads
 
