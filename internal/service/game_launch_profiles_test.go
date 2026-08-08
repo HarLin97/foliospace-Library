@@ -168,10 +168,13 @@ func TestSupportedPragmaticClientPlatforms(t *testing.T) {
 		{name: "iPad", client: domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.40", Platform: "ipados-arm64", Architecture: "arm64"}, supported: true},
 		{name: "Vision Pro", client: domain.GameLaunchClient{Name: "SpatialEMU.visionOS", Version: "1.40", Platform: "visionos-arm64", Architecture: "arm64"}, supported: true},
 		{name: "Apple TV", client: domain.GameLaunchClient{Name: "SpatialEMU.tvOS", Version: "1.40", Platform: "tvos-arm64", Architecture: "arm64"}, supported: true},
+		{name: "Android arm64", client: domain.GameLaunchClient{Name: "GameEMU.Android", Version: "0.1.0-dev", Platform: "android-arm64", Architecture: "arm64"}, supported: true},
 		{name: "placeholder Apple identity", client: domain.GameLaunchClient{Name: "SpatialEMU.Apple", Version: "1.40", Platform: "apple", Architecture: "unknown"}},
 		{name: "iPad name with iPhone platform", client: domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.40", Platform: "ios-arm64", Architecture: "arm64"}},
 		{name: "iOS simulator", client: domain.GameLaunchClient{Name: "SpatialEMU.iOS", Version: "1.40", Platform: "ios-simulator-arm64", Architecture: "arm64"}},
 		{name: "mobile x64", client: domain.GameLaunchClient{Name: "SpatialEMU.visionOS", Version: "1.40", Platform: "visionos-arm64", Architecture: "x64"}},
+		{name: "Android x64", client: domain.GameLaunchClient{Name: "GameEMU.Android", Version: "0.1.0-dev", Platform: "android-arm64", Architecture: "x64"}},
+		{name: "Android generic platform", client: domain.GameLaunchClient{Name: "GameEMU.Android", Version: "0.1.0-dev", Platform: "android", Architecture: "arm64"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -508,6 +508,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			GamePlayedCatalog:     true,
 			GameMetadataProviders: true,
 			GameLaunchResolver:    !s.options.DisableGameLaunchResolver,
+			StableRuntimeIdentity: !s.options.DisableGameLaunchResolver,
 			DOSArchiveLaunchV1:    true,
 		},
 	})
@@ -2383,6 +2384,7 @@ type clientCapabilities struct {
 	GamePlayedCatalog     bool `json:"gamePlayedCatalog"`
 	GameMetadataProviders bool `json:"gameMetadataProviders"`
 	GameLaunchResolver    bool `json:"gameLaunchResolver"`
+	StableRuntimeIdentity bool `json:"stableRuntimeIdentityV1"`
 	DOSArchiveLaunchV1    bool `json:"dosArchiveLaunchV1"`
 }
 

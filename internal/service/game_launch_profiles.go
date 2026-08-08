@@ -690,6 +690,8 @@ func supportedPragmaticClient(client domain.GameLaunchClient) bool {
 		return platform == "visionos-arm64" && architecture == "arm64"
 	case "spatialemu.tvos":
 		return platform == "tvos-arm64" && architecture == "arm64"
+	case "gameemu.android":
+		return platform == "android-arm64" && architecture == "arm64"
 	default:
 		return false
 	}

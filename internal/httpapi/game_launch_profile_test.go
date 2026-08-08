@@ -24,7 +24,7 @@ func TestAPIResolvesAuditedMAMEProfilesAndEnrichesLegacyManifestDependencies(t *
 	ts, vstriker, segabill, tekken := launchProfileTestServer(t)
 	defer ts.Close()
 	info := authGet(t, ts.URL+"/api/client/info", "secret")
-	if !strings.Contains(info, `"gameLaunchResolver":true`) {
+	if !strings.Contains(info, `"gameLaunchResolver":true`) || !strings.Contains(info, `"stableRuntimeIdentityV1":true`) {
 		t.Fatalf("client info missing resolver capability: %s", info)
 	}
 
@@ -105,7 +105,7 @@ func TestAPICanDisableLaunchResolverWithoutChangingLegacyManifest(t *testing.T) 
 	defer ts.Close()
 
 	info := authGet(t, ts.URL+"/api/client/info", "secret")
-	if !strings.Contains(info, `"gameLaunchResolver":false`) {
+	if !strings.Contains(info, `"gameLaunchResolver":false`) || !strings.Contains(info, `"stableRuntimeIdentityV1":false`) {
 		t.Fatalf("client info still advertises resolver capability: %s", info)
 	}
 
@@ -462,6 +462,44 @@ func TestAPIResolvesPragmaticProfilesForAppleMobileClients(t *testing.T) {
 			}
 			profileIDs[resolved.LaunchProfileID] = struct{}{}
 		})
+	}
+}
+
+func TestAPIResolvesAndroidDreamcastWithStableFlycastIdentity(t *testing.T) {
+	ts, games, _ := pragmaticLaunchProfileTestServer(t)
+	defer ts.Close()
+
+	runtime := domain.GameRuntimeDescriptor{
+		ID:          "flycast",
+		Version:     "2.6",
+		CoreBuildID: "flycast-392a429-android-v3-arm64-gles3-hle-vmu",
+	}
+	request := domain.GameLaunchResolveRequest{
+		Client: domain.GameLaunchClient{
+			Name: "GameEMU.Android", Version: "0.1.0-dev", Platform: "android-arm64", Architecture: "arm64",
+		},
+		Runtimes: []domain.GameRuntimeDescriptor{runtime},
+	}
+	response := postLaunchResolve(t, ts.URL, games["dreamcast"].ID, "secret", request, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("Android Dreamcast resolve status=%d body=%s", response.StatusCode, response.Body)
+	}
+	var resolved clientGameLaunchResolutionResponse
+	if err := json.Unmarshal(response.Body, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Runtime != runtime {
+		t.Fatalf("runtime=%+v, want exact request tuple %+v", resolved.Runtime, runtime)
+	}
+	if !strings.HasPrefix(resolved.LaunchProfileID, "auto-") || resolved.ProfileRevision <= 0 {
+		t.Fatalf("profile=%q revision=%d", resolved.LaunchProfileID, resolved.ProfileRevision)
+	}
+	if resolved.Manifest.EntryFile == nil || *resolved.Manifest.EntryFile != "crazy-taxi.chd" || len(resolved.Manifest.Files) != 1 {
+		t.Fatalf("manifest=%+v", resolved.Manifest)
+	}
+	file := resolved.Manifest.Files[0]
+	if file.Role != "entry" || file.URL != "/api/client/games/"+itoa(games["dreamcast"].ID)+"/files/0" || !strings.HasPrefix(file.Checksum, "sha1:") {
+		t.Fatalf("manifest file=%+v", file)
 	}
 }
 

@@ -281,9 +281,11 @@ Response:
     "recentScan": true,
     "gameSaveSync": true,
     "gamePlayStats": true,
-    "gamePlayedCatalog": true,
-    "gameMetadataProviders": true,
-    "dosArchiveLaunchV1": true
+	"gamePlayedCatalog": true,
+	"gameMetadataProviders": true,
+	"gameLaunchResolver": false,
+	"stableRuntimeIdentityV1": false,
+	"dosArchiveLaunchV1": true
   }
 }
 ```
@@ -1010,12 +1012,15 @@ Pragmatic profiles accept these canonical native client identities:
 | iPad | `SpatialEMU.iPadOS` | `ipados-arm64` | `arm64` |
 | Apple Vision Pro | `SpatialEMU.visionOS` | `visionos-arm64` | `arm64` |
 | Apple TV | `SpatialEMU.tvOS` | `tvos-arm64` | `arm64` |
+| Android ARM64 | `GameEMU.Android` | `android-arm64` | `arm64` |
 
 Apple mobile identities describe physical-device builds. Simulator identities and generic placeholders such as `SpatialEMU.Apple` are intentionally rejected, because they do not identify a deployable runtime ABI. The client must report only runtimes actually bundled in that target. Ordinary console, computer, and disc platforms can then resolve through the same deterministic manifest-backed route used by desktop clients.
 
 Runtime descriptors accept the optional additive `coreBuildId` field. When both the request and an approved profile contain it, the server prefers that stable identity; otherwise it preserves legacy `coreSha256` matching. Ordinary console and computer platforms do not require an application-build SHA. FBNeo remains strict and requires either an approved stable build ID or the exact legacy core hash. MAME remains strict through its audited runtime version and `contentSet`.
 
-`coreBuildId` must identify the core source revision, compatibility-affecting patch/configuration digest, ABI, and build configuration. It must not include the application version, signature, or unrelated UI object code. The server intentionally does not advertise `stableRuntimeIdentityV1` yet, so deployed clients must continue supporting `coreSha256` and legacy manifest fallback.
+`coreBuildId` must identify the core source revision, compatibility-affecting patch/configuration digest, ABI, and build configuration. It must not include the application version, signature, or unrelated UI object code. When the resolver is enabled, the server advertises `stableRuntimeIdentityV1: true`; deployed clients must require both that flag and `gameLaunchResolver: true` before sending stable build identities, and must retain the legacy manifest fallback for `404`, `405`, or `501` responses.
+
+The Android ARM64 Dreamcast runtime reports Flycast 2.6 with `coreBuildId: "flycast-392a429-android-v3-arm64-gles3-hle-vmu"`. Successful resolution preserves that exact runtime tuple and returns the canonical manifest nested under `manifest`.
 
 MAME and FBNeo profiles remain target-specific and audited. Adding an Apple client identity does not make a Windows arcade profile portable: each mobile target needs a persisted profile matching its exact client identity and runtime tuple. Current Apple builds report `mame/0.287/mame-0.287`; FBNeo additionally requires the exact client-reported `coreSha256`. The server can persist these alongside Windows MAME 0.288 and FBNeo profiles without replacing or weakening either policy.
 
