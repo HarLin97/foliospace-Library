@@ -408,6 +408,27 @@ func TestAtomiswaveBIOSIsIncludedInResolverAndLegacyManifest(t *testing.T) {
 		t.Fatalf("resolved manifest=%+v", resolved.Manifest)
 	}
 
+	androidRequest := domain.GameLaunchResolveRequest{
+		Client: domain.GameLaunchClient{
+			Name: "GameEMU.Android", Version: "0.1.0-dev", Platform: "android-arm64", Architecture: "arm64",
+		},
+		Runtimes: []domain.GameRuntimeDescriptor{{
+			ID: "flycast", Version: "2.6", CoreBuildID: "flycast-392a429-android-v3-arm64-gles3-hle-vmu",
+		}},
+	}
+	androidResponse := postLaunchResolve(t, ts.URL, games["atomiswave"].ID, "secret", androidRequest, nil)
+	if androidResponse.StatusCode != http.StatusOK {
+		t.Fatalf("Android Atomiswave resolve status=%d body=%s", androidResponse.StatusCode, androidResponse.Body)
+	}
+	var androidResolved clientGameLaunchResolutionResponse
+	if err := json.Unmarshal(androidResponse.Body, &androidResolved); err != nil {
+		t.Fatal(err)
+	}
+	if androidResolved.Manifest.Game.Platform != "atomiswave" || androidResolved.Manifest.Game.EmulatorHint != "flycast" ||
+		len(androidResolved.Manifest.Files) != 1 || androidResolved.Manifest.Files[0].Name != "kofxi.zip" {
+		t.Fatalf("Android manifest=%+v", androidResolved.Manifest)
+	}
+
 	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/client/games/"+itoa(games["atomiswave"].ID)+"/manifest", nil)
 	if err != nil {
 		t.Fatal(err)
