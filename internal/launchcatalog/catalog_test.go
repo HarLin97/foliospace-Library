@@ -72,3 +72,22 @@ func TestProjectJusticeRevAExposesParentROMSet(t *testing.T) {
 		t.Fatalf("parent set ParentROMSetName = %q, want empty", got)
 	}
 }
+
+func TestNaomi2SplitCartridgeClonesExposeParentROMSet(t *testing.T) {
+	tests := map[string]string{
+		"clubkrto":  "clubkrt",
+		"clubkrta":  "clubkrt",
+		"clubkrtc":  "clubkrt",
+		"kingrt66p": "kingrt66",
+		"vstrik3co": "vstrik3c",
+	}
+	for clone, parent := range tests {
+		game := domain.GameAsset{Platform: "naomi2", ROMSetName: clone}
+		if got := ParentROMSetName(game); got != parent {
+			t.Errorf("ParentROMSetName(%q) = %q, want %q", clone, got, parent)
+		}
+	}
+	if got := ParentROMSetName(domain.GameAsset{Platform: "naomi2", ROMSetName: "vf4"}); got != "" {
+		t.Fatalf("independent NAOMI 2 set ParentROMSetName = %q, want empty", got)
+	}
+}

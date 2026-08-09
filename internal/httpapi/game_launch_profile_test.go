@@ -486,6 +486,33 @@ func TestAPIResolvesPragmaticProfilesForAppleMobileClients(t *testing.T) {
 	}
 }
 
+func TestAPIResolvesZippedNDSVirtualEntryForVisionOS(t *testing.T) {
+	ts, games, _ := pragmaticLaunchProfileTestServer(t)
+	defer ts.Close()
+
+	request := domain.GameLaunchResolveRequest{
+		Client: domain.GameLaunchClient{
+			Name: "SpatialEMU.visionOS", Version: "1.40", Platform: "visionos-arm64", Architecture: "arm64",
+		},
+		Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "melonds-ds"}},
+	}
+	response := postLaunchResolve(t, ts.URL, games["nds-zip"].ID, "secret", request, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("zipped NDS resolve status=%d body=%s", response.StatusCode, response.Body)
+	}
+	var resolved clientGameLaunchResolutionResponse
+	if err := json.Unmarshal(response.Body, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Manifest.EntryFile == nil || *resolved.Manifest.EntryFile != "Ouendan.nds" || len(resolved.Manifest.Files) != 1 {
+		t.Fatalf("manifest=%+v", resolved.Manifest)
+	}
+	file := resolved.Manifest.Files[0]
+	if file.Name != "Ouendan.nds" || file.Size != int64(len("nds-rom-body")) || !strings.HasPrefix(file.Checksum, "sha1:") {
+		t.Fatalf("manifest file=%+v", file)
+	}
+}
+
 func TestAPIResolvesAndroidDreamcastWithStableFlycastIdentity(t *testing.T) {
 	ts, games, _ := pragmaticLaunchProfileTestServer(t)
 	defer ts.Close()
@@ -521,6 +548,66 @@ func TestAPIResolvesAndroidDreamcastWithStableFlycastIdentity(t *testing.T) {
 	file := resolved.Manifest.Files[0]
 	if file.Role != "entry" || file.URL != "/api/client/games/"+itoa(games["dreamcast"].ID)+"/files/0" || !strings.HasPrefix(file.Checksum, "sha1:") {
 		t.Fatalf("manifest file=%+v", file)
+	}
+}
+
+func TestAPIResolvesAndroidNaomi2CanonicalManifestWithExactFlycastBuild(t *testing.T) {
+	ts, games, _ := pragmaticLaunchProfileTestServer(t)
+	defer ts.Close()
+
+	runtime := domain.GameRuntimeDescriptor{
+		ID:          "flycast",
+		Version:     "2.6",
+		CoreBuildID: "flycast-392a429-android-v4-arm64-gles3-hle-vmu-arcade-save-bundle",
+	}
+	request := domain.GameLaunchResolveRequest{
+		Client: domain.GameLaunchClient{
+			Name: "GameEMU.Android", Version: "0.1.0-dev", Platform: "android-arm64", Architecture: "arm64",
+		},
+		Runtimes: []domain.GameRuntimeDescriptor{runtime},
+	}
+	response := postLaunchResolve(t, ts.URL, games["naomi2"].ID, "secret", request, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("Android NAOMI 2 resolve status=%d body=%s", response.StatusCode, response.Body)
+	}
+	var resolved clientGameLaunchResolutionResponse
+	if err := json.Unmarshal(response.Body, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Runtime != runtime || resolved.Manifest.Game.Platform != "naomi2" ||
+		resolved.Manifest.EntryFile == nil || *resolved.Manifest.EntryFile != "vf4.zip" || len(resolved.Manifest.Files) != 2 {
+		t.Fatalf("resolution=%+v", resolved)
+	}
+	entry, chd := resolved.Manifest.Files[0], resolved.Manifest.Files[1]
+	if entry.Name != "vf4.zip" || entry.Role != "entry" ||
+		chd.Name != "vf4/gds-0012c.chd" || chd.Role != "dependency" ||
+		strings.Contains(string(response.Body), "naomi2.zip") {
+		t.Fatalf("NAOMI 2 manifest=%+v", resolved.Manifest)
+	}
+
+	splitResponse := postLaunchResolve(t, ts.URL, games["naomi2-split"].ID, "secret", request, nil)
+	if splitResponse.StatusCode != http.StatusOK {
+		t.Fatalf("Android NAOMI 2 split resolve status=%d body=%s", splitResponse.StatusCode, splitResponse.Body)
+	}
+	var splitResolved clientGameLaunchResolutionResponse
+	if err := json.Unmarshal(splitResponse.Body, &splitResolved); err != nil {
+		t.Fatal(err)
+	}
+	if splitResolved.Manifest.Game.ROMSetName != "clubkrto" || splitResolved.Manifest.Game.ParentROMSetName != "clubkrt" ||
+		splitResolved.Manifest.EntryFile == nil || *splitResolved.Manifest.EntryFile != "clubkrto.zip" || len(splitResolved.Manifest.Files) != 2 {
+		t.Fatalf("split resolution=%+v", splitResolved)
+	}
+	splitEntry, splitParent := splitResolved.Manifest.Files[0], splitResolved.Manifest.Files[1]
+	if splitEntry.Name != "clubkrto.zip" || splitEntry.Role != "entry" ||
+		splitParent.Name != "clubkrt.zip" || splitParent.Role != "dependency" ||
+		strings.Contains(string(splitResponse.Body), "naomi2.zip") {
+		t.Fatalf("NAOMI 2 split manifest=%+v", splitResolved.Manifest)
+	}
+
+	request.Runtimes[0].CoreBuildID = "flycast-392a429-android-v3-arm64-gles3-hle-vmu"
+	rejected := postLaunchResolve(t, ts.URL, games["naomi2"].ID, "secret", request, nil)
+	if rejected.StatusCode != http.StatusConflict || !strings.Contains(string(rejected.Body), `"code":"runtime-unsupported"`) {
+		t.Fatalf("stale Android Flycast build status=%d body=%s", rejected.StatusCode, rejected.Body)
 	}
 }
 
@@ -665,6 +752,9 @@ func pragmaticLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[strin
 	games := map[string]domain.GameAsset{}
 	createFile := func(name, contents string) string {
 		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -719,6 +809,36 @@ func pragmaticLaunchProfileTestServer(t *testing.T) (*httptest.Server, map[strin
 	addGame("psp", "psp", "iso", "mgs.iso")
 	addGame("ngc", "ngc", "iso", "twin-snakes.iso")
 	addGame("dreamcast", "dreamcast", "chd", "crazy-taxi.chd")
+	ndsROM := "nds-rom-body"
+	ndsZipPath := filepath.Join(root, "Ouendan.zip")
+	makeZip(t, ndsZipPath, map[string]string{"Ouendan.nds": ndsROM})
+	if err := os.Chtimes(ndsZipPath, time.Unix(1, 0), time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	nds, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Osu! Tatakae! Ouendan", Platform: "nds", ROMSetName: "Nintendo DS", Format: "nds",
+		FilePath: ndsZipPath, RelPath: "Ouendan.nds", Size: int64(len(ndsROM)), MTime: time.Unix(1, 0),
+		SHA1: testSHA1(ndsROM), EmulatorHint: "melonds-ds", Compatibility: "untested", CatalogRole: "game",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(nds.ID, []domain.GameFile{{
+		Name: "Ouendan.nds", FilePath: ndsZipPath, Size: int64(len(ndsROM)), MTime: time.Unix(1, 0),
+		SHA1: testSHA1(ndsROM), Role: "entry", Position: 0,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	games["nds-zip"] = nds
+	addGame("naomi2", "naomi2", "zip", "vf4.zip", "vf4/gds-0012c.chd")
+	splitNaomi2 := addGame("naomi2-split", "naomi2", "zip", "clubkrto.zip", "clubkrt.zip")
+	splitNaomi2.Title = "Club Kart: European Session"
+	splitNaomi2.ROMSetName = "clubkrto"
+	splitNaomi2, err = st.UpsertGame(splitNaomi2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	games["naomi2-split"] = splitNaomi2
 	addGame("atomiswave", "naomi", "zip", "kofxi.zip")
 	biosContents := strings.Repeat("b", 34620)
 	biosPath := createFile("awbios.zip", biosContents)

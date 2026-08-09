@@ -55,6 +55,32 @@ func TestLogicalLaunchNamesRejectUnsafeAndCollidingPaths(t *testing.T) {
 	}
 }
 
+func TestValidatePragmaticManifestRequiresNaomi2SplitParentClosure(t *testing.T) {
+	game := domain.GameAsset{
+		Platform: "naomi2", ROMSetName: "clubkrto", Format: "zip", Size: 200,
+	}
+	entry := domain.GameFile{
+		Name: "clubkrto.zip", FilePath: "/games/clubkrto.zip", Size: 100,
+		Role: "entry", Position: 0,
+	}
+	parent := domain.GameFile{
+		Name: "clubkrt.zip", FilePath: "/games/clubkrt.zip", Size: 100,
+		Role: "dependency", Position: 1,
+	}
+
+	if _, err := validatePragmaticManifest(game, []domain.GameFile{entry}); err == nil || !strings.Contains(err.Error(), "clubkrt.zip") {
+		t.Fatalf("missing parent error = %v, want exact parent name", err)
+	}
+	wrongParent := parent
+	wrongParent.Name = "vstrik3c.zip"
+	if _, err := validatePragmaticManifest(game, []domain.GameFile{entry, wrongParent}); err == nil || !strings.Contains(err.Error(), "unexpected launch file") {
+		t.Fatalf("wrong parent error = %v, want rejected closure", err)
+	}
+	if entryFile, err := validatePragmaticManifest(game, []domain.GameFile{entry, parent}); err != nil || entryFile != "clubkrto.zip" {
+		t.Fatalf("complete closure entry=%q err=%v", entryFile, err)
+	}
+}
+
 func TestValidateGameLaunchResolveRequestRejectsInvalidCoreHash(t *testing.T) {
 	req := domain.GameLaunchResolveRequest{
 		Client:   domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"},

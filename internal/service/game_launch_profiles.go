@@ -13,6 +13,7 @@ import (
 
 	"foliospace-reader/internal/domain"
 	"foliospace-reader/internal/launchcatalog"
+	"foliospace-reader/internal/naomi2catalog"
 )
 
 type RuntimeProfileNotAvailableError struct {
@@ -78,6 +79,8 @@ type auditedGameLaunchCandidate struct {
 var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var errAuditedLaunchSourceUnavailable = errors.New("audited launch source unavailable")
+
+const gameEMUAndroidFlycastCoreBuildID = "flycast-392a429-android-v4-arm64-gles3-hle-vmu-arcade-save-bundle"
 
 var atomiswaveBIOSLaunchFile = auditedGameLaunchFile{
 	SourceSHA1: "cdf247154e28c4b352b962a4a523587f2fde9305",
@@ -734,6 +737,10 @@ func pragmaticRuntimeSupportsPlatform(runtime domain.GameRuntimeDescriptor, plat
 
 func pragmaticRuntimeAllowedForClient(runtime domain.GameRuntimeDescriptor, platform string, client domain.GameLaunchClient) bool {
 	runtimeID := strings.ToLower(strings.TrimSpace(runtime.ID))
+	if isGameEMUAndroidClient(client) && runtimeID == "flycast" &&
+		(platform == "dreamcast" || platform == "naomi" || platform == "naomi2") {
+		return runtime.CoreBuildID == gameEMUAndroidFlycastCoreBuildID
+	}
 	if platform == "nds" {
 		if runtimeID != "libretro" || normalizeLaunchCoreID(runtime.CoreID) != "melondsds" {
 			return false
@@ -940,7 +947,47 @@ func validatePragmaticManifest(game domain.GameAsset, files []domain.GameFile) (
 	if game.Size <= 0 {
 		return "", errors.New("canonical manifest has invalid aggregate size")
 	}
+	if err := validateCatalogDependencyClosure(game, files); err != nil {
+		return "", err
+	}
 	return entryFile, nil
+}
+
+func validateCatalogDependencyClosure(game domain.GameAsset, files []domain.GameFile) error {
+	if normalizeLaunchPlatform(game.Platform) != "naomi2" {
+		return nil
+	}
+	parent := naomi2catalog.Parent(game.ROMSetName)
+	if parent == "" {
+		return nil
+	}
+
+	wantEntry := strings.ToLower(strings.TrimSpace(game.ROMSetName)) + ".zip"
+	wantParent := parent + ".zip"
+	if len(files) != 2 {
+		return fmt.Errorf("NAOMI 2 split set %s requires exactly entry %s and parent %s", game.ROMSetName, wantEntry, wantParent)
+	}
+	foundEntry := false
+	foundParent := false
+	for _, file := range files {
+		name := strings.ToLower(strings.TrimSpace(file.Name))
+		role := strings.ToLower(strings.TrimSpace(file.Role))
+		switch {
+		case name == wantEntry && role == "entry":
+			foundEntry = true
+		case name == wantParent && role == "dependency":
+			foundParent = true
+		default:
+			return fmt.Errorf("NAOMI 2 split set %s contains unexpected launch file %s", game.ROMSetName, file.Name)
+		}
+	}
+	if !foundEntry {
+		return fmt.Errorf("NAOMI 2 split set %s is missing entry %s", game.ROMSetName, wantEntry)
+	}
+	if !foundParent {
+		return fmt.Errorf("NAOMI 2 split set %s is missing parent ROM set %s", game.ROMSetName, wantParent)
+	}
+	return nil
 }
 
 func gameFileSourceChanged(game domain.GameAsset, file domain.GameFile, info os.FileInfo) bool {
@@ -957,6 +1004,12 @@ func isVirtualGameFile(game domain.GameAsset, file domain.GameFile) bool {
 	format := strings.ToLower(strings.TrimSpace(game.Format))
 	role := strings.ToLower(strings.TrimSpace(file.Role))
 	if role == "entry" && (format == "cue" || format == "m3u") {
+		return true
+	}
+	// ZIP-backed console entries describe the uncompressed ROM. The source path
+	// points at the container, so its physical size cannot be compared with the
+	// logical entry size recorded in the manifest.
+	if role == "entry" && isZippedConsoleROM(game) {
 		return true
 	}
 	if !strings.EqualFold(filepath.Ext(file.FilePath), ".zip") {
