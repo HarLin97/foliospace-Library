@@ -32,7 +32,7 @@ The fastest deployment path is the published multi-architecture Docker image. Fo
 
 No. FolioSpace indexes and serves metadata for files that you already own and store locally. It does not host, share, or provide download sources for copyrighted media.
 
-![FolioSpace Library hero](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/hero.png)
+![FolioSpace Library web reader with English controls](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/web-reader-en.png)
 
 ## Clients and Downloads
 
@@ -47,13 +47,13 @@ FolioSpace Library indexes and serves metadata for user-owned local files. It do
 
 ## Screenshots
 
-![Unified home](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/home.png)
+### Transparent scan jobs
 
-![Reader mode](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/reader.png)
+![FolioSpace Library scan worker settings and completed job details](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/scan-jobs-en.png)
 
-![NAS and API](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/nas-api.png)
+### Game catalog curation
 
-![Game and video libraries](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/game-video.png)
+![FolioSpace Library game compatibility and metadata curation](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/game-curation-en.png)
 
 ## License
 
