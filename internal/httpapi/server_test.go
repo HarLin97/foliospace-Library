@@ -53,6 +53,102 @@ func TestServeGameStreamSupportsRangeRequests(t *testing.T) {
 	}
 }
 
+func TestAPIClientBookFileDownloadSupportsAuthAndRanges(t *testing.T) {
+	root := t.TempDir()
+	bookPath := filepath.Join(root, "Series A", "book1.cbz")
+	makeJPEGZip(t, bookPath)
+	want, err := os.ReadFile(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(bookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	series, err := st.UpsertSeries(lib.ID, "Series A", "Series A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	book, err := st.UpsertBook(series.ID, "book1", "cbz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertFile(book.ID, lib.ID, bookPath, "Series A/book1.cbz", info.Size(), info.ModTime(), ".cbz"); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+
+	catalog := authGet(t, ts.URL+"/api/client/books?limit=10", "secret")
+	downloadURL := "/api/client/books/" + itoa(book.ID) + "/file"
+	if !strings.Contains(catalog, `"downloadUrl":"`+downloadURL+`"`) {
+		t.Fatalf("catalog = %q, want downloadUrl", catalog)
+	}
+	manifest := authGet(t, ts.URL+"/api/client/books/"+itoa(book.ID)+"/manifest", "secret")
+	if !strings.Contains(manifest, `"fileUrl":"`+downloadURL+`"`) {
+		t.Fatalf("manifest = %q, want fileUrl", manifest)
+	}
+
+	unauthorized, err := http.Get(ts.URL + downloadURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want 401", unauthorized.StatusCode)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+downloadURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Range", "bytes=0-15")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusPartialContent || !bytes.Equal(got, want[:16]) {
+		t.Fatalf("range status=%d body=%x, want first 16 source bytes", resp.StatusCode, got)
+	}
+	if !strings.Contains(resp.Header.Get("Content-Disposition"), "book1.cbz") {
+		t.Fatalf("content disposition = %q, want source filename", resp.Header.Get("Content-Disposition"))
+	}
+
+	if err := os.Remove(bookPath); err != nil {
+		t.Fatal(err)
+	}
+	missingReq, err := http.NewRequest(http.MethodGet, ts.URL+downloadURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingReq.Header.Set("Authorization", "Bearer secret")
+	missingResp, err := http.DefaultClient.Do(missingReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingResp.Body.Close()
+	if missingResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing source status = %d, want 404", missingResp.StatusCode)
+	}
+}
+
 func TestProjectJusticeRevAManifestUsesCanonicalCloneName(t *testing.T) {
 	game := domain.GameAsset{
 		ID:           15961,

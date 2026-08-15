@@ -469,6 +469,7 @@ Response:
       "thumbnailStatus": "ready",
       "thumbnailUrl": "/api/books/42/thumbnail?size=small&v=v1-cover-refresh-4",
       "manifestUrl": "/api/client/books/42/manifest",
+      "downloadUrl": "/api/client/books/42/file",
       "analyzed": true,
       "addedAt": "2026-06-17T09:00:00Z",
       "updatedAt": "2026-06-17T09:00:00Z",
@@ -490,6 +491,18 @@ Response:
 ```
 
 Like other `/api/client/*` book DTOs, this response does not expose local NAS file paths. Use `manifestUrl` to open the item and preserve all query parameters on returned cover and thumbnail URLs.
+
+### `GET /api/client/books/{bookId}/file`
+
+Downloads the byte-exact original EPUB, PDF, CBZ, or ZIP file for offline
+reading. The route requires the same Bearer token as the other client APIs,
+supports HTTP Range and HEAD requests, and returns an attachment filename based
+on the source file. Treat `downloadUrl` as opaque and do not reconstruct it from
+NAS paths. A missing source file returns `404` instead of blocking or failing a
+catalog request.
+
+The book manifest also returns the same URL as top-level `fileUrl`. Clients may
+verify downloaded bytes against `contentHash` when its algorithm is `sha256`.
 
 #### Offline identity fields
 
@@ -1020,7 +1033,9 @@ Runtime descriptors accept the optional additive `coreBuildId` field. When both 
 
 `coreBuildId` must identify the core source revision, compatibility-affecting patch/configuration digest, ABI, and build configuration. It must not include the application version, signature, or unrelated UI object code. When the resolver is enabled, the server advertises `stableRuntimeIdentityV1: true`; deployed clients must require both that flag and `gameLaunchResolver: true` before sending stable build identities, and must retain the legacy manifest fallback for `404`, `405`, or `501` responses.
 
-The Android ARM64 Dreamcast runtime reports Flycast 2.6 with `coreBuildId: "flycast-392a429-android-v3-arm64-gles3-hle-vmu"`. Successful resolution preserves that exact runtime tuple and returns the canonical manifest nested under `manifest`.
+The Android ARM64 Dreamcast runtime reports Flycast 2.6 with `coreBuildId: "flycast-392a429-android-v4-arm64-gles3-hle-vmu-arcade-save-bundle"`. Successful resolution preserves that exact runtime tuple and returns the canonical manifest nested under `manifest`.
+
+GameEMU Android uses the same exact tuple for resolver-certified NAOMI 2 catalog entries. The service accepts only canonical `platform: "naomi2"` games with a complete checksummed manifest; scanner-recognized cartridge packages contain one entry ZIP, GD-ROM packages contain that ZIP plus one same-driver CHD dependency, and pinned split cartridge clones contain the clone ZIP plus their checksummed parent ZIP. `parentRomSetName` identifies the latter relationship. The resolver never includes `naomi2.zip` for Android because firmware remains user-managed. A stale or unknown Android Flycast `coreBuildId` is rejected rather than echoed into an automatic profile.
 
 MAME and FBNeo profiles remain target-specific and audited. Adding an Apple client identity does not make a Windows arcade profile portable: each mobile target needs a persisted profile matching its exact client identity and runtime tuple. Current Apple builds report `mame/0.287/mame-0.287`; FBNeo additionally requires the exact client-reported `coreSha256`. The server can persist these alongside Windows MAME 0.288 and FBNeo profiles without replacing or weakening either policy.
 

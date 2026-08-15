@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"foliospace-reader/internal/domain"
+	"foliospace-reader/internal/naomi2catalog"
 )
 
 const (
@@ -151,13 +152,13 @@ func RequiresAtomiswaveBIOS(game domain.GameAsset) bool {
 // ParentROMSetName exposes parent/clone relationships that are part of the
 // runtime ROM-set identity but do not need a separate database column.
 func ParentROMSetName(game domain.GameAsset) string {
-	if !strings.EqualFold(strings.TrimSpace(game.Platform), "naomi") {
-		return ""
-	}
-	switch strings.ToLower(strings.TrimSpace(game.ROMSetName)) {
-	case "pjustica":
+	platform := strings.ToLower(strings.TrimSpace(game.Platform))
+	romSetName := strings.ToLower(strings.TrimSpace(game.ROMSetName))
+	if platform == "naomi" && romSetName == "pjustica" {
 		return "pjustic"
-	default:
-		return ""
 	}
+	if platform == "naomi2" {
+		return naomi2catalog.Parent(romSetName)
+	}
+	return ""
 }

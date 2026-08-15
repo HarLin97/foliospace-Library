@@ -14,6 +14,7 @@ import (
 
 	"foliospace-reader/internal/db"
 	"foliospace-reader/internal/domain"
+	"foliospace-reader/internal/naomi2catalog"
 	"foliospace-reader/internal/store"
 	"golang.org/x/text/encoding/japanese"
 )
@@ -2722,6 +2723,61 @@ func TestScanLibraryIndexesModel2CatalogAndHidesDependency(t *testing.T) {
 	}
 }
 
+func TestScanLibraryKeepsModel3EntryZIPStemAsROMSetName(t *testing.T) {
+	root := t.TempDir()
+	archivePath := filepath.Join(root, "Model3ROMs", "SpikeOut_Final_Edition.zip")
+	makeZip(t, archivePath, map[string]string{"epr-21653.ic17": "model3-rom"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 1 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want one Model 3 game", job)
+	}
+
+	page, err := st.ListGamesPage(domain.GameListOptions{Platform: "model3", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 {
+		t.Fatalf("page = %#v, want one Model 3 game", page)
+	}
+	game := page.Items[0]
+	if game.ROMSetName != "spikeout_final_edition" || filepath.Base(game.FilePath) != "SpikeOut_Final_Edition.zip" {
+		t.Fatalf("game = %#v, want romSetName equal to the entry ZIP stem", game)
+	}
+
+	game.ROMSetName = "Model3ROMs"
+	if _, err := st.UpsertGame(game); err != nil {
+		t.Fatal(err)
+	}
+	job, err = New(st).ScanLibraryPath(lib, filepath.Join(root, "Model3ROMs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 1 || job.SkippedFiles != 0 || job.ErrorCount != 0 {
+		t.Fatalf("migration job = %#v, want the unchanged legacy record reindexed", job)
+	}
+	page, err = st.ListGamesPage(domain.GameListOptions{Platform: "model3", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ROMSetName != "spikeout_final_edition" {
+		t.Fatalf("migrated page = %#v, want entry ZIP stem restored", page)
+	}
+}
+
 func TestScanLibraryIndexesNaomi2CatalogAndHidesDependencies(t *testing.T) {
 	root := t.TempDir()
 	naomi2Dir := filepath.Join(root, "NAOMI 2")
@@ -2809,6 +2865,172 @@ func TestScanLibraryIndexesNaomi2CatalogAndHidesDependencies(t *testing.T) {
 	}
 	if secondJob.IndexedFiles != 0 || secondJob.SkippedFiles != 2 || secondJob.ErrorCount != 0 {
 		t.Fatalf("second job = %#v, want unchanged descriptor and BIOS skipped", secondJob)
+	}
+}
+
+func TestScanLibraryIndexesNaomi2SplitCartridgeWithParentROMSet(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "clubkrt.zip"), map[string]string{"parent.ic1": "parent-rom"})
+	makeZip(t, filepath.Join(root, "clubkrto.zip"), map[string]string{"clone.ic1": "clone-rom"})
+	parentInfo, err := os.Stat(filepath.Join(root, "clubkrt.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloneInfo, err := os.Stat(filepath.Join(root, "clubkrto.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("NAOMI 2", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 2 || job.ErrorCount != 0 {
+		t.Fatalf("job = %#v, want parent and clone indexed", job)
+	}
+
+	clone, err := st.GameByPath(filepath.Join(root, "clubkrto.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clone.Size != parentInfo.Size()+cloneInfo.Size() || clone.ROMSetName != "clubkrto" {
+		t.Fatalf("clone = %#v, want aggregate split-set size and clone ROM-set identity", clone)
+	}
+	files, err := st.GameFiles(clone.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0].Name != "clubkrto.zip" || files[0].Role != "entry" || files[1].Name != "clubkrt.zip" || files[1].Role != "dependency" || files[1].SHA1 == "" {
+		t.Fatalf("files = %#v, want clone entry plus checksummed parent dependency", files)
+	}
+	parent, err := st.GameByPath(filepath.Join(root, "clubkrt.zip"))
+	if err != nil {
+		t.Fatalf("parent game was removed: %v", err)
+	}
+	if parent.CatalogRole != "game" || parent.ROMSetName != "clubkrt" {
+		t.Fatalf("parent = %#v, want independently visible parent game", parent)
+	}
+}
+
+func TestNaomi2SplitCatalogBuildsAllParentClosures(t *testing.T) {
+	tests := map[string]string{
+		"clubkrto":  "clubkrt",
+		"clubkrta":  "clubkrt",
+		"clubkrtc":  "clubkrt",
+		"kingrt66p": "kingrt66",
+		"vstrik3co": "vstrik3c",
+	}
+	for clone, parent := range tests {
+		t.Run(clone, func(t *testing.T) {
+			root := t.TempDir()
+			clonePath := filepath.Join(root, clone+".zip")
+			makeZip(t, clonePath, map[string]string{"clone.ic1": "clone-rom"})
+			makeZip(t, filepath.Join(root, parent+".zip"), map[string]string{"parent.ic1": "parent-rom"})
+			cloneInfo, err := os.Stat(clonePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, ok := naomi2catalog.Lookup(clone)
+			if !ok {
+				t.Fatalf("catalog entry %q not found", clone)
+			}
+			files, totalSize, parentPath, err := naomi2IndexedGameFiles(clonePath, cloneInfo, clone, entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(files) != 2 || files[0].Name != clone+".zip" || files[0].Role != "entry" ||
+				files[1].Name != parent+".zip" || files[1].Role != "dependency" ||
+				parentPath != filepath.Join(root, parent+".zip") || totalSize != files[0].Size+files[1].Size {
+				t.Fatalf("files=%#v total=%d parentPath=%q", files, totalSize, parentPath)
+			}
+		})
+	}
+}
+
+func TestNaomi2SplitCatalogResolvesParentFromProductionLayouts(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		parentPath func(string) string
+	}{
+		{
+			name: "parent copy beside clone",
+			parentPath: func(root string) string {
+				return filepath.Join(root, "clubkrto", "clubkrt.zip")
+			},
+		},
+		{
+			name: "sibling parent game directory",
+			parentPath: func(root string) string {
+				return filepath.Join(root, "clubkrt", "clubkrt.zip")
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			clonePath := filepath.Join(root, "clubkrto", "clubkrto.zip")
+			parentPath := test.parentPath(root)
+			makeZip(t, clonePath, map[string]string{"clone.ic1": "clone-rom"})
+			makeZip(t, parentPath, map[string]string{"parent.ic1": "parent-rom"})
+			cloneInfo, err := os.Stat(clonePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, ok := naomi2catalog.Lookup("clubkrto")
+			if !ok {
+				t.Fatal("clubkrto catalog entry not found")
+			}
+			files, totalSize, resolvedParent, err := naomi2IndexedGameFiles(clonePath, cloneInfo, "clubkrto", entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(files) != 2 || files[0].Name != "clubkrto.zip" || files[1].Name != "clubkrt.zip" ||
+				files[1].Role != "dependency" || resolvedParent != parentPath || totalSize != files[0].Size+files[1].Size {
+				t.Fatalf("files=%#v total=%d parent=%q, want clone plus exact parent %q", files, totalSize, resolvedParent, parentPath)
+			}
+		})
+	}
+}
+
+func TestScanLibraryRejectsNaomi2SplitCartridgeWithoutParentROMSet(t *testing.T) {
+	root := t.TempDir()
+	makeZip(t, filepath.Join(root, "clubkrto.zip"), map[string]string{"clone.ic1": "clone-rom"})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("NAOMI 2", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.IndexedFiles != 0 || job.ErrorCount != 1 {
+		t.Fatalf("job = %#v, want missing parent to block clone indexing", job)
+	}
+	if _, err := st.GameByPath(filepath.Join(root, "clubkrto.zip")); err == nil {
+		t.Fatal("split clone without parent was indexed")
+	}
+	errors, err := st.ListFileErrorsByJob(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(errors) != 1 || !strings.Contains(errors[0].Message, "clubkrt.zip") {
+		t.Fatalf("errors = %#v, want exact missing parent name", errors)
 	}
 }
 

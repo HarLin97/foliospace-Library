@@ -13,6 +13,7 @@ import (
 
 	"foliospace-reader/internal/domain"
 	"foliospace-reader/internal/launchcatalog"
+	"foliospace-reader/internal/naomi2catalog"
 )
 
 type RuntimeProfileNotAvailableError struct {
@@ -78,6 +79,8 @@ type auditedGameLaunchCandidate struct {
 var sha1Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var errAuditedLaunchSourceUnavailable = errors.New("audited launch source unavailable")
+
+const gameEMUAndroidFlycastCoreBuildID = "flycast-392a429-android-v4-arm64-gles3-hle-vmu-arcade-save-bundle"
 
 var atomiswaveBIOSLaunchFile = auditedGameLaunchFile{
 	SourceSHA1: "cdf247154e28c4b352b962a4a523587f2fde9305",
@@ -355,13 +358,13 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 		if !available {
 			continue
 		}
-		resolvedFiles, err = s.appendAutomaticGameDependencies(game, resolvedFiles)
+		resolvedFiles, err = s.appendAutomaticGameDependencies(game, resolvedFiles, req.Client)
 		if err != nil {
 			missingDependency = atomiswaveBIOSLaunchFile.Name
 			continue
 		}
 		totalSize = resolvedLaunchFileTotalSize(resolvedFiles)
-		resolvedGame := game
+		resolvedGame := resolvedGameForClient(game, req.Client)
 		resolvedGame.ROMSetName = profile.CanonicalSet
 		resolvedGame.Size = totalSize
 		return domain.GameLaunchResolution{
@@ -397,13 +400,13 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 		if !candidateAvailable {
 			continue
 		}
-		resolvedFiles, err = s.appendAutomaticGameDependencies(game, resolvedFiles)
+		resolvedFiles, err = s.appendAutomaticGameDependencies(game, resolvedFiles, req.Client)
 		if err != nil {
 			missingDependency = atomiswaveBIOSLaunchFile.Name
 			continue
 		}
 		totalSize = resolvedLaunchFileTotalSize(resolvedFiles)
-		resolvedGame := game
+		resolvedGame := resolvedGameForClient(game, req.Client)
 		if strings.TrimSpace(profile.Title) != "" {
 			resolvedGame.Title = profile.Title
 		}
@@ -458,7 +461,7 @@ func (s *Service) LegacyGameLaunchDependencies(gameID int64) ([]domain.GameLaunc
 			break
 		}
 	}
-	return s.appendAutomaticGameDependencies(game, dependencies)
+	return s.appendAutomaticGameDependencies(game, dependencies, domain.GameLaunchClient{})
 }
 
 func legacyLaunchProfilesByPreference(profiles []domain.GameLaunchProfile, emulatorHint string) []domain.GameLaunchProfile {
@@ -589,25 +592,25 @@ func (s *Service) resolvePragmaticGameLaunch(game domain.GameAsset, runtime doma
 			Size: file.Size, Role: file.Role, SHA1: strings.ToLower(strings.TrimSpace(file.SHA1)),
 		})
 	}
-	resolvedFiles, err = s.appendAutomaticGameDependencies(game, resolvedFiles)
+	resolvedFiles, err = s.appendAutomaticGameDependencies(game, resolvedFiles, client)
 	if err != nil {
 		return domain.GameLaunchResolution{}, launchResolveError(
 			"dependency-missing", "A required launch file is missing.",
 			map[string]any{"gameId": game.ID, "file": atomiswaveBIOSLaunchFile.Name},
 		)
 	}
-	resolvedGame := game
+	resolvedGame := resolvedGameForClient(game, client)
 	resolvedGame.Size = resolvedLaunchFileTotalSize(resolvedFiles)
 
 	return domain.GameLaunchResolution{
 		LaunchProfileID: pragmaticLaunchProfileID(game, runtime, client),
-		ProfileRevision: pragmaticProfileRevision(game, files),
+		ProfileRevision: pragmaticProfileRevision(game, files, client),
 		Runtime:         runtime, Game: resolvedGame, EntryFile: entryFile, Files: resolvedFiles, DOSLaunch: dosLaunch,
 	}, nil
 }
 
-func (s *Service) appendAutomaticGameDependencies(game domain.GameAsset, files []domain.GameLaunchResolvedFile) ([]domain.GameLaunchResolvedFile, error) {
-	if !launchcatalog.RequiresAtomiswaveBIOS(game) {
+func (s *Service) appendAutomaticGameDependencies(game domain.GameAsset, files []domain.GameLaunchResolvedFile, client domain.GameLaunchClient) ([]domain.GameLaunchResolvedFile, error) {
+	if !launchcatalog.RequiresAtomiswaveBIOS(game) || isGameEMUAndroidClient(client) {
 		return files, nil
 	}
 	for _, file := range files {
@@ -626,6 +629,24 @@ func (s *Service) appendAutomaticGameDependencies(game domain.GameAsset, files [
 		Role:         atomiswaveBIOSLaunchFile.Role,
 		SHA1:         atomiswaveBIOSLaunchFile.SourceSHA1,
 	}), nil
+}
+
+func resolvedGameForClient(game domain.GameAsset, client domain.GameLaunchClient) domain.GameAsset {
+	if !isGameEMUAndroidClient(client) || !launchcatalog.RequiresAtomiswaveBIOS(game) {
+		return game
+	}
+	game.Platform = "atomiswave"
+	game.EmulatorHint = "flycast"
+	if strings.TrimSpace(game.ROMSetName) == "" {
+		game.ROMSetName = strings.TrimSuffix(strings.ToLower(filepath.Base(game.FilePath)), filepath.Ext(game.FilePath))
+	}
+	return game
+}
+
+func isGameEMUAndroidClient(client domain.GameLaunchClient) bool {
+	return strings.EqualFold(strings.TrimSpace(client.Name), "GameEMU.Android") &&
+		strings.EqualFold(strings.TrimSpace(client.Platform), "android-arm64") &&
+		strings.EqualFold(strings.TrimSpace(client.Architecture), "arm64")
 }
 
 func resolvedLaunchFileTotalSize(files []domain.GameLaunchResolvedFile) int64 {
@@ -716,6 +737,10 @@ func pragmaticRuntimeSupportsPlatform(runtime domain.GameRuntimeDescriptor, plat
 
 func pragmaticRuntimeAllowedForClient(runtime domain.GameRuntimeDescriptor, platform string, client domain.GameLaunchClient) bool {
 	runtimeID := strings.ToLower(strings.TrimSpace(runtime.ID))
+	if isGameEMUAndroidClient(client) && runtimeID == "flycast" &&
+		(platform == "dreamcast" || platform == "naomi" || platform == "naomi2") {
+		return runtime.CoreBuildID == gameEMUAndroidFlycastCoreBuildID
+	}
 	if platform == "nds" {
 		if runtimeID != "libretro" || normalizeLaunchCoreID(runtime.CoreID) != "melondsds" {
 			return false
@@ -922,7 +947,47 @@ func validatePragmaticManifest(game domain.GameAsset, files []domain.GameFile) (
 	if game.Size <= 0 {
 		return "", errors.New("canonical manifest has invalid aggregate size")
 	}
+	if err := validateCatalogDependencyClosure(game, files); err != nil {
+		return "", err
+	}
 	return entryFile, nil
+}
+
+func validateCatalogDependencyClosure(game domain.GameAsset, files []domain.GameFile) error {
+	if normalizeLaunchPlatform(game.Platform) != "naomi2" {
+		return nil
+	}
+	parent := naomi2catalog.Parent(game.ROMSetName)
+	if parent == "" {
+		return nil
+	}
+
+	wantEntry := strings.ToLower(strings.TrimSpace(game.ROMSetName)) + ".zip"
+	wantParent := parent + ".zip"
+	if len(files) != 2 {
+		return fmt.Errorf("NAOMI 2 split set %s requires exactly entry %s and parent %s", game.ROMSetName, wantEntry, wantParent)
+	}
+	foundEntry := false
+	foundParent := false
+	for _, file := range files {
+		name := strings.ToLower(strings.TrimSpace(file.Name))
+		role := strings.ToLower(strings.TrimSpace(file.Role))
+		switch {
+		case name == wantEntry && role == "entry":
+			foundEntry = true
+		case name == wantParent && role == "dependency":
+			foundParent = true
+		default:
+			return fmt.Errorf("NAOMI 2 split set %s contains unexpected launch file %s", game.ROMSetName, file.Name)
+		}
+	}
+	if !foundEntry {
+		return fmt.Errorf("NAOMI 2 split set %s is missing entry %s", game.ROMSetName, wantEntry)
+	}
+	if !foundParent {
+		return fmt.Errorf("NAOMI 2 split set %s is missing parent ROM set %s", game.ROMSetName, wantParent)
+	}
+	return nil
 }
 
 func gameFileSourceChanged(game domain.GameAsset, file domain.GameFile, info os.FileInfo) bool {
@@ -939,6 +1004,12 @@ func isVirtualGameFile(game domain.GameAsset, file domain.GameFile) bool {
 	format := strings.ToLower(strings.TrimSpace(game.Format))
 	role := strings.ToLower(strings.TrimSpace(file.Role))
 	if role == "entry" && (format == "cue" || format == "m3u") {
+		return true
+	}
+	// ZIP-backed console entries describe the uncompressed ROM. The source path
+	// points at the container, so its physical size cannot be compared with the
+	// logical entry size recorded in the manifest.
+	if role == "entry" && isZippedConsoleROM(game) {
 		return true
 	}
 	if !strings.EqualFold(filepath.Ext(file.FilePath), ".zip") {
@@ -1020,14 +1091,14 @@ func pragmaticLaunchProfileID(game domain.GameAsset, runtime domain.GameRuntimeD
 	return fmt.Sprintf("auto-%x", digest[:10])
 }
 
-func pragmaticProfileRevision(game domain.GameAsset, files []domain.GameFile) int {
+func pragmaticProfileRevision(game domain.GameAsset, files []domain.GameFile, client domain.GameLaunchClient) int {
 	var key strings.Builder
 	fmt.Fprintf(&key, "%d\x00%s\x00%d\x00", game.ID, game.UpdatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"), game.Size)
 	for _, file := range files {
 		fmt.Fprintf(&key, "%d\x00%s\x00%d\x00%s\x00%s\x00", file.Position, file.Name, file.Size,
 			strings.ToLower(strings.TrimSpace(file.Role)), strings.ToLower(strings.TrimSpace(file.SHA1)))
 	}
-	if launchcatalog.RequiresAtomiswaveBIOS(game) {
+	if launchcatalog.RequiresAtomiswaveBIOS(game) && !isGameEMUAndroidClient(client) {
 		fmt.Fprintf(&key, "automatic\x00%s\x00%d\x00%s\x00", atomiswaveBIOSLaunchFile.Name,
 			atomiswaveBIOSLaunchFile.Size, atomiswaveBIOSLaunchFile.SourceSHA1)
 	}

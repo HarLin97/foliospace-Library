@@ -30,6 +30,7 @@ import (
 	"foliospace-reader/internal/archive"
 	"foliospace-reader/internal/domain"
 	"foliospace-reader/internal/launchcatalog"
+	"foliospace-reader/internal/naomi2catalog"
 	"foliospace-reader/internal/store"
 	"golang.org/x/text/encoding/japanese"
 )
@@ -1074,6 +1075,12 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 			game.CRC32 != "" &&
 			game.SHA1 != ""
 	}
+	if platform == "model3" {
+		game, err := s.store.GameByPath(path)
+		if err != nil || game.ROMSetName != gameROMSetStem(path, ext) {
+			return false
+		}
+	}
 	if !isMultiFileGameDescriptor(ext) {
 		return s.store.CanSkipGame(path, info.Size(), info.ModTime(), platform)
 	}
@@ -1689,61 +1696,6 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	return s.applyGamelistMetadata(library, path, filepath.ToSlash(relPath), game.ID)
 }
 
-type naomi2CatalogEntry struct {
-	title       string
-	region      string
-	gdrom       string
-	expectedPIC string
-}
-
-// NAOMI 2 GD-ROM short names and PIC members are pinned to MAME's Naomi 2 set
-// definitions. Only these descriptor ZIPs are published as launchable games.
-var naomi2Catalog = map[string]naomi2CatalogEntry{
-	"beachspi":  {title: "Beach Spikers", region: "World", gdrom: "gds-0014", expectedPIC: "317-0317-com.pic"},
-	"clubk2k3":  {title: "Club Kart: European Session (2003)", region: "World"},
-	"clubk2kp":  {title: "Club Kart: European Session (2003, Prototype)", region: "World"},
-	"clubk2kpa": {title: "Club Kart: European Session (2003, Prototype Rev A)", region: "World"},
-	"clubkcyc":  {title: "Club Kart for Cycraft (Rev A)", region: "World", gdrom: "gds-0029a", expectedPIC: "317-0358-com.pic"},
-	"clubkcyco": {title: "Club Kart for Cycraft", region: "World", gdrom: "gds-0029", expectedPIC: "317-0358-com.pic"},
-	"clubkprz":  {title: "Club Kart Prize", region: "World"},
-	"clubkpzb":  {title: "Club Kart Prize Version B", region: "World"},
-	"clubkrt":   {title: "Club Kart: European Session (Rev D)", region: "World"},
-	"clubkrta":  {title: "Club Kart: European Session (Rev A)", region: "World"},
-	"clubkrtc":  {title: "Club Kart: European Session (Rev C)", region: "World"},
-	"clubkrto":  {title: "Club Kart: European Session", region: "World"},
-	"inidv3ca":  {title: "Initial D Arcade Stage Ver. 3 Cycraft Edition (Rev A)", region: "World", gdrom: "gds-0039a", expectedPIC: "317-0406-com.pic"},
-	"inidv3cy":  {title: "Initial D Arcade Stage Ver. 3 Cycraft Edition (Rev B)", region: "World", gdrom: "gds-0039b", expectedPIC: "317-0406-com.pic"},
-	"initdv3e":  {title: "Initial D Arcade Stage Ver. 3 (Export)", region: "World", gdrom: "gds-0033", expectedPIC: "317-0384-com.pic"},
-	"initdv3j":  {title: "Initial D Arcade Stage Ver. 3 (Japan Rev C)", region: "Japan", gdrom: "gds-0032c", expectedPIC: "317-0379-jpn.pic"},
-	"initdv3jb": {title: "Initial D Arcade Stage Ver. 3 (Japan Rev B)", region: "Japan", gdrom: "gds-0032b", expectedPIC: "317-0379-jpn.pic"},
-	"initd":     {title: "Initial D Arcade Stage (Rev B)", region: "Japan", gdrom: "gds-0020b", expectedPIC: "317-0331-jpn.pic"},
-	"initdexp":  {title: "Initial D Arcade Stage (Export Rev A)", region: "World", gdrom: "gds-0025a", expectedPIC: "317-0343-com.pic"},
-	"initdexpo": {title: "Initial D Arcade Stage (Export)", region: "World", gdrom: "gds-0025", expectedPIC: "317-0343-com.pic"},
-	"initdo":    {title: "Initial D Arcade Stage", region: "Japan", gdrom: "gds-0020", expectedPIC: "317-0331-jpn.pic"},
-	"initdv2e":  {title: "Initial D Arcade Stage Ver. 2 (Export)", region: "World", gdrom: "gds-0027", expectedPIC: "317-0357-exp.pic"},
-	"initdv2j":  {title: "Initial D Arcade Stage Ver. 2 (Rev B)", region: "Japan", gdrom: "gds-0026b", expectedPIC: "317-0345-jpn.pic"},
-	"initdv2ja": {title: "Initial D Arcade Stage Ver. 2 (Rev A)", region: "Japan", gdrom: "gds-0026a", expectedPIC: "317-0345-jpn.pic"},
-	"initdv2jo": {title: "Initial D Arcade Stage Ver. 2", region: "Japan", gdrom: "gds-0026", expectedPIC: "317-0345-jpn.pic"},
-	"kingrt66":  {title: "The King of Route 66 (Rev A)", region: "World"},
-	"kingrt66p": {title: "The King of Route 66 (Prototype)", region: "World"},
-	"soulsurf":  {title: "Soul Surfer (Rev A)", region: "World"},
-	"vf4":       {title: "Virtua Fighter 4 (Ver. C)", region: "World", gdrom: "gds-0012c", expectedPIC: "317-0314-com.pic"},
-	"vf4b":      {title: "Virtua Fighter 4 (Rev B)", region: "World", gdrom: "gds-0012b", expectedPIC: "317-0314-com.pic"},
-	"vf4cart":   {title: "Virtua Fighter 4 (Cartridge)", region: "World"},
-	"vf4evo":    {title: "Virtua Fighter 4: Evolution (Ver. B)", region: "Japan", gdrom: "gds-0024c", expectedPIC: "317-0338-jpn.pic"},
-	"vf4evoa":   {title: "Virtua Fighter 4: Evolution (Rev A)", region: "Japan", gdrom: "gds-0024a", expectedPIC: "317-0338-jpn.pic"},
-	"vf4evob":   {title: "Virtua Fighter 4: Evolution (Ver. B)", region: "Japan", gdrom: "gds-0024b", expectedPIC: "317-0338-jpn.pic"},
-	"vf4evoct":  {title: "Virtua Fighter 4: Evolution (Cartridge)", region: "World"},
-	"vf4o":      {title: "Virtua Fighter 4", region: "World", gdrom: "gds-0012", expectedPIC: "317-0314-com.pic"},
-	"vf4tuned":  {title: "Virtua Fighter 4: Final Tuned (Ver. B)", region: "World", gdrom: "gds-0036f", expectedPIC: "317-0387-com.pic"},
-	"vf4tuneda": {title: "Virtua Fighter 4: Final Tuned (Rev A)", region: "World", gdrom: "gds-0036a", expectedPIC: "317-0387-com.pic"},
-	"vf4tunedd": {title: "Virtua Fighter 4: Final Tuned (Ver. A)", region: "World", gdrom: "gds-0036d", expectedPIC: "317-0387-com.pic"},
-	"vstrik3":   {title: "Virtua Striker 3", region: "World", gdrom: "gds-0006", expectedPIC: "317-0304-com.bin"},
-	"vstrik3c":  {title: "Virtua Striker 3 (Rev B)", region: "World"},
-	"vstrik3co": {title: "Virtua Striker 3", region: "World"},
-	"wldrider":  {title: "Wild Riders", region: "World"},
-}
-
 func isNaomi2Library(library domain.Library) bool {
 	return isNaomi2RootName(library.Name) || isNaomi2RootName(filepath.Base(filepath.Clean(library.RootPath)))
 }
@@ -1793,7 +1745,7 @@ func isNaomi2GameZIP(library domain.Library, path string) bool {
 		return false
 	}
 	shortName := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
-	if _, ok := naomi2Catalog[shortName]; !ok {
+	if _, ok := naomi2catalog.Lookup(shortName); !ok {
 		return false
 	}
 	dir := filepath.Clean(filepath.Dir(path))
@@ -1818,7 +1770,7 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 	}
 
 	shortName := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
-	entry, ok := naomi2Catalog[shortName]
+	entry, ok := naomi2catalog.Lookup(shortName)
 	if !ok || !isNaomi2GameZIP(library, path) {
 		return fmt.Errorf("unrecognized NAOMI 2 package %s", filepath.Base(path))
 	}
@@ -1833,7 +1785,7 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 	files, totalSize, companionPath, err := naomi2IndexedGameFiles(path, info, shortName, entry)
 	if err != nil {
 		_ = s.store.DeleteGameByPath(path)
-		if companionPath != "" {
+		if companionPath != "" && entry.GDROM != "" {
 			_ = s.store.DeleteGameByPath(companionPath)
 		}
 		return err
@@ -1842,7 +1794,7 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 		return err
 	}
 	game, err := s.store.UpsertGame(domain.GameAsset{
-		LibraryID: library.ID, Title: entry.title, Platform: "naomi2", ROMSetName: shortName, Region: entry.region, Format: "zip",
+		LibraryID: library.ID, Title: entry.Title, Platform: "naomi2", ROMSetName: shortName, Region: entry.Region, Format: "zip",
 		FilePath: path, RelPath: filepath.ToSlash(relPath), Size: totalSize, MTime: info.ModTime(), CRC32: checksums.crc32, SHA1: checksums.sha1,
 		EmulatorHint: "flycast", Compatibility: naomi2Compatibility(entry), CatalogRole: "game",
 	})
@@ -1852,7 +1804,7 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 	if err := s.store.ReplaceGameFiles(game.ID, files); err != nil {
 		return err
 	}
-	if companionPath == "" {
+	if companionPath == "" || entry.GDROM == "" {
 		return nil
 	}
 	companionInfo, err := os.Stat(companionPath)
@@ -1871,7 +1823,7 @@ func (s *Scanner) indexNaomi2GameFile(library domain.Library, path string, info 
 		return err
 	}
 	dependency, err := s.store.UpsertGame(domain.GameAsset{
-		LibraryID: library.ID, Title: entry.gdrom, Platform: "naomi2", ROMSetName: entry.gdrom, Region: entry.region, Format: "chd",
+		LibraryID: library.ID, Title: entry.GDROM, Platform: "naomi2", ROMSetName: entry.GDROM, Region: entry.Region, Format: "chd",
 		FilePath: companionPath, RelPath: filepath.ToSlash(companionRelPath), Size: companionInfo.Size(), MTime: companionInfo.ModTime(), SHA1: companionSHA1,
 		EmulatorHint: "flycast", Compatibility: "unknown", CatalogRole: "dependency",
 	})
@@ -1886,7 +1838,7 @@ func (s *Scanner) canSkipNaomi2Game(path string, info fs.FileInfo) bool {
 	if shortName == "naomi2" {
 		return s.store.CanSkipGame(path, info.Size(), info.ModTime(), "naomi2")
 	}
-	entry, ok := naomi2Catalog[shortName]
+	entry, ok := naomi2catalog.Lookup(shortName)
 	if !ok {
 		return false
 	}
@@ -1897,12 +1849,30 @@ func (s *Scanner) canSkipNaomi2Game(path string, info fs.FileInfo) bool {
 	return s.store.CanSkipGameSet(path, totalSize, info.ModTime(), "naomi2", files)
 }
 
-func naomi2IndexedGameFiles(path string, info fs.FileInfo, shortName string, entry naomi2CatalogEntry) ([]domain.GameFile, int64, string, error) {
+func naomi2IndexedGameFiles(path string, info fs.FileInfo, shortName string, entry naomi2catalog.Entry) ([]domain.GameFile, int64, string, error) {
 	files := []domain.GameFile{{Name: filepath.Base(path), FilePath: path, Size: info.Size(), MTime: info.ModTime(), Role: "entry", Position: 0}}
-	if entry.gdrom == "" {
+	if entry.Parent != "" {
+		parentName := entry.Parent + ".zip"
+		parentPath, err := resolveNaomi2ParentROMSet(path, shortName, entry.Parent, parentName)
+		if err != nil {
+			return nil, 0, filepath.Join(filepath.Dir(path), parentName), fmt.Errorf("NAOMI 2 parent ROM set %s: %w", parentName, err)
+		}
+		parentInfo, err := os.Stat(parentPath)
+		if err != nil {
+			return nil, 0, parentPath, err
+		}
+		if parentInfo.IsDir() {
+			return nil, 0, parentPath, fmt.Errorf("NAOMI 2 parent ROM set is a directory: %s", parentName)
+		}
+		files = append(files, domain.GameFile{
+			Name: parentName, FilePath: parentPath, Size: parentInfo.Size(), MTime: parentInfo.ModTime(), Role: "dependency", Position: 1,
+		})
+		return files, info.Size() + parentInfo.Size(), parentPath, nil
+	}
+	if entry.GDROM == "" {
 		return files, info.Size(), "", nil
 	}
-	companionName := entry.gdrom + ".chd"
+	companionName := entry.GDROM + ".chd"
 	companionPath, err := resolveDiscDependencyPath(filepath.Dir(path), filepath.Join(shortName, companionName))
 	if err != nil {
 		return nil, 0, filepath.Join(filepath.Dir(path), shortName, companionName), fmt.Errorf("NAOMI 2 GD-ROM companion %s: %w", companionName, err)
@@ -1920,7 +1890,43 @@ func naomi2IndexedGameFiles(path string, info fs.FileInfo, shortName string, ent
 	return files, info.Size() + companionInfo.Size(), companionPath, nil
 }
 
-func validateNaomi2DescriptorZIP(path string, entry naomi2CatalogEntry) error {
+func resolveNaomi2ParentROMSet(path string, shortName string, parentShortName string, parentName string) (string, error) {
+	gameDir := filepath.Dir(path)
+	candidates := []struct {
+		dir  string
+		name string
+	}{{dir: gameDir, name: parentName}}
+	if strings.EqualFold(filepath.Base(gameDir), shortName) {
+		root := filepath.Dir(gameDir)
+		candidates = append(candidates,
+			struct {
+				dir  string
+				name string
+			}{dir: root, name: filepath.Join(parentShortName, parentName)},
+			struct {
+				dir  string
+				name string
+			}{dir: root, name: parentName},
+		)
+	}
+	var lastErr error
+	for _, candidate := range candidates {
+		resolved, err := resolveDiscDependencyPath(candidate.dir, candidate.name)
+		if err == nil {
+			return resolved, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = os.ErrNotExist
+	}
+	return "", lastErr
+}
+
+func validateNaomi2DescriptorZIP(path string, entry naomi2catalog.Entry) error {
 	reader, err := stdzip.OpenReader(path)
 	if err != nil {
 		return fmt.Errorf("open NAOMI 2 ZIP: %w", err)
@@ -1929,7 +1935,7 @@ func validateNaomi2DescriptorZIP(path string, entry naomi2CatalogEntry) error {
 	if len(reader.File) == 0 {
 		return fmt.Errorf("NAOMI 2 ZIP has no entries")
 	}
-	foundExpectedPIC := entry.expectedPIC == ""
+	foundExpectedPIC := entry.ExpectedPIC == ""
 	for _, file := range reader.File {
 		if err := validateArchiveEntryName(file.Name); err != nil {
 			return err
@@ -1937,18 +1943,18 @@ func validateNaomi2DescriptorZIP(path string, entry naomi2CatalogEntry) error {
 		if file.FileInfo().Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("NAOMI 2 ZIP contains symlink entry: %s", file.Name)
 		}
-		if strings.EqualFold(filepath.Base(file.Name), entry.expectedPIC) {
+		if strings.EqualFold(filepath.Base(file.Name), entry.ExpectedPIC) {
 			foundExpectedPIC = true
 		}
 	}
 	if !foundExpectedPIC {
-		return fmt.Errorf("NAOMI 2 ZIP is missing expected PIC member %s", entry.expectedPIC)
+		return fmt.Errorf("NAOMI 2 ZIP is missing expected PIC member %s", entry.ExpectedPIC)
 	}
 	return nil
 }
 
-func naomi2Compatibility(entry naomi2CatalogEntry) string {
-	if entry.gdrom != "" {
+func naomi2Compatibility(entry naomi2catalog.Entry) string {
+	if entry.GDROM != "" {
 		return "playable"
 	}
 	return "untested"
@@ -5165,7 +5171,8 @@ func inferROMSetName(relPath string) string {
 			return gameROMSetStem(relPath, filepath.Ext(relPath))
 		case "cps1 cps2 cps3", "cps1", "cps2", "cps3":
 			return gameROMSetStem(relPath, filepath.Ext(relPath))
-		case "model2", "model2roms", "model 2", "sega model 2":
+		case "model2", "model2roms", "model 2", "sega model 2",
+			"model3", "model3roms", "model 3", "sega model 3":
 			return gameROMSetStem(relPath, filepath.Ext(relPath))
 		case "fbneo":
 			if len(parts) > 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "arcade") {

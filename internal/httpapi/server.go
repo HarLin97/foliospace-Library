@@ -10,8 +10,10 @@ import (
 	"html"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -608,6 +610,10 @@ func (s *Server) handleClientBookAction(w http.ResponseWriter, r *http.Request) 
 		writeJSONOrError(w, manifest, err)
 		return
 	}
+	if tail == "file" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+		s.streamClientBookFile(w, r, id, s.requestProfileID(r))
+		return
+	}
 	if tail == "private-state" && r.Method == http.MethodGet {
 		response, err := s.clientBookPrivateState(id, s.requestProfileID(r))
 		writeJSONOrError(w, response, err)
@@ -631,6 +637,44 @@ func (s *Server) handleClientBookAction(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	http.NotFound(w, r)
+}
+
+func (s *Server) streamClientBookFile(w http.ResponseWriter, r *http.Request, bookID int64, profileID int64) {
+	book, err := s.service.BookForProfile(bookID, profileID)
+	if err != nil {
+		writeJSONOrError(w, nil, err)
+		return
+	}
+	path := strings.TrimSpace(book.FilePath)
+	if path == "" {
+		writeError(w, http.StatusNotFound, errors.New("book source file is unavailable"))
+		return
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			writeError(w, http.StatusNotFound, errors.New("book source file is missing"))
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !info.Mode().IsRegular() {
+		writeError(w, http.StatusNotFound, errors.New("book source is not a regular file"))
+		return
+	}
+	name := filepath.Base(path)
+	if disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name}); disposition != "" {
+		w.Header().Set("Content-Disposition", disposition)
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	http.ServeContent(w, r, name, info.ModTime(), file)
 }
 
 func (s *Server) handleClientBooks(w http.ResponseWriter, r *http.Request) {
@@ -1387,6 +1431,7 @@ func (s *Server) clientBookManifest(bookID int64, profileID int64) (clientBookMa
 		Book:              clientBookItem(book),
 		Format:            book.Format,
 		CoverURL:          clientCoverURL(book.ID),
+		FileURL:           clientBookDownloadURL(book.ID),
 		Progress:          progress,
 		ReaderModes:       readerModesForBookFormat(book.Format),
 		DefaultReaderMode: defaultReaderModeForBookFormat(book.Format),
@@ -2448,6 +2493,7 @@ type clientBook struct {
 	ThumbnailStatus      string   `json:"thumbnailStatus"`
 	ThumbnailURL         string   `json:"thumbnailUrl"`
 	ManifestURL          string   `json:"manifestUrl"`
+	DownloadURL          string   `json:"downloadUrl"`
 	Analyzed             bool     `json:"analyzed"`
 	AddedAt              string   `json:"addedAt"`
 	UpdatedAt            string   `json:"updatedAt"`
@@ -2477,6 +2523,7 @@ type clientBookManifestResponse struct {
 	Book              clientBook          `json:"book"`
 	Format            string              `json:"format"`
 	CoverURL          string              `json:"coverUrl"`
+	FileURL           string              `json:"fileUrl"`
 	Progress          clientProgress      `json:"progress"`
 	ReaderModes       []string            `json:"readerModes"`
 	DefaultReaderMode string              `json:"defaultReaderMode"`
@@ -3200,6 +3247,7 @@ func clientBookItem(book domain.Book) clientBook {
 		ThumbnailStatus:      thumbnailStatus(book),
 		ThumbnailURL:         clientThumbnailURL(book.ID, "small"),
 		ManifestURL:          fmt.Sprintf("/api/client/books/%d/manifest", book.ID),
+		DownloadURL:          clientBookDownloadURL(book.ID),
 		Analyzed:             book.Analyzed,
 		AddedAt:              formatClientTime(book.AddedAt),
 		UpdatedAt:            formatClientTime(book.UpdatedAt),
@@ -3216,6 +3264,10 @@ func clientBookItem(book domain.Book) clientBook {
 		FileSize:             fileSize,
 		ContentRevision:      book.ContentRevision,
 	}
+}
+
+func clientBookDownloadURL(bookID int64) string {
+	return fmt.Sprintf("/api/client/books/%d/file", bookID)
 }
 
 func clientCoverURL(bookID int64) string {
