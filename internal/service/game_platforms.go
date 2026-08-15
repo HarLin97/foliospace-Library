@@ -16,7 +16,7 @@ var supportedGamePlatforms = []domain.GamePlatformDefinition{
 	{Platform: "gbc", Title: "GBC", Aliases: []string{"game-boy-color"}},
 	{Platform: "gba", Title: "GBA", Aliases: []string{"game-boy-advance"}},
 	{Platform: "nds", Title: "Nintendo DS", Aliases: []string{"ds", "nintendo-ds", "nintendo ds", "nintendods"}},
-	{Platform: "3ds", Title: "Nintendo 3DS", Aliases: []string{"nintendo-3ds"}},
+	{Platform: "3ds", Title: "Nintendo 3DS", Aliases: []string{"nintendo-3ds", "nintendo 3ds", "nintendo3ds", "ctr"}},
 	{Platform: "md", Title: "Mega Drive", Aliases: []string{"genesis", "mega-drive", "megadrive"}},
 	{Platform: "32x", Title: "32X", Aliases: []string{"sega-32x"}},
 	{Platform: "3do", Title: "3DO", Aliases: []string{"panasonic 3do", "the 3do company - 3do", "3do interactive multiplayer"}},

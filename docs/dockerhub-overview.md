@@ -4,6 +4,18 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.995 Release: Safe Native Delivery and Targeted Curation
+
+Release `0.995` expands safe native game delivery, compatibility curation, and offline access.
+
+- Nintendo 3DS libraries validate direct `.3ds`/`.cci` NCSD images, `.cxi` NCCH images, and safe single-image ZIP packages before indexing. Launchable images stream as their original inner bytes, while `.cia` packages are explicitly marked for client-side installation.
+- ZIP-backed game downloads support single-range requests even when the inner archive stream is not seekable, enabling resumable Nintendo DS, Nintendo 3DS, and other validated single-ROM downloads.
+- Game Curation can rebuild FBNeo or MAME compatibility for one game without deleting unrelated profiles. The MAME audit includes a fingerprint-pinned exception for the verified Time Crisis package that embeds its exact `namcoc71` device ROM, without rewriting the ZIP.
+- Android ARM64 launch resolution accepts the pinned Flycast v4 runtime identity for Dreamcast, NAOMI, Atomiswave, and audited NAOMI 2 packages. Split NAOMI 2 sets require their checksummed parent ZIP, while user-managed firmware is not injected into Android manifests.
+- Book manifests expose a byte-exact authenticated download URL with HTTP Range and HEAD support for offline reading.
+- The Client Home API can omit collection expansion for faster first-screen loading, and scans skip `_maintenance` directories by default.
+- Existing Client API routes remain backward compatible. Service, Client API, Web, and source MCP metadata report version `0.995`.
+
 ## 0.994 Release: Offline Identity and Expanded Game Delivery
 
 Release `0.994` expands native game delivery and adds stable offline identity for books and comics.
@@ -257,7 +269,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.994
+docker pull funland/foliospace-library:0.995
 ```
 
 ```bash
@@ -267,7 +279,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.994
+  funland/foliospace-library:0.995
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

@@ -758,7 +758,8 @@ export const api = {
       body: JSON.stringify(preferences),
     }),
   clientInfo: (options?: RequestOptions) => request<ClientInfo>("/api/client/info", options),
-  clientHome: (limit = 12, options?: RequestOptions) => request<ClientHome>(`/api/client/home?limit=${limit}`, options),
+  clientHome: (limit = 12, options?: RequestOptions) =>
+    request<ClientHome>(`/api/client/home?limit=${limit}&includeCollections=false`, options),
   libraries: (options?: RequestOptions) => request<Library[]>("/api/libraries", options),
   createLibrary: (name: string, rootPath: string, assetType = "mixed", excludePatterns: string[] = []) =>
     request<Library>("/api/libraries", {

@@ -1429,6 +1429,21 @@ func (s *Service) OpenGameFile(id int64) (PageStream, error) {
 		data := virtualM3UData(files)
 		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: "application/octet-stream"}, nil
 	}
+	if isZippedThreeDSImage(game.Platform, game.FilePath, game.Format) {
+		files, err := s.store.GameFiles(id)
+		if err != nil {
+			return PageStream{}, err
+		}
+		expectedName := ""
+		if len(files) == 1 {
+			expectedName = files[0].Name
+		}
+		body, err := openThreeDSImageFromZIP(game.FilePath, expectedName, game.Size)
+		if err != nil {
+			return PageStream{}, err
+		}
+		return PageStream{Body: body, ContentType: "application/octet-stream"}, nil
+	}
 	if game.Platform == "n64" && strings.EqualFold(filepath.Ext(game.FilePath), ".zip") {
 		files, err := s.store.GameFiles(id)
 		if err != nil {
@@ -1555,6 +1570,13 @@ func (s *Service) OpenGameFilePart(id int64, position int) (PageStream, domain.G
 		data := virtualM3UData(files)
 		file.Size = int64(len(data))
 		return PageStream{Body: io.NopCloser(bytes.NewReader(data)), ContentType: "application/octet-stream"}, file, nil
+	}
+	if isZippedThreeDSImage(game.Platform, game.FilePath, game.Format) && file.Role == "entry" {
+		body, err := openThreeDSImageFromZIP(game.FilePath, file.Name, file.Size)
+		if err != nil {
+			return PageStream{}, domain.GameFile{}, err
+		}
+		return PageStream{Body: body, ContentType: "application/octet-stream"}, file, nil
 	}
 	if game.Platform == "n64" && strings.EqualFold(filepath.Ext(game.FilePath), ".zip") && file.Role == "entry" {
 		body, err := openN64ROMFromZIP(game.FilePath, file.Name, file.Size)
@@ -2269,6 +2291,8 @@ func libretroPlaylist(platform string) (string, bool) {
 		return "Nintendo - Game Boy Advance", true
 	case "nds", "ds":
 		return "Nintendo - Nintendo DS", true
+	case "3ds", "nintendo-3ds", "nintendo 3ds", "nintendo3ds", "ctr":
+		return "Nintendo - Nintendo 3DS", true
 	case "3do", "panasonic 3do", "the 3do company - 3do", "3do interactive multiplayer":
 		return "The 3DO Company - 3DO", true
 	case "md", "genesis", "mega-drive", "megadrive":

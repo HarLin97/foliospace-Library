@@ -1001,6 +1001,29 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 				files[0].SHA1 != ""
 		}
 	}
+	if platform == "3ds" {
+		game, err := s.store.GameByPath(path)
+		if err != nil || !game.MTime.Equal(info.ModTime()) || game.Platform != "3ds" ||
+			game.ROMSetName != "Nintendo 3DS" || game.EmulatorHint != "spatialemu-3ds-companion" ||
+			game.CRC32 == "" || game.SHA1 == "" {
+			return false
+		}
+		files, err := s.store.GameFiles(game.ID)
+		if err != nil || len(files) != 1 || files[0].Role != "entry" || files[0].Position != 0 ||
+			files[0].FilePath != path || files[0].Size != game.Size || files[0].SHA1 == "" {
+			return false
+		}
+		if ext == ".zip" {
+			return game.Format == "zip" && strings.EqualFold(game.CatalogRole, launchcatalog.RoleGame)
+		}
+		expectedFormat := strings.TrimPrefix(ext, ".")
+		expectedRole := launchcatalog.RoleGame
+		if ext == ".cia" {
+			expectedRole = launchcatalog.RoleNeedsCuration
+		}
+		return game.Size == info.Size() && game.Format == expectedFormat &&
+			strings.EqualFold(game.CatalogRole, expectedRole) && files[0].Name == filepath.Base(path)
+	}
 	if platform == "dos" {
 		catalog, _ := s.dosCatalogForPath(library.RootPath, path)
 		return s.store.CanSkipDOSGame(path, info.Size(), info.ModTime(), catalog.revision)
@@ -1276,7 +1299,7 @@ func classifyFileKind(library domain.Library, path string, ext string) string {
 
 func isDedicatedDiscPlatform(platform string) bool {
 	switch platform {
-	case "nds", "3do", "psp", "ngc", "ps2", "konami-python1":
+	case "nds", "3ds", "3do", "psp", "ngc", "ps2", "konami-python1":
 		return true
 	default:
 		return false
@@ -1287,6 +1310,8 @@ func isDedicatedDiscPlatformFormat(platform, ext string) bool {
 	switch platform {
 	case "nds":
 		return ext == ".nds" || ext == ".zip"
+	case "3ds":
+		return ext == ".3ds" || ext == ".cci" || ext == ".cxi" || ext == ".cia" || ext == ".zip"
 	case "3do":
 		return ext == ".cue" || ext == ".iso" || ext == ".chd"
 	case "psp":
@@ -1312,7 +1337,7 @@ func isGamePackageExt(ext string) bool {
 
 func isGameExt(ext string) bool {
 	switch ext {
-	case ".nes", ".sfc", ".smc", ".vb", ".vboy", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cia", ".z64", ".v64", ".n64", ".gdi", ".cdi", ".chd", ".iso", ".bin", ".cue", ".ccd", ".toc", ".m3u", ".img", ".pbp", ".cso", ".gcm", ".rvz", ".py1":
+	case ".nes", ".sfc", ".smc", ".vb", ".vboy", ".gba", ".gb", ".gbc", ".nds", ".3ds", ".cci", ".cxi", ".cia", ".z64", ".v64", ".n64", ".gdi", ".cdi", ".chd", ".iso", ".bin", ".cue", ".ccd", ".toc", ".m3u", ".img", ".pbp", ".cso", ".gcm", ".rvz", ".py1":
 		return true
 	default:
 		return false
@@ -1480,6 +1505,28 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 	}
 	if consoleROMDetected && consoleROM.definitive {
 		// The archive inspection already validated and checksummed the inner ROM.
+	} else if platform == "3ds" {
+		image, inspectErr := inspectThreeDSImage(path, info, ext)
+		if inspectErr != nil {
+			_ = s.store.DeleteGameByPath(path)
+			return inspectErr
+		}
+		title = gameTitle(image.name)
+		romSetName = "Nintendo 3DS"
+		emulatorHint = "spatialemu-3ds-companion"
+		format = image.format
+		totalSize = image.size
+		checksums = image.checksums
+		compatibility = "untested"
+		gameFiles = []domain.GameFile{{
+			Name: image.name, FilePath: path, Size: image.size, MTime: info.ModTime(), Role: "entry", Position: 0,
+		}}
+		if image.install {
+			catalogRole = launchcatalog.RoleNeedsCuration
+		}
+		if ext == ".zip" {
+			relPath = filepath.Join(filepath.Dir(relPath), image.name)
+		}
 	} else if platform == "n64" {
 		rom, inspectErr := inspectN64ROM(path, info, ext)
 		if inspectErr != nil {
@@ -1555,6 +1602,10 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 		romSetName = "Nintendo DS"
 		emulatorHint = "melonds-ds"
 		compatibility = "untested"
+	} else if platform == "3ds" {
+		romSetName = "Nintendo 3DS"
+		emulatorHint = "spatialemu-3ds-companion"
+		compatibility = "untested"
 	} else if platform == "3do" {
 		if !hasPegasus {
 			title = gameTitlePreservingDiscLabel(path)
@@ -1591,7 +1642,7 @@ func (s *Scanner) indexGameFile(library domain.Library, path string, info fs.Fil
 			title = pcfxDirectoryTitle(library.RootPath, path)
 		}
 	}
-	if platform != "n64" && platform != "pc98" && !(consoleROMDetected && consoleROM.definitive) && !naomiROMDetected {
+	if platform != "3ds" && platform != "n64" && platform != "pc98" && !(consoleROMDetected && consoleROM.definitive) && !naomiROMDetected {
 		gameFiles, totalSize, err = indexedGameFiles(path, info, ext)
 		if err != nil {
 			return err
@@ -4632,7 +4683,7 @@ func isDiscTrackDependency(path string) bool {
 }
 
 func skippedScanDirNames() []string {
-	return []string{"#recycle", "@eaDir", ".calnotes", "__MACOSX", "media", "covers", "cover", "thumbnails", ".thumbnails", "thumbs", ".thumbs", "出版物附属盘、非卖品", "游戏镜像"}
+	return []string{"#recycle", "@eaDir", ".calnotes", "__MACOSX", "_maintenance", "media", "covers", "cover", "thumbnails", ".thumbnails", "thumbs", ".thumbs", "出版物附属盘、非卖品", "游戏镜像"}
 }
 
 func seriesIdentityForRelPath(rootPath string, relPath string) (string, string) {
@@ -4936,7 +4987,7 @@ func inferGamePlatform(ext string, relPath string) string {
 			return "nds"
 		case "3do", "panasonic 3do", "the 3do company - 3do", "3do interactive multiplayer":
 			return "3do"
-		case "3ds", "nintendo 3ds":
+		case "3ds", "nintendo 3ds", "nintendo-3ds", "nintendo3ds", "ctr":
 			return "3ds"
 		case "mame", "mahjong":
 			return "mame"
@@ -4987,7 +5038,7 @@ func inferGamePlatform(ext string, relPath string) string {
 		return "gb"
 	case ".nds":
 		return "nds"
-	case ".3ds", ".cia":
+	case ".3ds", ".cci", ".cxi", ".cia":
 		return "3ds"
 	case ".chd", ".iso", ".bin", ".cue", ".img":
 		return "disc"
@@ -5045,6 +5096,10 @@ func inferLibraryGamePlatform(library domain.Library, ext string, relPath string
 		case "n64", "nintendo64", "nintendo 64":
 			if ext == ".zip" || isN64RawExt(ext) {
 				return "n64"
+			}
+		case "3ds", "nintendo 3ds", "nintendo-3ds", "nintendo3ds", "ctr":
+			if ext == ".zip" || ext == ".3ds" || ext == ".cci" || ext == ".cxi" || ext == ".cia" {
+				return "3ds"
 			}
 		}
 	}

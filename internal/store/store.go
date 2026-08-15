@@ -1636,6 +1636,27 @@ func (s *Store) GameLaunchProfiles(gameID int64) ([]domain.GameLaunchProfile, er
 }
 
 func (s *Store) ReplaceGameLaunchProfiles(policy string, profiles []domain.GameLaunchProfile, updates []domain.GameLaunchCatalogUpdate) (domain.GameLaunchProfileRebuildResult, error) {
+	return s.replaceGameLaunchProfiles(policy, profiles, updates, nil)
+}
+
+func (s *Store) ReplaceGameLaunchProfilesForGame(policy string, gameID int64, profiles []domain.GameLaunchProfile, updates []domain.GameLaunchCatalogUpdate) (domain.GameLaunchProfileRebuildResult, error) {
+	if gameID <= 0 {
+		return domain.GameLaunchProfileRebuildResult{}, errors.New("a positive game ID is required")
+	}
+	for _, profile := range profiles {
+		if profile.GameID != gameID {
+			return domain.GameLaunchProfileRebuildResult{}, fmt.Errorf("profile %q belongs to game %d, want %d", profile.ID, profile.GameID, gameID)
+		}
+	}
+	for _, update := range updates {
+		if update.GameID != gameID {
+			return domain.GameLaunchProfileRebuildResult{}, fmt.Errorf("catalog update belongs to game %d, want %d", update.GameID, gameID)
+		}
+	}
+	return s.replaceGameLaunchProfiles(policy, profiles, updates, &gameID)
+}
+
+func (s *Store) replaceGameLaunchProfiles(policy string, profiles []domain.GameLaunchProfile, updates []domain.GameLaunchCatalogUpdate, gameID *int64) (domain.GameLaunchProfileRebuildResult, error) {
 	policy = strings.TrimSpace(policy)
 	if policy == "" {
 		return domain.GameLaunchProfileRebuildResult{}, errors.New("launch profile policy is required")
@@ -1645,15 +1666,26 @@ func (s *Store) ReplaceGameLaunchProfiles(policy string, profiles []domain.GameL
 		return domain.GameLaunchProfileRebuildResult{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE games SET catalog_role = CASE
+	roleQuery := `UPDATE games SET catalog_role = CASE
 			WHEN EXISTS(SELECT 1 FROM game_launch_profiles p
 				WHERE p.game_id = games.id AND p.policy <> ? AND LOWER(TRIM(p.status)) = 'ready') THEN 'game'
 			ELSE 'needs-curation'
 		END, updated_at = CURRENT_TIMESTAMP
-		WHERE id IN (SELECT game_id FROM game_launch_profiles WHERE policy = ?)`, policy, policy); err != nil {
+		WHERE id IN (SELECT game_id FROM game_launch_profiles WHERE policy = ?`
+	roleArgs := []any{policy, policy}
+	deleteQuery := `DELETE FROM game_launch_profiles WHERE policy = ?`
+	deleteArgs := []any{policy}
+	if gameID != nil {
+		roleQuery += ` AND game_id = ?`
+		roleArgs = append(roleArgs, *gameID)
+		deleteQuery += ` AND game_id = ?`
+		deleteArgs = append(deleteArgs, *gameID)
+	}
+	roleQuery += `)`
+	if _, err := tx.Exec(roleQuery, roleArgs...); err != nil {
 		return domain.GameLaunchProfileRebuildResult{}, err
 	}
-	if _, err := tx.Exec(`DELETE FROM game_launch_profiles WHERE policy = ?`, policy); err != nil {
+	if _, err := tx.Exec(deleteQuery, deleteArgs...); err != nil {
 		return domain.GameLaunchProfileRebuildResult{}, err
 	}
 	profileStatement, err := tx.Prepare(`INSERT INTO game_launch_profiles(
@@ -3502,6 +3534,8 @@ func PlatformFromGamePlatformCollectionID(id int64) string {
 		return "gba"
 	case GamePlatformCollectionID("nds"):
 		return "nds"
+	case GamePlatformCollectionID("3ds"):
+		return "3ds"
 	case GamePlatformCollectionID("md"):
 		return "md"
 	case GamePlatformCollectionID("neogeo"):
@@ -3569,6 +3603,8 @@ func GamePlatformSortRank(platform string) int {
 		return 50
 	case "nds":
 		return 55
+	case "3ds", "nintendo-3ds", "nintendo 3ds", "nintendo3ds", "ctr":
+		return 57
 	case "md", "genesis", "mega-drive", "megadrive":
 		return 60
 	case "32x":
@@ -3627,6 +3663,8 @@ func GamePlatformLabel(platform string) string {
 		return strings.ToUpper(value)
 	case "nds", "ds", "nintendo-ds", "nintendo ds", "nintendods":
 		return "Nintendo DS"
+	case "3ds", "nintendo-3ds", "nintendo 3ds", "nintendo3ds", "ctr":
+		return "Nintendo 3DS"
 	case "3do", "panasonic 3do", "the 3do company - 3do", "3do interactive multiplayer":
 		return "3DO"
 	case "virtualboy", "virtual-boy", "virtual boy":
@@ -3734,6 +3772,8 @@ func expectedGameEmulatorHint(platform string) string {
 	switch strings.ToLower(strings.TrimSpace(platform)) {
 	case "nds":
 		return "melonds-ds"
+	case "3ds":
+		return "spatialemu-3ds-companion"
 	case "3do":
 		return "opera"
 	case "virtualboy":

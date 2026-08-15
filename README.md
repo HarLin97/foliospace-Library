@@ -8,7 +8,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release: [`0.994`](https://github.com/funland/foliospace-Library/releases/tag/v0.994).
+Current release: [`0.995`](https://github.com/funland/foliospace-Library/releases/tag/v0.995).
 
 ## Quick Answers
 
@@ -261,6 +261,18 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.995
+
+Release `0.995` expands safe native game delivery, compatibility curation, and offline access:
+
+- Nintendo 3DS libraries now validate direct `.3ds`/`.cci` NCSD images, `.cxi` NCCH images, and safe single-image ZIP packages before indexing. Launchable images stream as their original inner bytes, while `.cia` packages are explicitly marked for client-side installation instead of being advertised as directly launchable.
+- ZIP-backed game downloads now support single-range requests even when the inner archive stream is not seekable, enabling resumable Nintendo DS, Nintendo 3DS, and other validated single-ROM downloads.
+- Game Curation can rebuild FBNeo or MAME compatibility for one game without deleting unrelated profiles. The MAME audit includes a fingerprint-pinned exception for the verified Time Crisis package that embeds its exact `namcoc71` device ROM, without renaming or rewriting the source ZIP.
+- Android ARM64 launch resolution accepts the pinned Flycast v4 runtime identity for Dreamcast, NAOMI, Atomiswave, and audited NAOMI 2 packages. Split NAOMI 2 sets require their checksummed parent ZIP, while user-managed firmware is not injected into Android manifests.
+- Book manifests expose a byte-exact authenticated download URL with HTTP Range and HEAD support for offline reading.
+- The Client Home API can omit collection expansion for faster first-screen loading, and the web client uses this lightweight mode. Scans also skip `_maintenance` directories by default.
+- Existing Client API routes remain backward compatible. Service, Client API, Web, and source MCP metadata report version `0.995`.
+
 ## Release 0.994
 
 Release `0.994` expands native game delivery and adds stable offline identity for books and comics:
@@ -435,7 +447,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.994 ./scripts/build-mcp-release.sh
+VERSION=0.995 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -482,7 +494,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:0.994
+docker pull funland/foliospace-library:0.995
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -522,7 +534,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:0.994
+  funland/foliospace-library:0.995
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -544,11 +556,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.994
-git push github v0.994
+git tag v0.995
+git push github v0.995
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.994` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.995` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

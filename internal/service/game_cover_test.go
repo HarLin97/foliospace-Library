@@ -168,6 +168,23 @@ func TestLibretroArtworkCandidatesSupportVirtualBoy(t *testing.T) {
 	}
 }
 
+func TestLibretroArtworkCandidatesSupportNintendo3DS(t *testing.T) {
+	urls := libretroBoxartCandidatesFromListing(domain.GameAsset{
+		Title:    "Mario Kart 7",
+		Platform: "3ds",
+		Region:   "USA",
+	}, []string{
+		"Mario Kart 7 (USA) (En,Fr,Es).png",
+		"Super Mario 3D Land (USA) (En,Fr,Es).png",
+	})
+	if len(urls) != 1 {
+		t.Fatalf("urls len = %d, want 1", len(urls))
+	}
+	if !strings.Contains(urls[0], "Nintendo%20-%20Nintendo%203DS/Named_Boxarts/Mario%20Kart%207%20%28USA%29%20%28En%2CFr%2CEs%29.png") {
+		t.Fatalf("url = %q, want exact Nintendo 3DS boxart match", urls[0])
+	}
+}
+
 func TestLibretroArtworkCandidatesUseFuzzyTagStrippedMatch(t *testing.T) {
 	urls := libretroBoxartCandidatesFromListing(domain.GameAsset{
 		Title:    "Legend of Zelda The Minish Cap",

@@ -299,6 +299,7 @@ func TestScanLibrarySkipsThumbnailAndMediaDirectories(t *testing.T) {
 	makeZip(t, filepath.Join(root, "Series", "book.cbz"), map[string]string{"001.jpg": "image"})
 	makeZip(t, filepath.Join(root, "Series", "thumbnails", "thumb.cbz"), map[string]string{"001.jpg": "image"})
 	makeZip(t, filepath.Join(root, "Series", "media", "cover.cbz"), map[string]string{"001.jpg": "image"})
+	makeZip(t, filepath.Join(root, "_maintenance", "backup.cbz"), map[string]string{"001.jpg": "image"})
 
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
@@ -1179,6 +1180,125 @@ func TestScanLibraryIndexesN64RawAndZIPROMs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestScanLibraryIndexesValidatedNintendo3DSImages(t *testing.T) {
+	root := t.TempDir()
+	threeDSDir := filepath.Join(root, "3DS")
+	if err := os.MkdirAll(threeDSDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	directPath := filepath.Join(threeDSDir, "Direct Game.3ds")
+	if err := os.WriteFile(directPath, makeNintendo3DSImage("NCSD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cxiPath := filepath.Join(threeDSDir, "Executable.cxi")
+	if err := os.WriteFile(cxiPath, makeNintendo3DSImage("NCCH"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	zipPath := filepath.Join(threeDSDir, "Archive Game.zip")
+	makeZip(t, zipPath, map[string]string{
+		"README.txt":      "notes",
+		"ROM/Archive.3ds": string(makeNintendo3DSImage("NCSD")),
+	})
+	ciaPath := filepath.Join(threeDSDir, "Install Package.cia")
+	if err := os.WriteFile(ciaPath, []byte("cia-install-package"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("Games", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ErrorCount != 0 || job.IndexedFiles != 4 {
+		t.Fatalf("job = %#v, want four indexed Nintendo 3DS files", job)
+	}
+
+	tests := []struct {
+		path        string
+		format      string
+		fileName    string
+		catalogRole string
+	}{
+		{path: directPath, format: "3ds", fileName: "Direct Game.3ds", catalogRole: "game"},
+		{path: cxiPath, format: "cxi", fileName: "Executable.cxi", catalogRole: "game"},
+		{path: zipPath, format: "zip", fileName: "Archive.3ds", catalogRole: "game"},
+		{path: ciaPath, format: "cia", fileName: "Install Package.cia", catalogRole: "needs-curation"},
+	}
+	for _, test := range tests {
+		game, err := st.GameByPath(test.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if game.Platform != "3ds" || game.ROMSetName != "Nintendo 3DS" || game.EmulatorHint != "spatialemu-3ds-companion" || game.Format != test.format || game.Compatibility != "untested" || game.CatalogRole != test.catalogRole {
+			t.Fatalf("game = %#v, want canonical Nintendo 3DS metadata", game)
+		}
+		files, err := st.GameFiles(game.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) != 1 || files[0].Name != test.fileName || files[0].Role != "entry" || files[0].Size != game.Size || files[0].SHA1 == "" {
+			t.Fatalf("files = %#v, want one logical checksummed entry", files)
+		}
+	}
+
+	second, err := New(st).ScanLibrary(lib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.IndexedFiles != 0 || second.SkippedFiles != 4 {
+		t.Fatalf("second job = %#v, want four unchanged files skipped", second)
+	}
+}
+
+func TestInspectNintendo3DSZIPRejectsAmbiguousAndUnsafeArchives(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries map[string]string
+	}{
+		{name: "multiple images", entries: map[string]string{
+			"One.3ds": string(makeNintendo3DSImage("NCSD")),
+			"Two.cxi": string(makeNintendo3DSImage("NCCH")),
+		}},
+		{name: "path traversal", entries: map[string]string{
+			"../Escape.3ds": string(makeNintendo3DSImage("NCSD")),
+		}},
+		{name: "invalid header", entries: map[string]string{
+			"Invalid.3ds": string(makeNintendo3DSImage("NCCH")),
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "game.zip")
+			makeZip(t, path, test.entries)
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := inspectThreeDSImage(path, info, ".zip"); err == nil {
+				t.Fatal("inspectThreeDSImage succeeded, want validation error")
+			}
+		})
+	}
+}
+
+func makeNintendo3DSImage(magic string) []byte {
+	body := make([]byte, 0x240)
+	for index := range body {
+		body[index] = byte(index % 251)
+	}
+	copy(body[0x100:], magic)
+	return body
 }
 
 func TestScanLibraryIndexesValidatedPC98MediaAndExcludesSupportFiles(t *testing.T) {
@@ -3455,6 +3575,9 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 		{relPath: "PS/xenogears.PBP", want: "ps1"},
 		{relPath: "PS/01-动作游戏/人猿泰山.img", want: "ps1"},
 		{relPath: "Dreamcast/Crazy Taxi.chd", want: "dreamcast"},
+		{relPath: "3DS/Mario Kart 7.3ds", want: "3ds"},
+		{relPath: "Nintendo-3DS/Animal Crossing.cxi", want: "3ds"},
+		{relPath: "CTR/Install.cia", want: "3ds"},
 		{relPath: "Crazy Taxi.cdi", want: "dreamcast"},
 		{relPath: "Crazy Taxi.gdi", want: "dreamcast"},
 		{relPath: "Saturn/Guardian Heroes.cue", want: "saturn"},
@@ -3488,6 +3611,10 @@ func TestInferGamePlatformUsesFBNeoSystemDirectories(t *testing.T) {
 	sharedGameLibrary := domain.Library{Name: "GameROMS", RootPath: "/games"}
 	if got := inferLibraryGamePlatform(sharedGameLibrary, ".zip", "NAOMI 2/vf4/vf4.zip"); got != "naomi2" {
 		t.Fatalf("inferLibraryGamePlatform(GameROMS NAOMI 2 ZIP) = %q, want naomi2", got)
+	}
+	threeDSLibrary := domain.Library{Name: "3DS", RootPath: "/games/3DS"}
+	if got := inferLibraryGamePlatform(threeDSLibrary, ".zip", "Mario Kart 7.zip"); got != "3ds" {
+		t.Fatalf("inferLibraryGamePlatform(3DS root ZIP) = %q, want 3ds", got)
 	}
 	virtualBoyLibrary := domain.Library{Name: "VirtualBoy", RootPath: "/games/VirtualBoy"}
 	if got := inferLibraryGamePlatform(virtualBoyLibrary, ".zip", "3-D Tetris (USA).zip"); got != "virtualboy" {

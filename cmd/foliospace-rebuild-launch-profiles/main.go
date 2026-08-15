@@ -39,9 +39,13 @@ func main() {
 	mameListXML := flag.String("mame-listxml", filepath.Join(cfg.ConfigDir, "policies", "mame0288lx.zip"), "official MAME 0.288 listxml XML or ZIP path")
 	platforms := flag.String("platforms", "model2", "comma-separated platforms to audit with MAME")
 	targetsPath := flag.String("targets", "", "JSON file containing exact client runtime targets; defaults to the Windows release target")
+	gameID := flag.Int64("game-id", 0, "audit and replace profiles only for this game ID")
 	dryRun := flag.Bool("dry-run", false, "audit without writing SQLite")
 	failureLimit := flag.Int("failure-limit", 50, "maximum failure details to print")
 	flag.Parse()
+	if *gameID < 0 {
+		log.Fatal("game-id cannot be negative")
+	}
 
 	conn, err := db.Open(cfg.ConfigDir)
 	if err != nil {
@@ -65,9 +69,9 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		output, err = rebuildFBNeoProfiles(appStore, catalog, candidates, targets, *dryRun)
+		output, err = rebuildFBNeoProfiles(appStore, catalog, candidates, targets, *gameID, *dryRun)
 	case "mame":
-		output, err = rebuildMAMEProfiles(appStore, *mameListXML, parsePlatformSelection(*platforms), candidates, targets, *dryRun)
+		output, err = rebuildMAMEProfiles(appStore, *mameListXML, parsePlatformSelection(*platforms), candidates, targets, *gameID, *dryRun)
 	default:
 		log.Fatalf("unsupported audit policy %q", *policy)
 	}
@@ -84,7 +88,7 @@ func main() {
 	fmt.Println(string(encoded))
 }
 
-func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCatalog, candidates []domain.GameAsset, targets []launchProfileTarget, dryRun bool) (rebuildOutput, error) {
+func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCatalog, candidates []domain.GameAsset, targets []launchProfileTarget, gameID int64, dryRun bool) (rebuildOutput, error) {
 	bySet := make(map[string][]domain.GameAsset)
 	for _, candidate := range candidates {
 		setName := canonicalSetName(candidate.FilePath)
@@ -96,10 +100,15 @@ func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCata
 	updates := make([]domain.GameLaunchCatalogUpdate, 0, len(candidates))
 	failures := make([]string, 0)
 	matched := 0
+	scoped := 0
 	for _, candidate := range candidates {
+		if gameID > 0 && candidate.ID != gameID {
+			continue
+		}
 		if !eligibleFBNeoCandidate(candidate) || isKnownDependency(candidate) {
 			continue
 		}
+		scoped++
 		setName := canonicalSetName(candidate.FilePath)
 		datGame, ok := catalog.Games[setName]
 		if !ok {
@@ -138,8 +147,17 @@ func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCata
 	}
 	result.GamesReady = len(readyGames)
 	result.GamesRejected = len(updates) - result.GamesReady
+	if gameID > 0 && len(updates) == 0 {
+		return rebuildOutput{}, fmt.Errorf("game %d is not matched by the selected FBNeo policy", gameID)
+	}
 	if !dryRun {
-		written, err := appStore.ReplaceGameLaunchProfiles(launchprofile.FBNeoPolicy, profiles, updates)
+		var written domain.GameLaunchProfileRebuildResult
+		var err error
+		if gameID > 0 {
+			written, err = appStore.ReplaceGameLaunchProfilesForGame(launchprofile.FBNeoPolicy, gameID, profiles, updates)
+		} else {
+			written, err = appStore.ReplaceGameLaunchProfiles(launchprofile.FBNeoPolicy, profiles, updates)
+		}
 		if err != nil {
 			return rebuildOutput{}, err
 		}
@@ -148,11 +166,11 @@ func rebuildFBNeoProfiles(appStore *store.Store, catalog launchprofile.FBNeoCata
 	return rebuildOutput{
 		Policy: launchprofile.FBNeoPolicy, DATName: catalog.Name, DATVersion: catalog.Version,
 		DATSHA256: catalog.SHA256, ProfileRevision: catalog.Revision,
-		Candidates: len(candidates), Matched: matched, Result: result, Failures: failures, DryRun: dryRun,
+		Candidates: scoped, Matched: matched, Result: result, Failures: failures, DryRun: dryRun,
 	}, nil
 }
 
-func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms map[string]bool, candidates []domain.GameAsset, targets []launchProfileTarget, dryRun bool) (rebuildOutput, error) {
+func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms map[string]bool, candidates []domain.GameAsset, targets []launchProfileTarget, gameID int64, dryRun bool) (rebuildOutput, error) {
 	if len(platforms) == 0 {
 		return rebuildOutput{}, fmt.Errorf("MAME platform selection is empty")
 	}
@@ -164,7 +182,7 @@ func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms ma
 		if setName != "" {
 			bySet[setName] = append(bySet[setName], candidate)
 		}
-		if platforms[strings.ToLower(strings.TrimSpace(candidate.Platform))] && !isKnownDependency(candidate) {
+		if platforms[strings.ToLower(strings.TrimSpace(candidate.Platform))] && !isKnownDependency(candidate) && (gameID == 0 || candidate.ID == gameID) {
 			scoped = append(scoped, candidate)
 			requested = append(requested, setName)
 		}
@@ -224,8 +242,15 @@ func rebuildMAMEProfiles(appStore *store.Store, listXMLPath string, platforms ma
 	}
 	result.GamesReady = len(readyGames)
 	result.GamesRejected = len(updates) - result.GamesReady
+	if gameID > 0 && len(updates) == 0 {
+		return rebuildOutput{}, fmt.Errorf("game %d is outside the selected MAME platforms", gameID)
+	}
 	if !dryRun {
-		result, err = appStore.ReplaceGameLaunchProfiles(policy, profiles, updates)
+		if gameID > 0 {
+			result, err = appStore.ReplaceGameLaunchProfilesForGame(policy, gameID, profiles, updates)
+		} else {
+			result, err = appStore.ReplaceGameLaunchProfiles(policy, profiles, updates)
+		}
 		if err != nil {
 			return rebuildOutput{}, err
 		}
@@ -294,6 +319,9 @@ func buildMAMEProfile(catalog launchprofile.MAMECatalog, machine launchprofile.M
 		if selfContainedClone && dependency.Name == machine.ROMOf {
 			continue
 		}
+		if auditedEmbeddedMAMEDependency(entry, machine, dependency) {
+			continue
+		}
 		source, err := selectMAMEDependencySource(entry, dependency, bySet[dependency.Name])
 		if err != nil {
 			return domain.GameLaunchProfile{}, err
@@ -308,6 +336,19 @@ func buildMAMEProfile(catalog launchprofile.MAMECatalog, machine launchprofile.M
 		EntryFile: machine.Name + ".zip", CanonicalSet: machine.Name, Status: "ready", Files: files,
 	}
 	return applyMAMETarget(profile, target, catalog, machine, policy), nil
+}
+
+// auditedEmbeddedMAMEDependency records narrowly verified legacy packages that
+// MAME can run without a separate device archive because the exact device ROM
+// is already embedded in the entry ZIP. Keep this keyed to an immutable source
+// fingerprint; do not turn a matching filename alone into a compatibility
+// override.
+func auditedEmbeddedMAMEDependency(entry domain.GameAsset, machine launchprofile.MAMEMachine, dependency launchprofile.MAMEMachine) bool {
+	if machine.Name != "timecris" || dependency.Name != "namcoc71" ||
+		entry.Size != 16292369 || !strings.EqualFold(strings.TrimSpace(entry.SHA1), "ee6d57977bd5b10f82292009755cd8d80b9e14f5") {
+		return false
+	}
+	return launchprofile.ValidateMAMEArchive(entry.FilePath, dependency) == nil
 }
 
 func applyFBNeoTarget(profile domain.GameLaunchProfile, target launchProfileTarget, catalog launchprofile.FBNeoCatalog, game launchprofile.FBNeoGame) domain.GameLaunchProfile {

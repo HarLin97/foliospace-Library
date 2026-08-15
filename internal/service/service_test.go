@@ -248,6 +248,54 @@ func TestOpenNDSZIPGameStreamsInnerROM(t *testing.T) {
 	}
 }
 
+func TestOpenNintendo3DSZIPGameStreamsValidatedInnerImage(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "Mario Kart 7.zip")
+	romName := "ROM/Mario Kart 7.3ds"
+	rom := make([]byte, 0x240)
+	copy(rom[0x100:], []byte("NCSD"))
+	if err := makeZipBytesAt(zipPath, map[string][]byte{romName: rom}); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("3DS", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Mario Kart 7", Platform: "3ds", ROMSetName: "Nintendo 3DS", Format: "zip",
+		FilePath: zipPath, RelPath: "Mario Kart 7.3ds", Size: int64(len(rom)), MTime: time.Now(),
+		EmulatorHint: "spatialemu-3ds-companion", Compatibility: "untested", CatalogRole: "game",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{{
+		Name: filepath.Base(romName), FilePath: zipPath, Size: int64(len(rom)), MTime: time.Now(), Role: "entry", Position: 0,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	stream, err := New(st).OpenGameFile(game.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	got, err := io.ReadAll(stream.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, rom) {
+		t.Fatalf("OpenGameFile returned %d bytes, want %d inner image bytes", len(got), len(rom))
+	}
+}
+
 func TestOpenVirtualBoyZIPGameStreamsInnerROM(t *testing.T) {
 	root := t.TempDir()
 	zipPath := filepath.Join(root, "3-D Tetris (USA).zip")

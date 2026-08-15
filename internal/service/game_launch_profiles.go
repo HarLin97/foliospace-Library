@@ -1012,6 +1012,9 @@ func isVirtualGameFile(game domain.GameAsset, file domain.GameFile) bool {
 	if role == "entry" && isZippedConsoleROM(game) {
 		return true
 	}
+	if role == "entry" && isZippedThreeDSImage(game.Platform, game.FilePath, game.Format) {
+		return true
+	}
 	if !strings.EqualFold(filepath.Ext(file.FilePath), ".zip") {
 		return false
 	}

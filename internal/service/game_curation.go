@@ -611,6 +611,9 @@ func (s *Service) runConfiguredGameCompatibilityPolicies(req domain.GameCompatib
 			continue
 		}
 		args := append([]string{}, run.args...)
+		if req.Scope == "game" {
+			args = append(args, "-game-id", fmt.Sprintf("%d", req.GameID))
+		}
 		if targetInfo, targetErr := os.Stat(run.targetsPath); targetErr == nil && !targetInfo.IsDir() {
 			args = append(args, "-targets", run.targetsPath)
 		}

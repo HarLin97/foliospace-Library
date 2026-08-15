@@ -53,6 +53,91 @@ func TestServeGameStreamSupportsRangeRequests(t *testing.T) {
 	}
 }
 
+func TestServeGameStreamSupportsRangeRequestsForNonSeekableBodies(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/client/games/1/files/0", nil)
+	req.Header.Set("Range", "bytes=3-6")
+	recorder := httptest.NewRecorder()
+	serveGameStream(recorder, req, service.PageStream{
+		Body: io.NopCloser(bytes.NewBufferString("0123456789")), ContentType: "application/octet-stream",
+	}, 10, "game.3ds")
+	resp := recorder.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusPartialContent || string(body) != "3456" || resp.Header.Get("Content-Range") != "bytes 3-6/10" || resp.Header.Get("Accept-Ranges") != "bytes" {
+		t.Fatalf("range response status=%d body=%q headers=%v", resp.StatusCode, body, resp.Header)
+	}
+}
+
+func TestAPIClientNDSZIPDownloadSupportsRange(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "Elite Beat Agents (USA).zip")
+	romName := "Elite Beat Agents (USA).nds"
+	rom := []byte("nds-rom-body")
+	makeZip(t, zipPath, map[string]string{romName: string(rom)})
+
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibraryWithType("NDS", root, "game")
+	if err != nil {
+		t.Fatal(err)
+	}
+	game, err := st.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Elite Beat Agents", Platform: "nds", ROMSetName: "Nintendo DS", Format: "nds",
+		FilePath: zipPath, RelPath: romName, Size: int64(len(rom)), MTime: time.Now(),
+		EmulatorHint: "melonds-ds", Compatibility: "untested", CatalogRole: "game",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceGameFiles(game.ID, []domain.GameFile{{
+		Name: romName, FilePath: zipPath, Size: int64(len(rom)), MTime: time.Now(), Role: "entry", Position: 0,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(NewWithOptions(service.New(st), nil, Options{APIToken: "secret"}).Routes())
+	defer ts.Close()
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/client/games/"+itoa(game.ID)+"/file", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Range", "bytes=2-5")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusPartialContent || !bytes.Equal(body, rom[2:6]) || resp.Header.Get("Content-Range") != "bytes 2-5/12" {
+		t.Fatalf("NDS range status=%d body=%q headers=%v", resp.StatusCode, body, resp.Header)
+	}
+	if resp.Header.Get("Content-Disposition") != `attachment; filename="Elite Beat Agents (USA).nds"` {
+		t.Fatalf("NDS content disposition = %q", resp.Header.Get("Content-Disposition"))
+	}
+}
+
+func TestClientGameNintendo3DSContentMode(t *testing.T) {
+	launch := clientGameItem(domain.GameAsset{ID: 1, Platform: "3ds", Format: "3ds"})
+	if launch.ContentMode != "launch" || launch.InputProfile != "standard" {
+		t.Fatalf("launch item = %#v", launch)
+	}
+	install := clientGameItem(domain.GameAsset{ID: 2, Platform: "3ds", Format: "cia"})
+	if install.ContentMode != "install" {
+		t.Fatalf("install item = %#v", install)
+	}
+}
+
 func TestAPIClientBookFileDownloadSupportsAuthAndRanges(t *testing.T) {
 	root := t.TempDir()
 	bookPath := filepath.Join(root, "Series A", "book1.cbz")
@@ -839,6 +924,36 @@ func TestClientHomeLimitsCollections(t *testing.T) {
 	}
 }
 
+func TestClientHomeCanSkipCollections(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st := store.New(conn)
+	lib, err := st.CreateLibrary("Comics", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertSeries(lib.ID, "Series A", "Series A"); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(New(service.NewWithConfig(st, t.TempDir()), nil).Routes())
+	defer ts.Close()
+
+	homeBody := get(t, ts.URL+"/api/client/home?includeCollections=false")
+	var home struct {
+		Collections []map[string]any `json:"collections"`
+	}
+	if err := json.Unmarshal([]byte(homeBody), &home); err != nil {
+		t.Fatal(err)
+	}
+	if len(home.Collections) != 0 {
+		t.Fatalf("client home collections = %d, want omitted collection shelf", len(home.Collections))
+	}
+}
+
 func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	root := t.TempDir()
 	makeZip(t, filepath.Join(root, "Series A", "book1.cbz"), map[string]string{"001.jpg": "image"})
@@ -927,7 +1042,7 @@ func TestClientAPIHomeAndManifestsHideFilePaths(t *testing.T) {
 	}
 
 	infoBody := get(t, ts.URL+"/api/client/info")
-	if !strings.Contains(infoBody, `"serviceVersion":"0.994"`) ||
+	if !strings.Contains(infoBody, `"serviceVersion":"0.995"`) ||
 		!strings.Contains(infoBody, `"apiVersion":"v1"`) ||
 		!strings.Contains(infoBody, `"epub"`) ||
 		!strings.Contains(infoBody, `"pdf"`) ||

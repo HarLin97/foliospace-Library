@@ -37,7 +37,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.994"
+const serviceVersion = "0.995"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -469,7 +469,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 		APIVersion:     "v1",
 		SupportedFormats: []string{
 			"cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm",
-			"nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64",
+			"nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cci", "cxi", "cia", "z64", "v64", "n64",
 			"gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat",
 			"d88", "88d", "d98", "98d", "fdi", "xdf", "hdm", "dup", "2hd", "tfd", "nfd", "hd4", "hd5", "hd9", "fdd",
 			"h01", "hdb", "ddb", "dd6", "dcp", "dcu", "flp", "img", "ima", "fim", "thd", "nhd", "hdi", "vhd", "slh", "hdn", "cmd",
@@ -560,9 +560,12 @@ func (s *Server) handleClientHome(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	if collections, err = s.service.ListSeriesForProfileLimit(profileID, limit); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+	includeCollections := !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("includeCollections")), "false")
+	if includeCollections {
+		if collections, err = s.service.ListSeriesForProfileLimit(profileID, limit); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	writeJSON(w, clientHomeResponse{
 		ContinueReading: clientBooks(continueReading),
@@ -984,9 +987,9 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		defer stream.Body.Close()
 		size := int64(-1)
 		name := clientGameFileName(game)
-		if game.Platform == "n64" || game.Platform == "pc98" || game.Platform == "dos" {
+		if game.Platform == "dos" || clientGameStreamsInnerArchiveFile(game) {
 			size = game.Size
-			if game.Platform == "pc98" {
+			if clientGameStreamsInnerArchiveFile(game) {
 				if files, filesErr := s.service.GameFiles(id); filesErr == nil && len(files) > 0 {
 					size = files[0].Size
 					name = files[0].Name
@@ -1014,6 +1017,18 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 	http.NotFound(w, r)
 }
 
+func clientGameStreamsInnerArchiveFile(game domain.GameAsset) bool {
+	if !strings.EqualFold(filepath.Ext(game.FilePath), ".zip") {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(game.Platform)) {
+	case "3ds", "n64", "pc98", "virtualboy", "snes", "nes", "gb", "gbc", "gba", "nds", "md":
+		return true
+	default:
+		return false
+	}
+}
+
 func serveGameStream(w http.ResponseWriter, r *http.Request, stream service.PageStream, size int64, name string) {
 	w.Header().Set("Content-Type", stream.ContentType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(name, `"`, "")))
@@ -1021,10 +1036,66 @@ func serveGameStream(w http.ResponseWriter, r *http.Request, stream service.Page
 		http.ServeContent(w, r, name, time.Time{}, seeker)
 		return
 	}
+	w.Header().Set("Accept-Ranges", "bytes")
+	if value := strings.TrimSpace(r.Header.Get("Range")); value != "" && size >= 0 {
+		start, end, ok := parseSingleByteRange(value, size)
+		if !ok {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if start > 0 {
+			if _, err := io.CopyN(io.Discard, stream.Body, start); err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		length := end - start + 1
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = io.CopyN(w, stream.Body, length)
+		return
+	}
 	if size >= 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	}
 	_, _ = io.Copy(w, stream.Body)
+}
+
+func parseSingleByteRange(value string, size int64) (int64, int64, bool) {
+	if size <= 0 || !strings.HasPrefix(value, "bytes=") || strings.Contains(value, ",") {
+		return 0, 0, false
+	}
+	parts := strings.SplitN(strings.TrimSpace(strings.TrimPrefix(value, "bytes=")), "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	if parts[0] == "" {
+		suffix, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || suffix <= 0 {
+			return 0, 0, false
+		}
+		if suffix > size {
+			suffix = size
+		}
+		return size - suffix, size - 1, true
+	}
+	start, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return 0, 0, false
+	}
+	end := size - 1
+	if parts[1] != "" {
+		end, err = strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || end < start {
+			return 0, 0, false
+		}
+		if end >= size {
+			end = size - 1
+		}
+	}
+	return start, end, true
 }
 
 func logGameLaunchDecision(gameID int64, req domain.GameLaunchResolveRequest, profileID string, revision int, rejection string) {
@@ -2540,6 +2611,7 @@ type clientGame struct {
 	ParentROMSetName string `json:"parentRomSetName,omitempty"`
 	Region           string `json:"region,omitempty"`
 	Format           string `json:"format"`
+	ContentMode      string `json:"contentMode,omitempty"`
 	FileName         string `json:"fileName,omitempty"`
 	Size             int64  `json:"size"`
 	CRC32            string `json:"crc32"`
@@ -2556,12 +2628,13 @@ type clientGame struct {
 }
 
 type clientGameManifestResponse struct {
-	Game      clientGame       `json:"game"`
-	FileURL   string           `json:"fileUrl"`
-	EntryFile *string          `json:"entryFile"`
-	Files     []clientGameFile `json:"files,omitempty"`
-	DOSLaunch *clientDOSLaunch `json:"dosLaunch,omitempty"`
-	UpdatedAt string           `json:"updatedAt,omitempty"`
+	Game        clientGame       `json:"game"`
+	FileURL     string           `json:"fileUrl"`
+	EntryFile   *string          `json:"entryFile"`
+	Files       []clientGameFile `json:"files,omitempty"`
+	DOSLaunch   *clientDOSLaunch `json:"dosLaunch,omitempty"`
+	ContentMode string           `json:"contentMode,omitempty"`
+	UpdatedAt   string           `json:"updatedAt,omitempty"`
 }
 
 type clientGameLaunchResolutionResponse struct {
@@ -2849,7 +2922,7 @@ func clientPlayedGameItem(item domain.PlayedGame) clientPlayedGame {
 
 func clientGameItem(game domain.GameAsset) clientGame {
 	inputProfile := ""
-	if strings.EqualFold(game.Platform, "virtualboy") || strings.EqualFold(game.Platform, "nds") || strings.EqualFold(game.Platform, "3do") || strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") || strings.EqualFold(game.Platform, "dos") || strings.EqualFold(game.Platform, "psp") || strings.EqualFold(game.Platform, "ngc") || strings.EqualFold(game.Platform, "ps2") || strings.EqualFold(game.Platform, "konami-python1") {
+	if strings.EqualFold(game.Platform, "virtualboy") || strings.EqualFold(game.Platform, "nds") || strings.EqualFold(game.Platform, "3ds") || strings.EqualFold(game.Platform, "3do") || strings.EqualFold(game.Platform, "n64") || strings.EqualFold(game.Platform, "pc98") || strings.EqualFold(game.Platform, "dos") || strings.EqualFold(game.Platform, "psp") || strings.EqualFold(game.Platform, "ngc") || strings.EqualFold(game.Platform, "ps2") || strings.EqualFold(game.Platform, "konami-python1") {
 		inputProfile = "standard"
 	} else if (strings.EqualFold(game.Platform, "model2") || strings.EqualFold(game.Platform, "naomi2")) && !strings.EqualFold(game.CatalogRole, "dependency") {
 		inputProfile = "operatorArcade"
@@ -2865,6 +2938,7 @@ func clientGameItem(game domain.GameAsset) clientGame {
 		ParentROMSetName: launchcatalog.ParentROMSetName(game),
 		Region:           game.Region,
 		Format:           game.Format,
+		ContentMode:      clientGameContentMode(game),
 		FileName:         clientGameFileName(game),
 		Size:             game.Size,
 		CRC32:            game.CRC32,
@@ -2897,6 +2971,16 @@ func clientGameFileName(game domain.GameAsset) string {
 	return strings.TrimSuffix(name, ext) + "." + format
 }
 
+func clientGameContentMode(game domain.GameAsset) string {
+	if !strings.EqualFold(strings.TrimSpace(game.Platform), "3ds") {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(game.Format), "cia") {
+		return "install"
+	}
+	return "launch"
+}
+
 func pathHasSegment(path string, segment string) bool {
 	for _, part := range strings.Split(strings.ReplaceAll(path, `\`, "/"), "/") {
 		if strings.EqualFold(strings.TrimSpace(part), segment) {
@@ -2912,9 +2996,10 @@ func gameCoverURL(gameID int64, platform string) string {
 
 func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunch *domain.DOSLaunch) clientGameManifestResponse {
 	manifest := clientGameManifestResponse{
-		Game:    clientGameItem(game),
-		FileURL: fmt.Sprintf("/api/client/games/%d/file", game.ID),
-		Files:   make([]clientGameFile, 0, len(files)),
+		Game:        clientGameItem(game),
+		FileURL:     fmt.Sprintf("/api/client/games/%d/file", game.ID),
+		Files:       make([]clientGameFile, 0, len(files)),
+		ContentMode: clientGameContentMode(game),
 	}
 	if !game.UpdatedAt.IsZero() {
 		manifest.UpdatedAt = game.UpdatedAt.UTC().Format(time.RFC3339Nano)

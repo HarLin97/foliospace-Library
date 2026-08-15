@@ -130,6 +130,52 @@ func TestBuildMAMEProfileAcceptsAuditedSelfContainedClone(t *testing.T) {
 	}
 }
 
+func TestBuildMAMEProfileAcceptsAuditedTimeCrisisEmbeddedDeviceROM(t *testing.T) {
+	gameROM := []byte("time-crisis-program")
+	deviceROM := []byte("namco-c71-device")
+	path := filepath.Join(t.TempDir(), "timecris.zip")
+	writeMAMETestArchive(t, path, map[string][]byte{
+		"ts2ver-b.1": gameROM,
+		"c71.bin":    deviceROM,
+	})
+	machine := launchprofile.MAMEMachine{
+		Name: "timecris", Runnable: true, DeviceRefs: []string{"namcoc71"},
+		ROMs: []launchprofile.MAMEROM{{
+			Name: "ts2verb.1", Size: int64(len(gameROM)), CRC: fmt.Sprintf("%08x", crc32.ChecksumIEEE(gameROM)),
+		}},
+	}
+	device := launchprofile.MAMEMachine{
+		Name: "namcoc71", IsDevice: true,
+		ROMs: []launchprofile.MAMEROM{{
+			Name: "c71.bin", Size: int64(len(deviceROM)), CRC: fmt.Sprintf("%08x", crc32.ChecksumIEEE(deviceROM)),
+		}},
+	}
+	catalog := launchprofile.MAMECatalog{
+		Build: "0.287 (mame0287)", SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Revision: 287, Machines: map[string]launchprofile.MAMEMachine{"timecris": machine, "namcoc71": device},
+	}
+	entry := domain.GameAsset{
+		ID: 46, Platform: "mame", FilePath: path, Size: 16292369,
+		SHA1: "ee6d57977bd5b10f82292009755cd8d80b9e14f5",
+	}
+	profile, err := buildMAMEProfile(catalog, machine, entry, map[string][]domain.GameAsset{
+		"timecris": {entry},
+	}, defaultLaunchProfileTargets("mame")[0], launchprofile.MAMEPolicyForVersion("0.287"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.Files) != 1 || profile.Files[0].Name != "timecris.zip" || profile.Files[0].Role != "entry" {
+		t.Fatalf("unexpected embedded-device profile: %+v", profile.Files)
+	}
+
+	entry.SHA1 = "0123456789abcdef0123456789abcdef01234567"
+	if _, err := buildMAMEProfile(catalog, machine, entry, map[string][]domain.GameAsset{
+		"timecris": {entry},
+	}, defaultLaunchProfileTargets("mame")[0], launchprofile.MAMEPolicyForVersion("0.287")); err == nil {
+		t.Fatal("expected an unregistered Time Crisis fingerprint to require namcoc71.zip")
+	}
+}
+
 func TestLaunchProfileTargetsRequireCanonicalIdentityAndExactFBNeoHash(t *testing.T) {
 	document := launchProfileTargetDocument{Targets: []launchProfileTarget{
 		{

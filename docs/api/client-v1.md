@@ -247,9 +247,9 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.994",
+  "serviceVersion": "0.995",
   "apiVersion": "v1",
-  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd", "py1"],
+  "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cci", "cxi", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd", "py1"],
   "capabilities": {
     "clientHome": true,
     "unifiedManifest": true,
@@ -683,6 +683,8 @@ Nintendo 64 scans use `platform: "n64"`, `romSetName: "Nintendo 64"`, `emulatorH
 Virtual Boy scans use `platform: "virtualboy"`, `romSetName: "Virtual Boy"`, `emulatorHint: "virtualfriend"`, and `inputProfile: "standard"`. Raw `.vb` and `.vboy` files are supported. A ZIP containing exactly one such ROM is indexed as one game and exposes the inner ROM name, size, checksums, and bytes through its manifest; the ZIP filename alone never overrides the inner cartridge format. Covers are matched lazily against Libretro's `Nintendo - Virtual Boy` boxart catalog and cached by FolioSpace.
 
 Nintendo DS scans use `platform: "nds"`, `romSetName: "Nintendo DS"`, `format: "nds"`, `emulatorHint: "melonds-ds"`, and `inputProfile: "standard"`. Each `.nds` file is one single-entry game manifest. BIOS, firmware, DSi NAND, and unrelated sibling files are never indexed or packaged. Resolver matching requires the exact Libretro `melonds-ds` core and is limited to physical iOS, iPadOS, and visionOS clients that explicitly report that runtime; desktop melonDS, tvOS, simulators, and generic archive runtimes are not substituted.
+
+Nintendo 3DS scans use `platform: "3ds"`, `romSetName: "Nintendo 3DS"`, `emulatorHint: "spatialemu-3ds-companion"`, and `inputProfile: "standard"`. Direct `.3ds`/`.cci` NCSD images and `.cxi` NCCH images are validated at header offset `0x100`; the maximum image size is 8 GiB. A ZIP is accepted only when a 3DS library/path identifies the platform and the safe archive contains exactly one validated direct image. Its manifest and authenticated file endpoints expose the inner image name, uncompressed size, checksums, full bytes, and byte ranges rather than the outer ZIP. `.cia` is classified as `contentMode: "install"` and remains `needs-curation`; direct images and accepted ZIPs use `contentMode: "launch"`. The server does not advertise CIA installation capability, upload keys, firmware, NAND, saves, or other device material.
 
 3DO scans use `platform: "3do"`, `romSetName: "3DO"`, `emulatorHint: "opera"`, and `inputProfile: "standard"`. Platform assignment comes from a 3DO library root or explicit platform metadata rather than the shared `.cue`, `.iso`, or `.chd` extensions alone. A CUE is published as one game with all referenced tracks in its ordered manifest; dependency lookup is case-insensitive on disk while logical filenames preserve the CUE declarations. Referenced tracks and known 3DO BIOS files are never published as standalone games or included as game dependencies. Resolver matching requires a client-reported Libretro `opera` core; catalog browsing remains available when the client does not bundle Opera.
 

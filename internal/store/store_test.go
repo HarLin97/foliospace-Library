@@ -155,6 +155,80 @@ func TestReplaceGameLaunchProfilesPreservesGameRoleAcrossPolicies(t *testing.T) 
 	}
 }
 
+func TestReplaceGameLaunchProfilesForGamePreservesOtherGames(t *testing.T) {
+	conn, err := db.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	s := New(conn)
+	lib, err := s.CreateLibrary("Games", "/games")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "First", Platform: "mame", ROMSetName: "first",
+		Format: "zip", FilePath: "/games/first.zip", RelPath: "first.zip", Size: 1,
+		MTime: time.Unix(1, 0), SHA1: "0123456789abcdef0123456789abcdef01234567",
+		EmulatorHint: "mame", Compatibility: "unknown", CatalogRole: "needs-curation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.UpsertGame(domain.GameAsset{
+		LibraryID: lib.ID, Title: "Second", Platform: "mame", ROMSetName: "second",
+		Format: "zip", FilePath: "/games/second.zip", RelPath: "second.zip", Size: 1,
+		MTime: time.Unix(1, 0), SHA1: "1123456789abcdef0123456789abcdef01234567",
+		EmulatorHint: "mame", Compatibility: "unknown", CatalogRole: "needs-curation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := func(game domain.GameAsset, id, client, platform string) domain.GameLaunchProfile {
+		return domain.GameLaunchProfile{
+			GameID: game.ID, ID: id, Revision: 287, Priority: 200, Status: "ready",
+			ClientName: client, MinClientVersion: "1.300", ClientPlatform: platform, Architecture: "arm64",
+			Runtime:   domain.GameRuntimeDescriptor{ID: "mame", Version: "0.287", ContentSet: "mame-0.287"},
+			EntryFile: game.ROMSetName + ".zip", CanonicalSet: game.ROMSetName,
+		}
+	}
+	update := func(game domain.GameAsset) domain.GameLaunchCatalogUpdate {
+		return domain.GameLaunchCatalogUpdate{
+			GameID: game.ID, Platform: "mame", ROMSetName: game.ROMSetName, EmulatorHint: "mame", CatalogRole: "game",
+		}
+	}
+	policy := "mame-0.287-listxml"
+	if _, err := s.ReplaceGameLaunchProfiles(policy,
+		[]domain.GameLaunchProfile{
+			profile(first, "first-ipados", "SpatialEMU.iPadOS", "ipados-arm64"),
+			profile(second, "second-ipados", "SpatialEMU.iPadOS", "ipados-arm64"),
+		},
+		[]domain.GameLaunchCatalogUpdate{update(first), update(second)}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.ReplaceGameLaunchProfilesForGame(policy, first.ID,
+		[]domain.GameLaunchProfile{profile(first, "first-macos", "SpatialEMU.macOS", "macos-arm64")},
+		[]domain.GameLaunchCatalogUpdate{update(first)}); err != nil {
+		t.Fatal(err)
+	}
+	firstProfiles, err := s.GameLaunchProfiles(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstProfiles) != 1 || firstProfiles[0].ID != "first-macos" {
+		t.Fatalf("first profiles = %#v", firstProfiles)
+	}
+	secondProfiles, err := s.GameLaunchProfiles(second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondProfiles) != 1 || secondProfiles[0].ID != "second-ipados" {
+		t.Fatalf("second profiles = %#v", secondProfiles)
+	}
+}
+
 func TestReplaceGameFilesReusesChecksumOnlyForUnchangedSourceIdentity(t *testing.T) {
 	conn, err := db.Open(t.TempDir())
 	if err != nil {
