@@ -26,6 +26,11 @@ type launchProfileTargetDocument struct {
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var coreBuildIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{0,255}$`)
 
+const (
+	defaultFBNeoIOSCoreBuildID      = "fbneo:archive-f1d54ccd94b661434a38930591e3697b89165a5946c45eff98f60d3981fd7b6c:ios-arm64:full-v1"
+	defaultFBNeoVisionOSCoreBuildID = "fbneo:archive-a161e273b161dc77fad5acc449798987f89741f0f75da1f05bec4ff7b6b75181:xros-arm64:full-localized-v1"
+)
+
 func loadLaunchProfileTargets(path, policy string) ([]launchProfileTarget, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -43,14 +48,29 @@ func loadLaunchProfileTargets(path, policy string) ([]launchProfileTarget, error
 }
 
 func defaultLaunchProfileTargets(policy string) []launchProfileTarget {
-	target := launchProfileTarget{
+	windows := launchProfileTarget{
 		ID: "windows", ClientName: "SpatialEMU.Windows", MinClientVersion: "1.302",
 		ClientPlatform: "windows-x64", Architecture: "x64",
 	}
-	if strings.EqualFold(strings.TrimSpace(policy), "fbneo") {
-		target.CoreSHA256 = fbNeoCoreSHA256
+	if !strings.EqualFold(strings.TrimSpace(policy), "fbneo") {
+		return []launchProfileTarget{windows}
 	}
-	return []launchProfileTarget{target}
+	windows.CoreSHA256 = fbNeoCoreSHA256
+	return []launchProfileTarget{
+		{
+			ID: "ios-stable-full-v1", ClientName: "SpatialEMU.iOS", MinClientVersion: "1.300",
+			ClientPlatform: "ios-arm64", Architecture: "arm64", CoreBuildID: defaultFBNeoIOSCoreBuildID,
+		},
+		{
+			ID: "ipados-stable-full-v1", ClientName: "SpatialEMU.iPadOS", MinClientVersion: "1.300",
+			ClientPlatform: "ipados-arm64", Architecture: "arm64", CoreBuildID: defaultFBNeoIOSCoreBuildID,
+		},
+		{
+			ID: "visionos-stable-full-localized-v1", ClientName: "SpatialEMU.visionOS", MinClientVersion: "1.300",
+			ClientPlatform: "visionos-arm64", Architecture: "arm64", CoreBuildID: defaultFBNeoVisionOSCoreBuildID,
+		},
+		windows,
+	}
 }
 
 func validateLaunchProfileTargets(targets []launchProfileTarget, policy string) ([]launchProfileTarget, error) {

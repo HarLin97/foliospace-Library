@@ -38,7 +38,7 @@ func main() {
 	policy := flag.String("policy", "fbneo", "audit policy: fbneo or mame")
 	mameListXML := flag.String("mame-listxml", filepath.Join(cfg.ConfigDir, "policies", "mame0288lx.zip"), "official MAME 0.288 listxml XML or ZIP path")
 	platforms := flag.String("platforms", "model2", "comma-separated platforms to audit with MAME")
-	targetsPath := flag.String("targets", "", "JSON file containing exact client runtime targets; defaults to the Windows release target")
+	targetsPath := flag.String("targets", "", "JSON file containing exact client runtime targets; FBNeo defaults to stable Apple and Windows release targets, MAME defaults to Windows")
 	gameID := flag.Int64("game-id", 0, "audit and replace profiles only for this game ID")
 	dryRun := flag.Bool("dry-run", false, "audit without writing SQLite")
 	failureLimit := flag.Int("failure-limit", 50, "maximum failure details to print")

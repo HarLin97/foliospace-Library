@@ -8,7 +8,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release: [`0.996`](https://github.com/funland/foliospace-Library/releases/tag/v0.996).
+Current release: [`0.997`](https://github.com/funland/foliospace-Library/releases/tag/v0.997).
 
 ## Quick Answers
 
@@ -261,6 +261,17 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.997
+
+Release `0.997` restores stable Apple default FBNeo target coverage while keeping ROM validation content-based and strict:
+
+- FBNeo archive validation accepts historical member filenames when their exact size and CRC match the current DAT, so harmless internal renames no longer block verified ROM content.
+- The field-proven Captain Commando `ioc1.ic7` PLD variant (279 bytes, CRC `0d182081`) is registered narrowly for `captcomm`; unrelated or damaged content remains rejected.
+- FBNeo rebuilds without an explicit target document now create profiles for stable SpatialEMU iOS, iPadOS, and visionOS core identities as well as the approved Windows target, preventing a default rebuild from producing Windows-only coverage.
+- Deployment-supplied target documents remain authoritative, legacy tvOS identities remain supported when declared there, and unknown core builds still return HTTP 409.
+- Android FBNeo catalog downloads keep their existing manifest-first and pinned-DAT validation path; Android Flycast/NAOMI profiles and MAME policies are unchanged.
+- Existing installations that previously generated only a subset of FBNeo profiles should run **Analyze Catalog** once after confirming their target document. Service, Client API, Web, and source MCP metadata report version `0.997`.
+
 ## Release 0.996
 
 Release `0.996` adds audited Point Blank launch support for SpatialEMU Apple clients:
@@ -457,7 +468,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.996 ./scripts/build-mcp-release.sh
+VERSION=0.997 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -504,7 +515,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:0.996
+docker pull funland/foliospace-library:0.997
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -544,7 +555,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:0.996
+  funland/foliospace-library:0.997
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -566,11 +577,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.996
-git push github v0.996
+git tag v0.997
+git push github v0.997
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.996` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.997` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

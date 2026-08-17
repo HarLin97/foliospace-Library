@@ -61,6 +61,51 @@ func TestValidateFBNeoArchiveRejectsWrongCRC(t *testing.T) {
 	}
 }
 
+func TestValidateFBNeoArchiveAcceptsCRCMatchedHistoricalAlias(t *testing.T) {
+	data := []byte("renamed-rom")
+	game := FBNeoGame{
+		Name: "alias",
+		ROMs: []FBNeoROM{{
+			Name: "current.bin", Size: int64(len(data)), CRC: fmt.Sprintf("%08x", crc32.ChecksumIEEE(data)),
+		}},
+	}
+	path := filepath.Join(t.TempDir(), "alias.zip")
+	writeTestZip(t, path, map[string][]byte{"historical.bin": data})
+	if err := ValidateFBNeoArchive(path, game); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateFBNeoArchiveDoesNotReuseOneAliasForTwoRequiredROMs(t *testing.T) {
+	data := []byte("same-rom")
+	crc := fmt.Sprintf("%08x", crc32.ChecksumIEEE(data))
+	game := FBNeoGame{
+		Name: "duplicate",
+		ROMs: []FBNeoROM{
+			{Name: "first.bin", Size: int64(len(data)), CRC: crc},
+			{Name: "second.bin", Size: int64(len(data)), CRC: crc},
+		},
+	}
+	path := filepath.Join(t.TempDir(), "duplicate.zip")
+	writeTestZip(t, path, map[string][]byte{"historical.bin": data})
+	if err := ValidateFBNeoArchive(path, game); err == nil {
+		t.Fatal("one historical member satisfied two required ROM entries")
+	}
+}
+
+func TestMatchesFBNeoROMAcceptsFieldProvenCaptainCommandoPLD(t *testing.T) {
+	rom := FBNeoROM{Name: "ioc1.ic7", Size: 260, CRC: "a399772d"}
+	if !matchesFBNeoROM("captcomm", rom, 279, 0x0d182081) {
+		t.Fatal("expected the field-proven Captain Commando PLD to be accepted")
+	}
+	if matchesFBNeoROM("other", rom, 279, 0x0d182081) {
+		t.Fatal("the Captain Commando compatibility entry must not change unrelated games")
+	}
+	if matchesFBNeoROM("captcomm", rom, 279, 0x0d182082) {
+		t.Fatal("unexpected Captain Commando PLD content was accepted")
+	}
+}
+
 func writeTestZip(t *testing.T, path string, files map[string][]byte) {
 	t.Helper()
 	file, err := os.Create(path)

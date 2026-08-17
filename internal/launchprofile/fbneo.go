@@ -208,17 +208,62 @@ func ValidateFBNeoArchive(path string, game FBNeoGame) error {
 	}
 	defer reader.Close()
 	entries := make(map[string]*zip.File, len(reader.File))
+	entriesByFingerprint := make(map[string][]*zip.File, len(reader.File))
 	for _, file := range reader.File {
 		entries[strings.ToLower(strings.ReplaceAll(file.Name, "\\", "/"))] = file
+		fingerprint := fbNeoROMFingerprint(int64(file.UncompressedSize64), file.CRC32)
+		entriesByFingerprint[fingerprint] = append(entriesByFingerprint[fingerprint], file)
 	}
+	usedEntries := make(map[*zip.File]bool, len(reader.File))
 	for _, rom := range game.RequiredROMs() {
 		entry := entries[strings.ToLower(strings.ReplaceAll(rom.Name, "\\", "/"))]
 		if entry == nil {
+			for _, candidate := range entriesByFingerprint[fbNeoROMFingerprint(rom.Size, parseFBNeoCRC(rom.CRC))] {
+				if !usedEntries[candidate] {
+					entry = candidate
+					break
+				}
+			}
+		}
+		if entry == nil {
 			return fmt.Errorf("%s is missing ROM %s", filepath.Base(path), rom.Name)
 		}
-		if int64(entry.UncompressedSize64) != rom.Size || fmt.Sprintf("%08x", entry.CRC32) != strings.ToLower(rom.CRC) {
+		if usedEntries[entry] {
+			return fmt.Errorf("%s is missing a distinct ROM for %s", filepath.Base(path), rom.Name)
+		}
+		if !matchesFBNeoROM(game.Name, rom, int64(entry.UncompressedSize64), entry.CRC32) {
 			return fmt.Errorf("%s ROM %s does not match DAT size/CRC", filepath.Base(path), rom.Name)
 		}
+		usedEntries[entry] = true
 	}
 	return nil
+}
+
+func fbNeoROMFingerprint(size int64, crc uint32) string {
+	return fmt.Sprintf("%d:%08x", size, crc)
+}
+
+func parseFBNeoCRC(value string) uint32 {
+	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 16, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(parsed)
+}
+
+func matchesFBNeoROM(gameName string, rom FBNeoROM, actualSize int64, actualCRC uint32) bool {
+	if actualSize == rom.Size && actualCRC == parseFBNeoCRC(rom.CRC) {
+		return true
+	}
+
+	// Compatibility registrations cover field-proven historical ROM content
+	// that FBNeo can run but the installed DAT no longer lists. Keep these
+	// content-based so renamed/repacked archives remain usable without allowing
+	// unrelated or damaged ROM data through the audit.
+	switch strings.ToLower(strings.TrimSpace(gameName)) + "/" + strings.ToLower(strings.TrimSpace(rom.Name)) {
+	case "captcomm/ioc1.ic7":
+		return actualSize == 279 && actualCRC == 0x0d182081
+	default:
+		return false
+	}
 }

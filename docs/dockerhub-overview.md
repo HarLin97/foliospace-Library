@@ -4,6 +4,17 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.997 Release: Stable FBNeo Coverage and Historical ROM Compatibility
+
+Release `0.997` restores stable Apple default FBNeo target coverage while keeping runtime and ROM validation strict.
+
+- Historical member filenames are accepted when their exact size and CRC match the installed FBNeo DAT.
+- The field-proven Captain Commando `ioc1.ic7` PLD variant (279 bytes, CRC `0d182081`) is accepted only for the `captcomm` set; unrelated or damaged content remains blocked.
+- Default FBNeo rebuilds cover stable SpatialEMU iOS, iPadOS, and visionOS core identities plus the approved Windows target instead of producing Windows-only profiles.
+- Deployment-supplied target documents remain authoritative, including legacy tvOS identities, and unknown core builds still return HTTP 409.
+- Android keeps its existing manifest-first, pinned-DAT FBNeo flow. Android Flycast/NAOMI and MAME launch policies are unchanged.
+- Existing deployments with partial FBNeo profiles should run **Analyze Catalog** once after checking their target document. Service, Client API, Web, and source MCP metadata report version `0.997`.
+
 ## 0.996 Release: Audited Point Blank Launch Support
 
 Release `0.996` adds strict FBNeo launch profiles for Point Blank on SpatialEMU Apple clients.
@@ -279,7 +290,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.996
+docker pull funland/foliospace-library:0.997
 ```
 
 ```bash
@@ -289,7 +300,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.996
+  funland/foliospace-library:0.997
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

@@ -49,6 +49,8 @@ The default container paths are:
 
 The FBNeo DAT and MAME listxml are not bundled with FolioSpace. Administrators must supply policy files that match the exact runtime/core versions used by their clients. The two target JSON files supply the client/runtime fingerprints for each policy family; they must remain separate because FBNeo requires a build-specific core fingerprint while MAME target declarations use a different contract. Paths are configurable in setup and Game Curation for installations with a different `/config` layout. The older `/config/policies/targets.json` setting is retained only as a compatibility fallback.
 
+When no FBNeo target JSON is installed, the rebuild tool uses the release defaults for stable SpatialEMU iOS, iPadOS, and visionOS core identities plus the approved Windows target. An installed target JSON is authoritative and replaces that built-in list, so it must contain every client identity the deployment intends to keep. A compatibility rebuild writes only the declared targets; using a temporary one-client document as the permanent policy can therefore leave other clients without a matching profile. Unknown build identities remain rejected even when the release defaults are used. Legacy tvOS or application-derived Apple fingerprints must stay in the deployment-supplied target document until those clients report a stable `coreBuildId`.
+
 If policy files are absent, ordinary console and disc games can still be indexed. Strict arcade records remain `needs-curation` and are included in native-client discovery and facets without being promoted to a ready launch profile.
 
 ## 4. Cover Matching
