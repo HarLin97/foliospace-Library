@@ -111,11 +111,45 @@ func TestRuntimeIdentityPrefersStableBuildIDWithLegacyHashFallback(t *testing.T)
 	if runtimeIdentityMatches(domain.GameRuntimeDescriptor{CoreBuildID: "fbneo:other:arm64:release", CoreSHA256: legacyHash}, approved) {
 		t.Fatal("different stable build ids must not match even when legacy hashes match")
 	}
+	if runtimeIdentityMatches(
+		domain.GameRuntimeDescriptor{CoreBuildID: "fbneo:other:arm64:release", CoreSHA256: legacyHash},
+		domain.GameRuntimeDescriptor{CoreSHA256: legacyHash},
+	) {
+		t.Fatal("a supplied stable build id must not fall back to an application-derived legacy hash profile")
+	}
 	if !runtimeIdentityMatches(domain.GameRuntimeDescriptor{CoreSHA256: legacyHash}, domain.GameRuntimeDescriptor{CoreSHA256: legacyHash}) {
 		t.Fatal("legacy clients and profiles should continue matching by core hash")
 	}
 	if runtimeIdentityMatches(domain.GameRuntimeDescriptor{}, domain.GameRuntimeDescriptor{CoreBuildID: approved.CoreBuildID}) {
 		t.Fatal("a build-id-only policy must not accept an omitted runtime identity through an empty hash fallback")
+	}
+}
+
+func TestAppleLegacyFBNeoApplicationFingerprintIsDiagnosticOnly(t *testing.T) {
+	client := domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.300", Platform: "ipados-arm64", Architecture: "arm64"}
+	requested := domain.GameRuntimeDescriptor{
+		ID:         "libretro",
+		CoreID:     "fbneo",
+		CoreSHA256: "8e8f0a7b4ce70000000000000000000000000000000000000000000000000000",
+	}
+	approved := domain.GameRuntimeDescriptor{
+		ID:          "libretro",
+		CoreID:      "fbneo",
+		CoreBuildID: "fbneo:archive-f1d54ccd94b661434a38930591e3697b89165a5946c45eff98f60d3981fd7b6c:ios-arm64:full-v1",
+	}
+	if !runtimeDescriptorMatches(requested, approved, client) {
+		t.Fatal("an Apple application-derived legacy hash must not gate an approved FBNeo runtime")
+	}
+
+	requested.CoreBuildID = "fbneo:archive-unknown:ios-arm64:full-v1"
+	if runtimeDescriptorMatches(requested, approved, client) {
+		t.Fatal("an explicitly supplied unknown stable build id must remain rejected")
+	}
+
+	requested.CoreBuildID = ""
+	windows := domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"}
+	if runtimeDescriptorMatches(requested, approved, windows) {
+		t.Fatal("the Apple legacy compatibility rule must not weaken non-Apple runtime matching")
 	}
 }
 

@@ -338,7 +338,7 @@ func TestAPISelectsMAMEOrFBNeoFromDualArcadeCapabilities(t *testing.T) {
 	}
 }
 
-func TestAPIResolvesStrictMobileArcadeProfilesWithExactRuntimeIdentity(t *testing.T) {
+func TestAPIResolvesMobileArcadeWithoutGatingAppleApplicationHash(t *testing.T) {
 	ts, games := catalogLaunchProfileTestServer(t)
 	defer ts.Close()
 
@@ -369,12 +369,20 @@ func TestAPIResolvesStrictMobileArcadeProfilesWithExactRuntimeIdentity(t *testin
 		}
 	}
 
-	wrongHash := requests[0].request
-	wrongHash.Runtimes = append([]domain.GameRuntimeDescriptor{}, wrongHash.Runtimes...)
-	wrongHash.Runtimes[0].CoreSHA256 = strings.Repeat("2", 64)
-	response := postLaunchResolve(t, ts.URL, games["sf2"].ID, "secret", wrongHash, nil)
+	changedAppHash := requests[0].request
+	changedAppHash.Runtimes = append([]domain.GameRuntimeDescriptor{}, changedAppHash.Runtimes...)
+	changedAppHash.Runtimes[0].CoreSHA256 = "8e8f0a7b4ce70000000000000000000000000000000000000000000000000000"
+	response := postLaunchResolve(t, ts.URL, games["sf2"].ID, "secret", changedAppHash, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("changed Apple application hash status=%d body=%s", response.StatusCode, response.Body)
+	}
+
+	unknownStableBuild := changedAppHash
+	unknownStableBuild.Runtimes = append([]domain.GameRuntimeDescriptor{}, changedAppHash.Runtimes...)
+	unknownStableBuild.Runtimes[0].CoreBuildID = "fbneo:archive-unknown:ios-arm64:full-v1"
+	response = postLaunchResolve(t, ts.URL, games["sf2"].ID, "secret", unknownStableBuild, nil)
 	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"core-fingerprint-unknown"`) {
-		t.Fatalf("wrong mobile FBNeo hash status=%d body=%s", response.StatusCode, response.Body)
+		t.Fatalf("unknown stable FBNeo build status=%d body=%s", response.StatusCode, response.Body)
 	}
 }
 
