@@ -265,14 +265,14 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 
 Release `0.997` restores stable Apple default FBNeo target coverage while keeping ROM validation content-based and strict:
 
-- Hotfix: legacy SpatialEMU iOS, iPadOS, visionOS, and tvOS `coreSha256` values are treated as application-build diagnostics rather than FBNeo core identities, so App Store signing or packaging changes no longer block an already approved launch profile.
-- Stable `coreBuildId` remains authoritative when supplied; an explicitly unknown stable build still returns HTTP 409. Windows, Android, and MAME runtime matching are unchanged.
+- Hotfix: FBNeo `coreSha256` and `coreBuildId` values are diagnostic only for supported official Windows, macOS, iOS, iPadOS, visionOS, tvOS, and Android clients. App signing, packaging, or core updates no longer block an otherwise approved launch profile.
+- FBNeo approval continues to require the exact client/platform/architecture, `libretro/fbneo` route, ROM profile, and complete dependency closure. MAME content-set matching and Android Flycast identity rules are unchanged.
 - FBNeo archive validation accepts historical member filenames when their exact size and CRC match the current DAT, so harmless internal renames no longer block verified ROM content.
 - The field-proven Captain Commando `ioc1.ic7` PLD variant (279 bytes, CRC `0d182081`) is registered narrowly for `captcomm`; unrelated or damaged content remains rejected.
 - FBNeo rebuilds without an explicit target document now create profiles for stable SpatialEMU iOS, iPadOS, and visionOS core identities as well as the approved Windows target, preventing a default rebuild from producing Windows-only coverage.
-- Deployment-supplied target documents remain authoritative, legacy tvOS identities remain supported when declared there, and unknown core builds still return HTTP 409.
+- Deployment-supplied target documents remain authoritative for client/platform coverage; legacy tvOS targets remain supported when declared there.
 - Android FBNeo catalog downloads keep their existing manifest-first and pinned-DAT validation path; Android Flycast/NAOMI profiles and MAME policies are unchanged.
-- The application-hash hotfix requires only a server image update; it does not require another catalog analysis. Existing installations that previously generated only a subset of FBNeo profiles should still run **Analyze Catalog** once after confirming their target document. Service, Client API, Web, and source MCP metadata report version `0.997`.
+- The FBNeo runtime-identity hotfix requires only a server image update; it does not require another catalog analysis. Existing installations that previously generated only a subset of FBNeo profiles should still run **Analyze Catalog** once after confirming their target document. Service, Client API, Web, and source MCP metadata report version `0.997`.
 
 ## Release 0.996
 

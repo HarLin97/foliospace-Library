@@ -816,10 +816,6 @@ func pragmaticRuntimeAllowedForClient(runtime domain.GameRuntimeDescriptor, plat
 		if (platform == "psp" || platform == "dos") && runtimeID != "libretro" {
 			return false
 		}
-		if runtimeID == "libretro" && normalizeLaunchCoreID(runtime.CoreID) == "fbneo" &&
-			!runtimeHasStableIdentity(runtime) {
-			return false
-		}
 	}
 	return true
 }
@@ -1178,16 +1174,8 @@ func classifyLaunchResolveFailure(game domain.GameAsset, req domain.GameLaunchRe
 		if !strings.EqualFold(strings.TrimSpace(runtime.ID), "libretro") {
 			continue
 		}
-		core := normalizeLaunchCoreID(runtime.CoreID)
-		platform := normalizeLaunchPlatform(game.Platform)
-		coreMatchesPlatform := ordinaryLibretroCoreSupportsPlatform(core, platform) ||
-			(platform == "psp" && core == "ppsspp") || (platform == "dos" && core == "dosboxpure") || core == "fbneo"
-		if core == "fbneo" && coreMatchesPlatform && !runtimeHasStableIdentity(runtime) && isAppleMobileClient(req.Client) {
-			details["coreId"] = runtime.CoreID
-			return launchResolveError("core-fingerprint-unknown", "The client did not provide a recognized core fingerprint.", details)
-		}
 		for _, profile := range profiles {
-			if persistedProfileClientMatches(profile, req.Client) && strings.EqualFold(profile.Runtime.ID, runtime.ID) && strings.EqualFold(profile.Runtime.CoreID, runtime.CoreID) && !runtimeIdentityMatches(runtime, profile.Runtime) {
+			if persistedProfileClientMatches(profile, req.Client) && strings.EqualFold(profile.Runtime.ID, runtime.ID) && strings.EqualFold(profile.Runtime.CoreID, runtime.CoreID) && !runtimeIdentityMatchesForClient(runtime, profile.Runtime, req.Client) {
 				details["coreId"] = runtime.CoreID
 				return launchResolveError("core-fingerprint-unknown", "The supplied core fingerprint is not present in the launch policy.", details)
 			}
@@ -1195,7 +1183,7 @@ func classifyLaunchResolveFailure(game domain.GameAsset, req domain.GameLaunchRe
 		for _, profile := range auditedGameLaunchProfiles {
 			if auditedProfileSourceMatchesGame(profile, game) && auditedProfileClientMatches(profile, req.Client) &&
 				strings.EqualFold(profile.Runtime.ID, runtime.ID) && strings.EqualFold(profile.Runtime.CoreID, runtime.CoreID) &&
-				!runtimeIdentityMatches(runtime, profile.Runtime) {
+				!runtimeIdentityMatchesForClient(runtime, profile.Runtime, req.Client) {
 				details["coreId"] = runtime.CoreID
 				return launchResolveError("core-fingerprint-unknown", "The supplied core fingerprint is not present in the launch policy.", details)
 			}
@@ -1286,24 +1274,18 @@ func runtimeDescriptorMatches(requested domain.GameRuntimeDescriptor, approved d
 }
 
 func runtimeIdentityMatchesForClient(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor, client domain.GameLaunchClient) bool {
-	if appleLegacyFBNeoApplicationFingerprintOnly(requested, approved, client) {
+	if fbneoRuntimeIdentityIsDiagnostic(requested, approved, client) {
 		return true
 	}
 	return runtimeIdentityMatches(requested, approved)
 }
 
-func appleLegacyFBNeoApplicationFingerprintOnly(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor, client domain.GameLaunchClient) bool {
-	if !isAppleMobileClient(client) || !supportedPragmaticClient(client) ||
-		!strings.EqualFold(strings.TrimSpace(requested.ID), "libretro") ||
-		!strings.EqualFold(strings.TrimSpace(approved.ID), "libretro") ||
-		normalizeLaunchCoreID(requested.CoreID) != "fbneo" || normalizeLaunchCoreID(approved.CoreID) != "fbneo" ||
-		strings.TrimSpace(requested.CoreBuildID) != "" {
-		return false
-	}
-	requestedSHA256 := strings.ToLower(strings.TrimSpace(requested.CoreSHA256))
-	approvedSHA256 := strings.ToLower(strings.TrimSpace(approved.CoreSHA256))
-	return sha256Pattern.MatchString(requestedSHA256) &&
-		(strings.TrimSpace(approved.CoreBuildID) != "" || sha256Pattern.MatchString(approvedSHA256))
+func fbneoRuntimeIdentityIsDiagnostic(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor, client domain.GameLaunchClient) bool {
+	return supportedPragmaticClient(client) &&
+		strings.EqualFold(strings.TrimSpace(requested.ID), "libretro") &&
+		strings.EqualFold(strings.TrimSpace(approved.ID), "libretro") &&
+		normalizeLaunchCoreID(requested.CoreID) == "fbneo" &&
+		normalizeLaunchCoreID(approved.CoreID) == "fbneo"
 }
 
 func runtimeIdentityMatches(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor) bool {
@@ -1324,11 +1306,6 @@ func runtimeIdentityMatches(requested domain.GameRuntimeDescriptor, approved dom
 		return false
 	}
 	return requestedSHA256 == ""
-}
-
-func runtimeHasStableIdentity(runtime domain.GameRuntimeDescriptor) bool {
-	return strings.TrimSpace(runtime.CoreBuildID) != "" ||
-		sha256Pattern.MatchString(strings.ToLower(strings.TrimSpace(runtime.CoreSHA256)))
 }
 
 func versionAtLeast(actual string, minimum string) bool {

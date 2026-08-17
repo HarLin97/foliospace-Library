@@ -8,14 +8,14 @@ It is not a cloud media service and does not distribute books, comics, ROMs, mov
 
 Release `0.997` restores stable Apple default FBNeo target coverage while keeping runtime and ROM validation strict.
 
-- Hotfix: legacy SpatialEMU iOS, iPadOS, visionOS, and tvOS `coreSha256` values are diagnostic application-build fingerprints and no longer gate an already approved FBNeo launch profile.
-- Stable `coreBuildId` remains exact and authoritative when supplied; explicitly unknown builds still return HTTP 409. Windows, Android, and MAME matching are unchanged.
+- Hotfix: FBNeo `coreSha256` and `coreBuildId` values are diagnostic only for supported official Windows, macOS, iOS, iPadOS, visionOS, tvOS, and Android clients, and no longer gate an otherwise approved launch profile.
+- FBNeo approval still requires the exact client/platform/architecture, `libretro/fbneo` route, ROM profile, and complete dependency closure. MAME content-set matching and Android Flycast identity rules are unchanged.
 - Historical member filenames are accepted when their exact size and CRC match the installed FBNeo DAT.
 - The field-proven Captain Commando `ioc1.ic7` PLD variant (279 bytes, CRC `0d182081`) is accepted only for the `captcomm` set; unrelated or damaged content remains blocked.
 - Default FBNeo rebuilds cover stable SpatialEMU iOS, iPadOS, and visionOS core identities plus the approved Windows target instead of producing Windows-only profiles.
-- Deployment-supplied target documents remain authoritative, including legacy tvOS identities, and unknown core builds still return HTTP 409.
+- Deployment-supplied target documents remain authoritative for client/platform coverage, including legacy tvOS targets.
 - Android keeps its existing manifest-first, pinned-DAT FBNeo flow. Android Flycast/NAOMI and MAME launch policies are unchanged.
-- The application-hash hotfix needs only a server image update and no catalog re-analysis. Deployments with partial FBNeo profiles should still run **Analyze Catalog** once after checking their target document. Service, Client API, Web, and source MCP metadata report version `0.997`.
+- The FBNeo runtime-identity hotfix needs only a server image update and no catalog re-analysis. Deployments with partial FBNeo profiles should still run **Analyze Catalog** once after checking their target document. Service, Client API, Web, and source MCP metadata report version `0.997`.
 
 ## 0.996 Release: Audited Point Blank Launch Support
 
