@@ -571,7 +571,7 @@ func matchingPersistedRuntime(profile domain.GameLaunchProfile, req domain.GameL
 		return domain.GameRuntimeDescriptor{}, false
 	}
 	for _, runtime := range req.Runtimes {
-		if runtimeDescriptorMatches(runtime, profile.Runtime) {
+		if runtimeDescriptorMatches(runtime, profile.Runtime, req.Client) {
 			return runtime, true
 		}
 	}
@@ -1268,7 +1268,7 @@ func matchingRuntime(profile auditedGameLaunchProfile, req domain.GameLaunchReso
 		return domain.GameRuntimeDescriptor{}, false
 	}
 	for _, runtime := range req.Runtimes {
-		if runtimeDescriptorMatches(runtime, profile.Runtime) {
+		if runtimeDescriptorMatches(runtime, profile.Runtime, req.Client) {
 			// Windows 1.302 verifies the response tuple against the selected
 			// request tuple field by field, so preserve the request verbatim.
 			return runtime, true
@@ -1277,29 +1277,53 @@ func matchingRuntime(profile auditedGameLaunchProfile, req domain.GameLaunchReso
 	return domain.GameRuntimeDescriptor{}, false
 }
 
-func runtimeDescriptorMatches(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor) bool {
+func runtimeDescriptorMatches(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor, client domain.GameLaunchClient) bool {
 	return strings.EqualFold(strings.TrimSpace(requested.ID), strings.TrimSpace(approved.ID)) &&
 		strings.TrimSpace(requested.Version) == strings.TrimSpace(approved.Version) &&
 		strings.TrimSpace(requested.ContentSet) == strings.TrimSpace(approved.ContentSet) &&
 		strings.EqualFold(strings.TrimSpace(requested.CoreID), strings.TrimSpace(approved.CoreID)) &&
-		runtimeIdentityMatches(requested, approved)
+		runtimeIdentityMatchesForClient(requested, approved, client)
+}
+
+func runtimeIdentityMatchesForClient(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor, client domain.GameLaunchClient) bool {
+	if appleLegacyFBNeoApplicationFingerprintOnly(requested, approved, client) {
+		return true
+	}
+	return runtimeIdentityMatches(requested, approved)
+}
+
+func appleLegacyFBNeoApplicationFingerprintOnly(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor, client domain.GameLaunchClient) bool {
+	if !isAppleMobileClient(client) || !supportedPragmaticClient(client) ||
+		!strings.EqualFold(strings.TrimSpace(requested.ID), "libretro") ||
+		!strings.EqualFold(strings.TrimSpace(approved.ID), "libretro") ||
+		normalizeLaunchCoreID(requested.CoreID) != "fbneo" || normalizeLaunchCoreID(approved.CoreID) != "fbneo" ||
+		strings.TrimSpace(requested.CoreBuildID) != "" {
+		return false
+	}
+	requestedSHA256 := strings.ToLower(strings.TrimSpace(requested.CoreSHA256))
+	approvedSHA256 := strings.ToLower(strings.TrimSpace(approved.CoreSHA256))
+	return sha256Pattern.MatchString(requestedSHA256) &&
+		(strings.TrimSpace(approved.CoreBuildID) != "" || sha256Pattern.MatchString(approvedSHA256))
 }
 
 func runtimeIdentityMatches(requested domain.GameRuntimeDescriptor, approved domain.GameRuntimeDescriptor) bool {
 	requestedBuildID := strings.TrimSpace(requested.CoreBuildID)
 	approvedBuildID := strings.TrimSpace(approved.CoreBuildID)
-	if requestedBuildID != "" && approvedBuildID != "" {
-		return requestedBuildID == approvedBuildID
+	if requestedBuildID != "" {
+		return approvedBuildID != "" && requestedBuildID == approvedBuildID
+	}
+	if approvedBuildID != "" {
+		return false
 	}
 	requestedSHA256 := strings.ToLower(strings.TrimSpace(requested.CoreSHA256))
 	approvedSHA256 := strings.ToLower(strings.TrimSpace(approved.CoreSHA256))
 	if sha256Pattern.MatchString(requestedSHA256) && sha256Pattern.MatchString(approvedSHA256) {
 		return requestedSHA256 == approvedSHA256
 	}
-	if approvedBuildID != "" || approvedSHA256 != "" {
+	if approvedSHA256 != "" {
 		return false
 	}
-	return requestedBuildID == "" && requestedSHA256 == ""
+	return requestedSHA256 == ""
 }
 
 func runtimeHasStableIdentity(runtime domain.GameRuntimeDescriptor) bool {
