@@ -214,6 +214,28 @@ func TestLaunchProfileTargetsRequireCanonicalIdentityAndStableFBNeoIdentity(t *t
 	}
 }
 
+func TestDefaultFBNeoTargetsCoverStableAppleAndWindows(t *testing.T) {
+	targets, err := validateLaunchProfileTargets(defaultLaunchProfileTargets("fbneo"), "fbneo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 4 {
+		t.Fatalf("targets=%+v, want stable iOS, iPadOS, visionOS, and Windows targets", targets)
+	}
+	byPlatform := make(map[string]launchProfileTarget, len(targets))
+	for _, target := range targets {
+		byPlatform[target.ClientPlatform] = target
+	}
+	if byPlatform["ios-arm64"].CoreBuildID != defaultFBNeoIOSCoreBuildID ||
+		byPlatform["ipados-arm64"].CoreBuildID != defaultFBNeoIOSCoreBuildID ||
+		byPlatform["visionos-arm64"].CoreBuildID != defaultFBNeoVisionOSCoreBuildID {
+		t.Fatalf("stable Apple targets=%+v", targets)
+	}
+	if byPlatform["windows-x64"].CoreSHA256 != fbNeoCoreSHA256 {
+		t.Fatalf("Windows target=%+v", byPlatform["windows-x64"])
+	}
+}
+
 func TestApplyFBNeoTargetUsesExactStableCoreIdentity(t *testing.T) {
 	catalog := launchprofile.FBNeoCatalog{Version: "v1", SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
 	game := launchprofile.FBNeoGame{Name: "sf2"}
