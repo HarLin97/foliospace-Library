@@ -200,8 +200,8 @@ func TestAPIResolvesAuditedCPSAndMAMECatalogProfiles(t *testing.T) {
 	wrongCore.Runtimes = append([]domain.GameRuntimeDescriptor{}, cpsRequest.Runtimes...)
 	wrongCore.Runtimes[0].CoreSHA256 = strings.Repeat("0", 64)
 	conflict := postLaunchResolve(t, ts.URL, games["sf2"].ID, "secret", wrongCore, nil)
-	if conflict.StatusCode != http.StatusConflict || !strings.Contains(string(conflict.Body), `"code":"core-fingerprint-unknown"`) {
-		t.Fatalf("wrong CPS core status=%d body=%s", conflict.StatusCode, conflict.Body)
+	if conflict.StatusCode != http.StatusOK {
+		t.Fatalf("changed Windows FBNeo build status=%d body=%s", conflict.StatusCode, conflict.Body)
 	}
 
 	mameRequest := auditedMAMERequest("1.302")
@@ -287,14 +287,13 @@ func TestAPIResolvesPointBlankAppleFBNeoProfilesAndHidesDeviceArchive(t *testing
 		Runtimes: []domain.GameRuntimeDescriptor{{ID: "libretro", CoreID: "fbneo", CoreBuildID: "fbneo-unknown-libretro-ios-arm64-lightgun2p-v1"}},
 	}
 	response := postLaunchResolve(t, ts.URL, games["ptblank"].ID, "secret", unknown, nil)
-	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"core-fingerprint-unknown"`) {
+	if response.StatusCode != http.StatusOK {
 		t.Fatalf("unknown build status=%d body=%s", response.StatusCode, response.Body)
 	}
 
 	if err := os.Rename(games["namcoc75"].FilePath, games["namcoc75"].FilePath+".missing"); err != nil {
 		t.Fatal(err)
 	}
-	unknown.Runtimes[0].CoreBuildID = iosBuildID
 	response = postLaunchResolve(t, ts.URL, games["ptblank"].ID, "secret", unknown, nil)
 	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"dependency-missing"`) || !strings.Contains(string(response.Body), `"file":"namcoc75.zip"`) {
 		t.Fatalf("missing dependency status=%d body=%s", response.StatusCode, response.Body)
@@ -338,7 +337,7 @@ func TestAPISelectsMAMEOrFBNeoFromDualArcadeCapabilities(t *testing.T) {
 	}
 }
 
-func TestAPIResolvesMobileArcadeWithoutGatingAppleApplicationHash(t *testing.T) {
+func TestAPIResolvesMobileArcadeWithoutGatingAppleRuntimeIdentity(t *testing.T) {
 	ts, games := catalogLaunchProfileTestServer(t)
 	defer ts.Close()
 
@@ -381,8 +380,16 @@ func TestAPIResolvesMobileArcadeWithoutGatingAppleApplicationHash(t *testing.T) 
 	unknownStableBuild.Runtimes = append([]domain.GameRuntimeDescriptor{}, changedAppHash.Runtimes...)
 	unknownStableBuild.Runtimes[0].CoreBuildID = "fbneo:archive-unknown:ios-arm64:full-v1"
 	response = postLaunchResolve(t, ts.URL, games["sf2"].ID, "secret", unknownStableBuild, nil)
-	if response.StatusCode != http.StatusConflict || !strings.Contains(string(response.Body), `"code":"core-fingerprint-unknown"`) {
+	if response.StatusCode != http.StatusOK {
 		t.Fatalf("unknown stable FBNeo build status=%d body=%s", response.StatusCode, response.Body)
+	}
+
+	omittedIdentity := requests[0].request
+	omittedIdentity.Runtimes = append([]domain.GameRuntimeDescriptor{}, omittedIdentity.Runtimes...)
+	omittedIdentity.Runtimes[0].CoreSHA256 = ""
+	response = postLaunchResolve(t, ts.URL, games["sf2"].ID, "secret", omittedIdentity, nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("omitted Apple FBNeo identity status=%d body=%s", response.StatusCode, response.Body)
 	}
 }
 

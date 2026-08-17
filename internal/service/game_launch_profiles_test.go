@@ -125,8 +125,7 @@ func TestRuntimeIdentityPrefersStableBuildIDWithLegacyHashFallback(t *testing.T)
 	}
 }
 
-func TestAppleLegacyFBNeoApplicationFingerprintIsDiagnosticOnly(t *testing.T) {
-	client := domain.GameLaunchClient{Name: "SpatialEMU.iPadOS", Version: "1.300", Platform: "ipados-arm64", Architecture: "arm64"}
+func TestFBNeoRuntimeIdentityIsDiagnosticForSupportedClients(t *testing.T) {
 	requested := domain.GameRuntimeDescriptor{
 		ID:         "libretro",
 		CoreID:     "fbneo",
@@ -137,19 +136,45 @@ func TestAppleLegacyFBNeoApplicationFingerprintIsDiagnosticOnly(t *testing.T) {
 		CoreID:      "fbneo",
 		CoreBuildID: "fbneo:archive-f1d54ccd94b661434a38930591e3697b89165a5946c45eff98f60d3981fd7b6c:ios-arm64:full-v1",
 	}
-	if !runtimeDescriptorMatches(requested, approved, client) {
-		t.Fatal("an Apple application-derived legacy hash must not gate an approved FBNeo runtime")
+	clients := []domain.GameLaunchClient{
+		{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"},
+		{Name: "SpatialEMU.macOS", Version: "1.300", Platform: "macos-arm64", Architecture: "arm64"},
+		{Name: "SpatialEMU.iOS", Version: "1.300", Platform: "ios-arm64", Architecture: "arm64"},
+		{Name: "SpatialEMU.iPadOS", Version: "1.300", Platform: "ipados-arm64", Architecture: "arm64"},
+		{Name: "SpatialEMU.visionOS", Version: "1.300", Platform: "visionos-arm64", Architecture: "arm64"},
+		{Name: "SpatialEMU.tvOS", Version: "1.300", Platform: "tvos-arm64", Architecture: "arm64"},
+		{Name: "GameEMU.Android", Version: "1.300", Platform: "android-arm64", Architecture: "arm64"},
+	}
+	for _, client := range clients {
+		if !runtimeDescriptorMatches(requested, approved, client) {
+			t.Fatalf("an FBNeo application fingerprint must not gate %s", client.Name)
+		}
 	}
 
 	requested.CoreBuildID = "fbneo:archive-unknown:ios-arm64:full-v1"
-	if runtimeDescriptorMatches(requested, approved, client) {
-		t.Fatal("an explicitly supplied unknown stable build id must remain rejected")
+	for _, client := range clients {
+		if !runtimeDescriptorMatches(requested, approved, client) {
+			t.Fatalf("an unknown FBNeo core build id must be diagnostic for %s", client.Name)
+		}
 	}
 
 	requested.CoreBuildID = ""
-	windows := domain.GameLaunchClient{Name: "SpatialEMU.Windows", Version: "1.302", Platform: "windows-x64", Architecture: "x64"}
-	if runtimeDescriptorMatches(requested, approved, windows) {
-		t.Fatal("the Apple legacy compatibility rule must not weaken non-Apple runtime matching")
+	requested.CoreSHA256 = ""
+	for _, client := range clients {
+		if !runtimeDescriptorMatches(requested, approved, client) {
+			t.Fatalf("an omitted FBNeo core identity must not gate %s", client.Name)
+		}
+	}
+
+	requested.CoreSHA256 = "8e8f0a7b4ce70000000000000000000000000000000000000000000000000000"
+	unsupported := domain.GameLaunchClient{Name: "SpatialEMU.Unknown", Version: "1.300", Platform: "unknown-arm64", Architecture: "arm64"}
+	if runtimeDescriptorMatches(requested, approved, unsupported) {
+		t.Fatal("the diagnostic identity rule must not admit unsupported clients")
+	}
+	requested.CoreID = "nestopia"
+	approved.CoreID = "nestopia"
+	if runtimeDescriptorMatches(requested, approved, clients[0]) {
+		t.Fatal("the FBNeo diagnostic identity rule must not weaken other cores")
 	}
 }
 
@@ -158,8 +183,8 @@ func TestAppleMobileOrdinaryLibretroDoesNotRequireCoreFingerprint(t *testing.T) 
 	if !pragmaticRuntimeAllowedForClient(domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "nestopia"}, "nes", client) {
 		t.Fatal("ordinary console cores should not require an application-build fingerprint")
 	}
-	if pragmaticRuntimeAllowedForClient(domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo"}, "cps1", client) {
-		t.Fatal("FBNeo must retain strict runtime identity checks")
+	if !pragmaticRuntimeAllowedForClient(domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo"}, "cps1", client) {
+		t.Fatal("Apple FBNeo must not require a core fingerprint")
 	}
 	if !pragmaticRuntimeAllowedForClient(domain.GameRuntimeDescriptor{ID: "libretro", CoreID: "fbneo", CoreBuildID: "fbneo:4f7c3a1:arm64:release"}, "cps1", client) {
 		t.Fatal("FBNeo should accept a stable core build id")
