@@ -17,6 +17,16 @@ Start with the [beginner quick start](https://github.com/funland/foliospace-Libr
 
 The published Compose default is port `8080`. Leave `FOLIOSPACE_API_TOKEN` empty for the beginner path, open the web setup page, create a token with at least 8 characters, select a mounted container path such as `/games`, then enter the service URL and the same token in SpatialEMU and select **Connect**.
 
+## 1.00 Release: Beginner SpatialEMU Setup
+
+Release `1.00` makes the optional SpatialEMU + FolioSpace workflow approachable on ordinary Docker hosts.
+
+- SpatialEMU can open supported local files without FolioSpace; FolioSpace remains an optional self-hosted catalog and sync service.
+- Mac, Windows, Linux, and compatible NAS hosts share one Compose path. A NAS and coding are not required.
+- First-run Web setup explains the required storage folders, service URL, token, and SpatialEMU connection steps before showing advanced catalog policy.
+- English and Simplified Chinese setup guidance link separately to the connection guide and FolioSpace product overview.
+- Existing 0.998 CIA installation, Range delivery, and game compatibility behavior remain unchanged. Service, Client API, Web, and source MCP metadata report version `1.00`.
+
 ## 0.998 Release: Resumable Nintendo 3DS CIA Installation
 
 Release `0.998` adds an explicit client-side Nintendo 3DS CIA installation contract.
@@ -315,7 +325,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.998
+docker pull funland/foliospace-library:1.00
 ```
 
 ```bash
@@ -325,7 +335,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.998
+  funland/foliospace-library:1.00
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.
