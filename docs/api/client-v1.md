@@ -247,7 +247,7 @@ Response:
 ```json
 {
   "serviceName": "FolioSpace Library",
-  "serviceVersion": "0.997",
+  "serviceVersion": "0.998",
   "apiVersion": "v1",
   "supportedFormats": ["cbz", "zip", "epub", "pdf", "mp4", "m4v", "mov", "mkv", "avi", "webm", "nes", "sfc", "smc", "vb", "vboy", "gba", "gb", "gbc", "nds", "3ds", "cci", "cxi", "cia", "z64", "v64", "n64", "gdi", "cdi", "chd", "iso", "bin", "cue", "ccd", "toc", "m3u", "cso", "gcm", "rvz", "7z", "dosz", "exe", "com", "bat", "d88", "fdi", "thd", "nhd", "hdi", "vhd", "py1"],
   "capabilities": {
@@ -285,7 +285,8 @@ Response:
 	"gameMetadataProviders": true,
 	"gameLaunchResolver": false,
 	"stableRuntimeIdentityV1": false,
-	"dosArchiveLaunchV1": true
+	"dosArchiveLaunchV1": true,
+	"ciaInstallV1": true
   }
 }
 ```
@@ -684,7 +685,7 @@ Virtual Boy scans use `platform: "virtualboy"`, `romSetName: "Virtual Boy"`, `em
 
 Nintendo DS scans use `platform: "nds"`, `romSetName: "Nintendo DS"`, `format: "nds"`, `emulatorHint: "melonds-ds"`, and `inputProfile: "standard"`. Each `.nds` file is one single-entry game manifest. BIOS, firmware, DSi NAND, and unrelated sibling files are never indexed or packaged. Resolver matching requires the exact Libretro `melonds-ds` core and is limited to physical iOS, iPadOS, and visionOS clients that explicitly report that runtime; desktop melonDS, tvOS, simulators, and generic archive runtimes are not substituted.
 
-Nintendo 3DS scans use `platform: "3ds"`, `romSetName: "Nintendo 3DS"`, `emulatorHint: "spatialemu-3ds-companion"`, and `inputProfile: "standard"`. Direct `.3ds`/`.cci` NCSD images and `.cxi` NCCH images are validated at header offset `0x100`; the maximum image size is 8 GiB. A ZIP is accepted only when a 3DS library/path identifies the platform and the safe archive contains exactly one validated direct image. Its manifest and authenticated file endpoints expose the inner image name, uncompressed size, checksums, full bytes, and byte ranges rather than the outer ZIP. `.cia` is classified as `contentMode: "install"` and remains `needs-curation`; direct images and accepted ZIPs use `contentMode: "launch"`. The server does not advertise CIA installation capability, upload keys, firmware, NAND, saves, or other device material.
+Nintendo 3DS scans use `platform: "3ds"`, `romSetName: "Nintendo 3DS"`, `emulatorHint: "spatialemu-3ds-companion"`, and `inputProfile: "standard"`. Direct `.3ds`/`.cci` NCSD images and `.cxi` NCCH images are validated at header offset `0x100`; the maximum image size is 8 GiB. A ZIP is accepted only when a 3DS library/path identifies the platform and the safe archive contains exactly one validated direct image. Its manifest and authenticated file endpoints expose the inner image name, uncompressed size, checksums, full bytes, and byte ranges rather than the outer ZIP. `.cia` is classified as `contentMode: "install"`, `validation: "client"`, and remains `needs-curation`; direct images and accepted ZIPs use `contentMode: "launch"`. CIA scanning performs a bounded structural check of the fixed `0x2020` header, aligned certificate/ticket/TMD/content/metadata section sizes, and content-presence bitmap before hashing the complete file. Signature, encryption, title identity, base/update/DLC classification, and final installability remain the Azahar client's responsibility. The server never requests or distributes keys, firmware, NAND, saves, or other device material.
 
 3DO scans use `platform: "3do"`, `romSetName: "3DO"`, `emulatorHint: "opera"`, and `inputProfile: "standard"`. Platform assignment comes from a 3DO library root or explicit platform metadata rather than the shared `.cue`, `.iso`, or `.chd` extensions alone. A CUE is published as one game with all referenced tracks in its ordered manifest; dependency lookup is case-insensitive on disk while logical filenames preserve the CUE declarations. Referenced tracks and known 3DO BIOS files are never published as standalone games or included as game dependencies. Resolver matching requires a client-reported Libretro `opera` core; catalog browsing remains available when the client does not bundle Opera.
 
@@ -1150,8 +1151,76 @@ Current error codes are:
 - `dependency-missing`: an entry, track, BIOS, parent, device, or other required file is missing or invalid.
 - `manifest-checksum-unavailable`: a required file has no persisted SHA-1 or changed after it was checksummed.
 - `content-set-mismatch`: a MAME content set does not match an installed audited profile.
+- `content-mode-unsupported`: the selected asset is an install action rather than launchable content, or the client did not advertise the required install capability. CIA clients should use the dedicated install action below instead of retrying the launch resolver.
 
 Clients must not fall back after `409`, `422`, authentication failures, or server errors. Only `404`, `405`, or `501` indicate that the resolver itself is unavailable and permit legacy manifest fallback. Cache identity is `gameId + launchProfileId + profileRevision + runtime.id + runtime.version + runtime.contentSet + runtime.coreId + runtime.coreBuildId + runtime.coreSha256`. Clients talking to older servers preserve the legacy identity without `coreBuildId`.
+
+CIA records never receive a normal launch profile. Calling this endpoint for a CIA returns `409 content-mode-unsupported`, not `launch-profile-missing`, even if the client reports an Azahar or Citra runtime.
+
+### `POST /api/client/games/{gameId}/install`
+
+Negotiates an explicit client-side installation action. This endpoint is currently limited to Nintendo 3DS CIA content. A client should call it only after `/api/client/info` advertises `ciaInstallV1: true` and the catalog item reports `contentMode: "install"`.
+
+Request:
+
+```json
+{
+  "client": {
+    "name": "SpatialEMU.visionOS",
+    "version": "1.320",
+    "platform": "visionos-arm64",
+    "architecture": "arm64"
+  },
+  "capabilities": ["cia-install-v1"]
+}
+```
+
+Successful response:
+
+```json
+{
+  "action": "install",
+  "contentMode": "install",
+  "validation": "client",
+  "manifest": {
+    "game": {
+      "id": 41016,
+      "title": "Example Package",
+      "platform": "3ds",
+      "romSetName": "Nintendo 3DS",
+      "format": "cia",
+      "contentMode": "install",
+      "validation": "client",
+      "fileName": "Example Package.cia",
+      "size": 123456789,
+      "sha1": "0123456789abcdef0123456789abcdef01234567",
+      "installUrl": "/api/client/games/41016/install",
+      "downloadUrl": "/api/client/games/41016/file"
+    },
+    "fileUrl": "/api/client/games/41016/file",
+    "entryFile": "Example Package.cia",
+    "files": [
+      {
+        "name": "Example Package.cia",
+        "size": 123456789,
+        "role": "entry",
+        "url": "/api/client/games/41016/files/0",
+        "checksum": "sha1:0123456789abcdef0123456789abcdef01234567"
+      }
+    ],
+    "contentMode": "install",
+    "validation": "client"
+  }
+}
+```
+
+The server verifies that the indexed CIA still has exactly one entry, matching positive size, matching persisted SHA-1, original `.cia` filename, and a regular source file with the indexed byte length. Missing `cia-install-v1`, calling the action for `.3ds`/`.cci`/`.cxi`, or attempting to use CIA as a launch profile returns `409` with `code: "content-mode-unsupported"`. Stale or internally inconsistent indexed size/checksum metadata returns `409 content-integrity-invalid` and requires a rescan.
+
+The returned `validation: "client"` is deliberate. Before installation, the client must download the original bytes, verify the complete `sha1:` value, and let its Azahar installation path validate signatures, encryption support, title identity, installed-title conflicts, free space, and base/update/DLC semantics. FolioSpace does not decrypt, rewrite, unpack, or install CIA content.
+
+The authenticated `fileUrl` and `files[0].url` preserve the original filename and support byte ranges. Full responses include `Content-Length` and `Content-Disposition`; range responses include `Accept-Ranges: bytes`, `Content-Range`, and the selected range length so interrupted transfers can resume. CIA responses additionally include `X-FolioSpace-Content-Mode: install` and `X-FolioSpace-Validation: client`.
+
+For backward compatibility, the existing catalog, `GET .../manifest`, and file routes remain available and only add optional fields. Older clients can continue decoding those DTOs, but they must not treat `contentMode: "install"` as a directly launchable image.
 
 ### `GET /api/client/games/{gameId}/manifest`
 

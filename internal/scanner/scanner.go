@@ -1020,6 +1020,9 @@ func (s *Scanner) canSkipGame(library domain.Library, path string, info fs.FileI
 		expectedRole := launchcatalog.RoleGame
 		if ext == ".cia" {
 			expectedRole = launchcatalog.RoleNeedsCuration
+			if err := validateThreeDSCIAStructure(path, uint64(info.Size())); err != nil {
+				return false
+			}
 		}
 		return game.Size == info.Size() && game.Format == expectedFormat &&
 			strings.EqualFold(game.CatalogRole, expectedRole) && files[0].Name == filepath.Base(path)

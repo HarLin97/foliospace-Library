@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,9 @@ const (
 	threeDSArchiveMaxRatio   = uint64(200)
 	threeDSHeaderOffset      = 0x100
 	threeDSHeaderSize        = 4
+	threeDSCIAHeaderSize     = 0x2020
+	threeDSCIAAlignment      = 0x40
+	threeDSCIAMetadataSize   = 0x400
 )
 
 type threeDSImageInfo struct {
@@ -37,7 +42,7 @@ func inspectThreeDSImage(path string, info fs.FileInfo, ext string) (threeDSImag
 		return threeDSImageInfo{}, fmt.Errorf("invalid Nintendo 3DS image size %d", info.Size())
 	}
 	if ext == ".cia" {
-		checksums, err := fileChecksums(path)
+		checksums, err := validateAndChecksumThreeDSCIA(path, uint64(info.Size()))
 		if err != nil {
 			return threeDSImageInfo{}, err
 		}
@@ -64,6 +69,94 @@ func inspectThreeDSImage(path string, info fs.FileInfo, ext string) (threeDSImag
 	return threeDSImageInfo{
 		name: filepath.Base(path), format: strings.TrimPrefix(ext, "."), size: info.Size(), checksums: checksums,
 	}, nil
+}
+
+func validateAndChecksumThreeDSCIA(path string, declaredSize uint64) (checksumPair, error) {
+	if err := validateThreeDSCIAStructure(path, declaredSize); err != nil {
+		return checksumPair{}, err
+	}
+	return fileChecksums(path)
+}
+
+func validateThreeDSCIAStructure(path string, declaredSize uint64) error {
+	if declaredSize < threeDSCIAHeaderSize || declaredSize > threeDSImageMaxBytes {
+		return fmt.Errorf("invalid Nintendo 3DS CIA size %d", declaredSize)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	header := make([]byte, threeDSCIAHeaderSize)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return fmt.Errorf("read Nintendo 3DS CIA header: %w", err)
+	}
+
+	headerSize := uint64(binary.LittleEndian.Uint32(header[0:4]))
+	certificateSize := uint64(binary.LittleEndian.Uint32(header[8:12]))
+	ticketSize := uint64(binary.LittleEndian.Uint32(header[12:16]))
+	tmdSize := uint64(binary.LittleEndian.Uint32(header[16:20]))
+	metadataSize := uint64(binary.LittleEndian.Uint32(header[20:24]))
+	contentSize := binary.LittleEndian.Uint64(header[24:32])
+	if headerSize != threeDSCIAHeaderSize {
+		return fmt.Errorf("invalid Nintendo 3DS CIA header size %#x", headerSize)
+	}
+	if ticketSize == 0 || tmdSize == 0 || contentSize == 0 {
+		return fmt.Errorf("Nintendo 3DS CIA is missing ticket, title metadata, or content")
+	}
+	if metadataSize > 0 && metadataSize < threeDSCIAMetadataSize {
+		return fmt.Errorf("invalid Nintendo 3DS CIA metadata size %#x", metadataSize)
+	}
+	if !hasCIAContentPresenceBit(header[32:threeDSCIAHeaderSize]) {
+		return fmt.Errorf("Nintendo 3DS CIA declares no present content")
+	}
+
+	offset, ok := alignedCIAOffset(headerSize)
+	for _, sectionSize := range []uint64{certificateSize, ticketSize, tmdSize} {
+		if !ok {
+			break
+		}
+		offset, ok = checkedCIAAdd(offset, sectionSize)
+		if ok {
+			offset, ok = alignedCIAOffset(offset)
+		}
+	}
+	if ok {
+		offset, ok = checkedCIAAdd(offset, contentSize)
+	}
+	if ok && metadataSize > 0 {
+		offset, ok = alignedCIAOffset(offset)
+		if ok {
+			offset, ok = checkedCIAAdd(offset, metadataSize)
+		}
+	}
+	if !ok || offset > declaredSize {
+		return fmt.Errorf("Nintendo 3DS CIA declared sections exceed file size %d", declaredSize)
+	}
+	return nil
+}
+
+func hasCIAContentPresenceBit(bits []byte) bool {
+	for _, value := range bits {
+		if value != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func alignedCIAOffset(value uint64) (uint64, bool) {
+	if value > math.MaxUint64-(threeDSCIAAlignment-1) {
+		return 0, false
+	}
+	return (value + (threeDSCIAAlignment - 1)) &^ (threeDSCIAAlignment - 1), true
+}
+
+func checkedCIAAdd(left, right uint64) (uint64, bool) {
+	if left > math.MaxUint64-right {
+		return 0, false
+	}
+	return left + right, true
 }
 
 func inspectThreeDSZIP(path string) (threeDSImageInfo, error) {

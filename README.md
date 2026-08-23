@@ -8,7 +8,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release: [`0.997`](https://github.com/funland/foliospace-Library/releases/tag/v0.997).
+Current release: [`0.998`](https://github.com/funland/foliospace-Library/releases/tag/v0.998).
 
 ## Quick Answers
 
@@ -261,6 +261,17 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 0.998
+
+Release `0.998` adds an explicit, resumable Nintendo 3DS CIA installation contract for Apple clients:
+
+- CIA catalog and manifest responses consistently report `contentMode=install`, `validation=client`, the original filename, byte size, SHA-1, download URL, and installation-action URL.
+- Clients that advertise `cia-install-v1` can negotiate `POST /api/client/games/{gameId}/install`; unsupported clients receive the stable `content-mode-unsupported` error instead of a misleading missing launch profile.
+- CIA packages never enter the ordinary launch resolver. Direct `.3ds`, `.cci`, and `.cxi` images keep their existing launch behavior.
+- Downloads preserve the original CIA bytes and HTTP Range semantics for interruption recovery, while Azahar remains responsible for signature, encryption, title identity, and base/update/DLC validation.
+- CIA scanning now rejects malformed or truncated fixed headers and section layouts before indexing. Existing FBNeo compatibility fixes from 0.997 remain included.
+- Service, Client API, Web, and source MCP metadata report version `0.998`.
+
 ## Release 0.997
 
 Release `0.997` restores stable Apple default FBNeo target coverage while keeping ROM validation content-based and strict:
@@ -288,7 +299,7 @@ Release `0.996` adds audited Point Blank launch support for SpatialEMU Apple cli
 
 Release `0.995` expands safe native game delivery, compatibility curation, and offline access:
 
-- Nintendo 3DS libraries now validate direct `.3ds`/`.cci` NCSD images, `.cxi` NCCH images, and safe single-image ZIP packages before indexing. Launchable images stream as their original inner bytes, while `.cia` packages are explicitly marked for client-side installation instead of being advertised as directly launchable.
+- Nintendo 3DS libraries validate direct `.3ds`/`.cci` NCSD images, `.cxi` NCCH images, safe single-image ZIP packages, and the bounded section layout of `.cia` installers before indexing. Launchable images stream as their original inner bytes. CIA records are explicitly marked `contentMode=install`, advertise `validation=client`, and use the capability-gated `cia-install-v1` action instead of entering the ordinary launch resolver.
 - ZIP-backed game downloads now support single-range requests even when the inner archive stream is not seekable, enabling resumable Nintendo DS, Nintendo 3DS, and other validated single-ROM downloads.
 - Game Curation can rebuild FBNeo or MAME compatibility for one game without deleting unrelated profiles. The MAME audit includes a fingerprint-pinned exception for the verified Time Crisis package that embeds its exact `namcoc71` device ROM, without renaming or rewriting the source ZIP.
 - Android ARM64 launch resolution accepts the pinned Flycast v4 runtime identity for Dreamcast, NAOMI, Atomiswave, and audited NAOMI 2 packages. Split NAOMI 2 sets require their checksummed parent ZIP, while user-managed firmware is not injected into Android manifests.
@@ -470,7 +481,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=0.997 ./scripts/build-mcp-release.sh
+VERSION=0.998 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -517,7 +528,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:0.997
+docker pull funland/foliospace-library:0.998
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -557,7 +568,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:0.997
+  funland/foliospace-library:0.998
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -579,11 +590,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v0.997
-git push github v0.997
+git tag v0.998
+git push github v0.998
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.997` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:0.998` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 
@@ -591,7 +602,7 @@ The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland
 - P0 game formats: `.nes`, `.sfc`, `.smc`, `.gba`, `.gb`, `.gbc`, `.nds`, `.3ds`, `.cia`, `.gdi`, `.cdi`, `.chd`, `.iso`, `.bin`, `.cue`, plus validated PC-98 floppy and hard-disk image formats. Nintendo DS `.nds` files are exposed as single-entry games for the exact `melonds-ds` mobile runtime. 3DO `.cue`, `.iso`, and `.chd` images use canonical `3do` metadata; CUE tracks remain dependencies and require a client-reported Opera core. `.zip` and `.7z` are treated as ROM sets only when the library type is `game`; PC-98 ZIP ingestion is limited to one validated media image and does not accept `.7z`, RAR, or TAR containers.
 - Series derivation: immediate parent directory, with root-level files grouped under `Unsorted`.
 - Reading: backend streams one ZIP image entry or EPUB resource at a time.
-- Games: backend indexes local ROM metadata and checksums, exposes client-safe launch manifests without NAS paths, and lazily caches supported Libretro boxart under `/config/cache/game-covers`. Dreamcast `.gdi`, Saturn `.cue`, and PC-FX `.cue`/`.m3u` sets are indexed as one launchable game; referenced track files remain dependencies instead of separate catalog records. PC-FX multi-disc folders are merged into one virtual M3U package, and Pegasus metadata plus local `media/.../boxFront.*` or `PC-FX Covers/* [正面].jpg` artwork is used when available. PC-98 media uses canonical `pc98` / `PC-98` / `np2kai` metadata, decodes CP932 archive names, rejects firmware/tool/DOS support files, merges byte-identical mirrors by raw-image SHA-1, and groups explicitly numbered disks into one ordered launch manifest.
+- Games: backend indexes local ROM metadata and checksums, exposes client-safe launch/install manifests without NAS paths, and lazily caches supported Libretro boxart under `/config/cache/game-covers`. Nintendo 3DS CIA files remain byte-exact client-side installation content; the server supplies size, SHA-1, range delivery, and a `cia-install-v1` action but never decrypts or installs them. Dreamcast `.gdi`, Saturn `.cue`, and PC-FX `.cue`/`.m3u` sets are indexed as one launchable game; referenced track files remain dependencies instead of separate catalog records. PC-FX multi-disc folders are merged into one virtual M3U package, and Pegasus metadata plus local `media/.../boxFront.*` or `PC-FX Covers/* [正面].jpg` artwork is used when available. PC-98 media uses canonical `pc98` / `PC-98` / `np2kai` metadata, decodes CP932 archive names, rejects firmware/tool/DOS support files, merges byte-identical mirrors by raw-image SHA-1, and groups explicitly numbered disks into one ordered launch manifest.
 - Errors: empty files, archive open failures, walk errors, and unsupported future categories are recorded as structured rows.
 
 Near-term expansion priority:

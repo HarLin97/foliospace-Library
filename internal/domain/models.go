@@ -268,6 +268,23 @@ type GameLaunchResolveRequest struct {
 	Runtimes []GameRuntimeDescriptor `json:"runtimes"`
 }
 
+// GameContentActionRequest negotiates a non-launch action for indexed game
+// content. Capabilities are action-specific protocol identifiers rather than
+// emulator runtime identities.
+type GameContentActionRequest struct {
+	Client       GameLaunchClient `json:"client"`
+	Capabilities []string         `json:"capabilities"`
+}
+
+type GameContentActionResolution struct {
+	Action      string     `json:"action"`
+	ContentMode string     `json:"contentMode"`
+	Validation  string     `json:"validation"`
+	Game        GameAsset  `json:"game"`
+	EntryFile   string     `json:"entryFile"`
+	Files       []GameFile `json:"files"`
+}
+
 type GameLaunchResolvedFile struct {
 	SourceGameID int64  `json:"sourceGameId"`
 	Position     *int   `json:"position,omitempty"`

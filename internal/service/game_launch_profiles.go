@@ -372,6 +372,13 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 	if err != nil {
 		return domain.GameLaunchResolution{}, err
 	}
+	if IsCIAInstallContent(game) {
+		return domain.GameLaunchResolution{}, launchResolveError(
+			"content-mode-unsupported",
+			"CIA content is installed through the cia-install-v1 action and cannot use a launch profile.",
+			map[string]any{"gameId": game.ID, "contentMode": "install", "requiredCapability": CIAInstallCapabilityV1},
+		)
+	}
 	if err := validateAuditedGameLaunchProfiles(); err != nil {
 		return domain.GameLaunchResolution{}, err
 	}

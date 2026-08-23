@@ -1202,7 +1202,7 @@ func TestScanLibraryIndexesValidatedNintendo3DSImages(t *testing.T) {
 		"ROM/Archive.3ds": string(makeNintendo3DSImage("NCSD")),
 	})
 	ciaPath := filepath.Join(threeDSDir, "Install Package.cia")
-	if err := os.WriteFile(ciaPath, []byte("cia-install-package"), 0o644); err != nil {
+	if err := os.WriteFile(ciaPath, syntheticCIAForTest(), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

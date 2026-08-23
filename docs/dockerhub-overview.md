@@ -4,6 +4,16 @@ FolioSpace Library is a self-hosted personal digital asset library for NAS, Dock
 
 It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
 
+## 0.998 Release: Resumable Nintendo 3DS CIA Installation
+
+Release `0.998` adds an explicit client-side Nintendo 3DS CIA installation contract.
+
+- CIA catalog and manifest responses identify install content consistently and include original filename, byte size, SHA-1, and authenticated download routes.
+- Apple clients advertise `cia-install-v1` before requesting the dedicated installation action; unsupported clients receive a stable diagnostic instead of a missing launch profile.
+- CIA downloads preserve byte ranges for interrupted-transfer recovery. Azahar performs final signature, encryption, title identity, and base/update/DLC validation.
+- Malformed or truncated CIA header/section layouts are rejected during scanning, while `.3ds`, `.cci`, and `.cxi` launch behavior remains unchanged.
+- Existing FBNeo compatibility fixes from 0.997 remain included. Service, Client API, Web, and source MCP metadata report version `0.998`.
+
 ## 0.997 Release: Stable FBNeo Coverage and Historical ROM Compatibility
 
 Release `0.997` restores stable Apple default FBNeo target coverage while keeping runtime and ROM validation strict.
@@ -292,7 +302,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:0.997
+docker pull funland/foliospace-library:0.998
 ```
 
 ```bash
@@ -302,7 +312,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:0.997
+  funland/foliospace-library:0.998
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

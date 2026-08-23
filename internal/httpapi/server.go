@@ -37,7 +37,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "0.997"
+const serviceVersion = "0.998"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -512,6 +512,7 @@ func (s *Server) handleClientInfo(w http.ResponseWriter, r *http.Request) {
 			GameLaunchResolver:    !s.options.DisableGameLaunchResolver,
 			StableRuntimeIdentity: !s.options.DisableGameLaunchResolver,
 			DOSArchiveLaunchV1:    true,
+			CIAInstallV1:          true,
 		},
 	})
 }
@@ -852,6 +853,37 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, clientGameLaunchResolution(resolution))
 		return
 	}
+	if tail == "install" {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		var req domain.GameContentActionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := service.ValidateGameContentActionRequest(req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		resolution, err := s.service.ResolveGameContentInstall(id, req)
+		if err != nil {
+			var actionErr *service.GameLaunchResolveError
+			if errors.As(err, &actionErr) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(actionErr)
+				return
+			}
+			writeJSONOrError(w, nil, err)
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, clientGameInstallResolution(resolution))
+		return
+	}
 	if tail == "manifest" && r.Method == http.MethodGet {
 		game, err := s.service.Game(id)
 		if err != nil {
@@ -996,6 +1028,7 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 		}
+		setClientGameContentHeaders(w, game)
 		serveGameStream(w, r, stream, size, name)
 		return
 	}
@@ -1011,6 +1044,9 @@ func (s *Server) handleClientGameAction(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		defer stream.Body.Close()
+		if game, gameErr := s.service.Game(id); gameErr == nil {
+			setClientGameContentHeaders(w, game)
+		}
 		serveGameStream(w, r, stream, file.Size, filepathBase(file.Name))
 		return
 	}
@@ -2502,6 +2538,7 @@ type clientCapabilities struct {
 	GameLaunchResolver    bool `json:"gameLaunchResolver"`
 	StableRuntimeIdentity bool `json:"stableRuntimeIdentityV1"`
 	DOSArchiveLaunchV1    bool `json:"dosArchiveLaunchV1"`
+	CIAInstallV1          bool `json:"ciaInstallV1"`
 }
 
 type clientHomeResponse struct {
@@ -2612,6 +2649,7 @@ type clientGame struct {
 	Region           string `json:"region,omitempty"`
 	Format           string `json:"format"`
 	ContentMode      string `json:"contentMode,omitempty"`
+	Validation       string `json:"validation,omitempty"`
 	FileName         string `json:"fileName,omitempty"`
 	Size             int64  `json:"size"`
 	CRC32            string `json:"crc32"`
@@ -2623,6 +2661,7 @@ type clientGame struct {
 	CoverURL         string `json:"coverUrl,omitempty"`
 	ManifestURL      string `json:"manifestUrl"`
 	DownloadURL      string `json:"downloadUrl,omitempty"`
+	InstallURL       string `json:"installUrl,omitempty"`
 	Favorite         bool   `json:"favorite"`
 	Liked            bool   `json:"liked"`
 }
@@ -2634,7 +2673,15 @@ type clientGameManifestResponse struct {
 	Files       []clientGameFile `json:"files,omitempty"`
 	DOSLaunch   *clientDOSLaunch `json:"dosLaunch,omitempty"`
 	ContentMode string           `json:"contentMode,omitempty"`
+	Validation  string           `json:"validation,omitempty"`
 	UpdatedAt   string           `json:"updatedAt,omitempty"`
+}
+
+type clientGameInstallResolutionResponse struct {
+	Action      string                     `json:"action"`
+	ContentMode string                     `json:"contentMode"`
+	Validation  string                     `json:"validation"`
+	Manifest    clientGameManifestResponse `json:"manifest"`
 }
 
 type clientGameLaunchResolutionResponse struct {
@@ -2929,7 +2976,7 @@ func clientGameItem(game domain.GameAsset) clientGame {
 	} else if strings.EqualFold(strings.TrimSpace(game.Title), "srmp7") || pathHasSegment(game.RelPath, "mahjong") {
 		inputProfile = "mahjong"
 	}
-	return clientGame{
+	item := clientGame{
 		ID:               game.ID,
 		AssetType:        "game",
 		Title:            game.Title,
@@ -2953,6 +3000,11 @@ func clientGameItem(game domain.GameAsset) clientGame {
 		Favorite:         game.Favorite,
 		Liked:            game.Liked,
 	}
+	if service.IsCIAInstallContent(game) {
+		item.Validation = "client"
+		item.InstallURL = fmt.Sprintf("/api/client/games/%d/install", game.ID)
+	}
+	return item
 }
 
 func clientGameFileName(game domain.GameAsset) string {
@@ -3000,6 +3052,7 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunc
 		FileURL:     fmt.Sprintf("/api/client/games/%d/file", game.ID),
 		Files:       make([]clientGameFile, 0, len(files)),
 		ContentMode: clientGameContentMode(game),
+		Validation:  clientGameValidation(game),
 	}
 	if !game.UpdatedAt.IsZero() {
 		manifest.UpdatedAt = game.UpdatedAt.UTC().Format(time.RFC3339Nano)
@@ -3049,6 +3102,13 @@ func clientGameManifest(game domain.GameAsset, files []domain.GameFile, dosLaunc
 	return manifest
 }
 
+func clientGameValidation(game domain.GameAsset) string {
+	if service.IsCIAInstallContent(game) {
+		return "client"
+	}
+	return ""
+}
+
 func appendLegacyLaunchDependencies(manifest clientGameManifestResponse, dependencies []domain.GameLaunchResolvedFile) clientGameManifestResponse {
 	knownNames := make(map[string]struct{}, len(manifest.Files)+len(dependencies))
 	for _, file := range manifest.Files {
@@ -3096,10 +3156,12 @@ func clientGameLaunchResolution(resolution domain.GameLaunchResolution) clientGa
 		game.FileName = resolution.EntryFile
 	}
 	manifest := clientGameManifestResponse{
-		Game:      game,
-		FileURL:   resolvedGameFileURL(entry),
-		EntryFile: &resolution.EntryFile,
-		Files:     make([]clientGameFile, 0, len(resolution.Files)),
+		Game:        game,
+		FileURL:     resolvedGameFileURL(entry),
+		EntryFile:   &resolution.EntryFile,
+		Files:       make([]clientGameFile, 0, len(resolution.Files)),
+		ContentMode: clientGameContentMode(resolution.Game),
+		Validation:  clientGameValidation(resolution.Game),
 	}
 	if !resolution.Game.UpdatedAt.IsZero() {
 		manifest.UpdatedAt = resolution.Game.UpdatedAt.UTC().Format(time.RFC3339Nano)
@@ -3142,6 +3204,23 @@ func clientGameLaunchResolution(resolution domain.GameLaunchResolution) clientGa
 		ProfileRevision: resolution.ProfileRevision,
 		Runtime:         resolution.Runtime,
 		Manifest:        manifest,
+	}
+}
+
+func clientGameInstallResolution(resolution domain.GameContentActionResolution) clientGameInstallResolutionResponse {
+	manifest := clientGameManifest(resolution.Game, resolution.Files, nil)
+	return clientGameInstallResolutionResponse{
+		Action: resolution.Action, ContentMode: resolution.ContentMode,
+		Validation: resolution.Validation, Manifest: manifest,
+	}
+}
+
+func setClientGameContentHeaders(w http.ResponseWriter, game domain.GameAsset) {
+	if mode := clientGameContentMode(game); mode != "" {
+		w.Header().Set("X-FolioSpace-Content-Mode", mode)
+	}
+	if validation := clientGameValidation(game); validation != "" {
+		w.Header().Set("X-FolioSpace-Validation", validation)
 	}
 }
 
