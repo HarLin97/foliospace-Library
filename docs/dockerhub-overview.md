@@ -1,8 +1,21 @@
 # FolioSpace Library
 
-FolioSpace Library is a self-hosted personal digital asset library for NAS, Docker, and local servers. It provides a unified indexing layer and client API for books, comics, PDFs, game ROM libraries, videos, and future spatial media clients.
+FolioSpace Library is an optional self-hosted personal digital asset catalog. It runs with Docker/Compose on a Mac, Windows or Linux computer, or a compatible NAS. It provides a unified indexing layer and client API for books, comics, PDFs, user-owned game libraries, videos, and future spatial media clients.
 
-It is not a cloud media service and does not distribute books, comics, ROMs, movies, or other media content. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real NAS paths.
+It is not a cloud media service and does not distribute games, ROMs, BIOS files, firmware, books, comics, movies, or third-party content catalogs. It indexes user-owned local files and exposes stable service URLs to web and native clients without leaking real host paths.
+
+## New to FolioSpace?
+
+FolioSpace is optional for SpatialEMU. SpatialEMU can open supported local files directly without a FolioSpace server. A NAS and coding are not required; you need Docker, one or more media folders, the FolioSpace service URL, and an access token created during first-run web setup.
+
+The SpatialEMU macOS app is a client, not the FolioSpace server. FolioSpace Library currently runs from this published Linux AMD64/ARM64 Docker image.
+
+Start with the [beginner quick start](https://github.com/funland/foliospace-Library/blob/main/docs/spatialemu-quickstart.md), then use the official SpatialEMU help routes:
+
+- [Connection setup guide](https://spatialemu.com/guides/foliospace-connection/) · [简体中文](https://spatialemu.com/zh-cn/guides/foliospace-connection/)
+- [Learn about FolioSpace](https://spatialemu.com/foliospace/) · [简体中文](https://spatialemu.com/zh-cn/foliospace/)
+
+The published Compose default is port `8080`. Leave `FOLIOSPACE_API_TOKEN` empty for the beginner path, open the web setup page, create a token with at least 8 characters, select a mounted container path such as `/games`, then enter the service URL and the same token in SpatialEMU and select **Connect**.
 
 ## 0.998 Release: Resumable Nintendo 3DS CIA Installation
 

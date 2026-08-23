@@ -24,6 +24,7 @@ import {
 } from "./reader-layout";
 import { resolveEpubOpenPosition, type EpubChapterOpenPosition } from "./epub-navigation";
 import { gamePlatformFilterOptions, gamePlatformFilterOptionsFromFacets } from "./game-platform-options";
+import { setupOnboardingCopy, setupOnboardingLinks } from "./setup-onboarding";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerURL;
 
@@ -200,6 +201,9 @@ export function App() {
   const [bookDetailsOpen, setBookDetailsOpen] = useState(false);
   const [locale, setLocale] = useState<Locale>(initialPreferences.locale);
   const t = translations[locale];
+  const setupCopy = setupOnboardingCopy(locale);
+  const setupLinks = setupOnboardingLinks(locale);
+  const serviceURL = window.location.origin;
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.id === activeProfileId) ?? profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null,
     [activeProfileId, profiles],
@@ -3829,31 +3833,52 @@ export function App() {
       {setupRequired && (
         <div className="authOverlay setupOverlay" role="dialog" aria-modal="true" aria-labelledby="setup-title">
           <form className="authPanel setupPanel" onSubmit={submitSetup}>
-            <div>
-              <h1 id="setup-title">FolioSpace Library Setup</h1>
-              <small>
-                {setupStatus?.hasLibraries
-                  ? "设置访问密钥，沿用当前数据库里的资源目录。"
-                  : "设置访问密钥，并选择 Docker 容器内可访问的第一个资源目录。"}
-              </small>
+            <div className="setupHeader">
+              <div>
+                <h1 id="setup-title">{setupCopy.title}</h1>
+                <small>{setupStatus?.hasLibraries ? setupCopy.existingSummary : setupCopy.freshSummary}</small>
+              </div>
+              <label className="setupLanguage">
+                <span>{setupCopy.language}</span>
+                <select value={locale} onChange={(event) => setLocale(event.target.value as Locale)}>
+                  <option value="zh">中文</option>
+                  <option value="zht">繁體中文</option>
+                  <option value="en">English</option>
+                  <option value="ja">日本語</option>
+                  <option value="ko">한국어</option>
+                </select>
+              </label>
             </div>
+            <section className="setupPrimer" aria-labelledby="setup-spatialemu-title">
+              <strong id="setup-spatialemu-title">{setupCopy.optionalTitle}</strong>
+              <p>{setupCopy.optionalBody}</p>
+              <ul>
+                <li>{setupCopy.hostRequirement}</li>
+                <li>{setupCopy.configurationRequirement}</li>
+              </ul>
+              <div className="setupLinks">
+                <a href={setupLinks.setupGuide} target="_blank" rel="noreferrer">{setupCopy.setupGuide}</a>
+                <a href={setupLinks.learnMore} target="_blank" rel="noreferrer">{setupCopy.learnMore}</a>
+              </div>
+            </section>
             <label>
-              <span>{setupStatus?.authEnabled ? "当前访问密钥" : "新访问密钥"}</span>
+              <span>{setupStatus?.authEnabled ? setupCopy.existingToken : setupCopy.newToken}</span>
               <input
                 autoFocus
                 type="password"
                 value={setupToken}
                 onChange={(event) => setSetupToken(event.target.value)}
-                placeholder={setupStatus?.authEnabled ? "Existing access token" : "At least 8 characters"}
+                placeholder={setupStatus?.authEnabled ? setupCopy.existingToken : setupCopy.tokenPlaceholder}
+                autoComplete={setupStatus?.authEnabled ? "current-password" : "new-password"}
               />
             </label>
             <label>
-              <span>资源目录名称</span>
-              <input value={setupName} onChange={(event) => setSetupName(event.target.value)} placeholder="Books / Comics / GameROMS" />
+              <span>{setupCopy.libraryName}</span>
+              <input value={setupName} onChange={(event) => setSetupName(event.target.value)} placeholder={setupCopy.libraryNamePlaceholder} />
             </label>
             <label>
-              <span>容器内路径</span>
-              <input value={setupPath} onChange={(event) => setSetupPath(event.target.value)} placeholder="/books" />
+              <span>{setupCopy.containerPath}</span>
+              <input value={setupPath} onChange={(event) => setSetupPath(event.target.value)} placeholder={setupCopy.containerPathPlaceholder} />
             </label>
             {setupStatus?.directoryRoots && setupStatus.directoryRoots.length > 0 && (
               <div className="setupRootGrid">
@@ -3862,6 +3887,7 @@ export function App() {
                     type="button"
                     key={root.path}
                     className={setupPath === root.path ? "selected" : ""}
+                    aria-pressed={setupPath === root.path}
                     onClick={() => selectSetupRoot(root)}
                   >
                     <strong>{root.name}</strong>
@@ -3871,7 +3897,7 @@ export function App() {
               </div>
             )}
             <label>
-              <span>资源类型</span>
+              <span>{setupCopy.assetType}</span>
               <select value={setupAssetType} onChange={(event) => setSetupAssetType(event.target.value as LibraryAssetType)}>
                 <option value="mixed">{t.assetTypeMixed}</option>
                 <option value="comic">{t.assetTypeComic}</option>
@@ -3881,7 +3907,7 @@ export function App() {
               </select>
             </label>
             <label>
-              <span>{t.scanWorkers}</span>
+              <span>{setupCopy.scanWorkers}</span>
               <input
                 type="number"
                 min="1"
@@ -3890,31 +3916,34 @@ export function App() {
                 onChange={(event) => setSetupScanWorkers(clampScanWorkers(Number(event.target.value)))}
               />
             </label>
-            <fieldset className="setupCatalogOptions">
-              <legend>游戏兼容性整理</legend>
-              <label className="setupCheck">
-                <input type="checkbox" checked={setupGameCatalog.autoAnalyzeAfterScan} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, autoAnalyzeAfterScan: event.target.checked }))} />
-                <span>扫描完成后自动分类并生成可用的启动配置</span>
-              </label>
-              <label className="setupCheck">
-                <input type="checkbox" checked={setupGameCatalog.enableLibretroCovers} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, enableLibretroCovers: event.target.checked }))} />
-                <span>允许从 Libretro Thumbnails 补全缺失封面</span>
-              </label>
-              <details>
-                <summary>高级策略文件</summary>
-                <label><span>FBNeo DAT</span><input value={setupGameCatalog.fbneoDatPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, fbneoDatPath: event.target.value }))} /></label>
-                <label><span>MAME listxml</span><input value={setupGameCatalog.mameListXmlPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, mameListXmlPath: event.target.value }))} /></label>
-                <label><span>FBNeo runtime targets</span><input value={setupGameCatalog.fbneoTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, fbneoTargetsPath: event.target.value }))} /></label>
-                <label><span>MAME runtime targets</span><input value={setupGameCatalog.mameTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, mameTargetsPath: event.target.value }))} /></label>
-                <label><span>Legacy targets fallback</span><input value={setupGameCatalog.launchTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, launchTargetsPath: event.target.value }))} /></label>
-              </details>
-            </fieldset>
-            <p className="setupHint">
-              如果没有看到 NAS 目录，请先在 Docker compose 里把宿主机路径挂载到容器路径，例如 <code>/volume2/Books:/books:ro</code>。
+            <details className="setupCatalogOptions">
+              <summary>{setupCopy.advancedCatalog}</summary>
+              <div className="setupCatalogBody">
+                <label className="setupCheck">
+                  <input type="checkbox" checked={setupGameCatalog.autoAnalyzeAfterScan} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, autoAnalyzeAfterScan: event.target.checked }))} />
+                  <span>{setupCopy.catalogAutomation}</span>
+                </label>
+                <label className="setupCheck">
+                  <input type="checkbox" checked={setupGameCatalog.enableLibretroCovers} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, enableLibretroCovers: event.target.checked }))} />
+                  <span>{setupCopy.coverLookup}</span>
+                </label>
+                <details className="setupPolicyFiles">
+                  <summary>{setupCopy.policyFiles}</summary>
+                  <label><span>FBNeo DAT</span><input value={setupGameCatalog.fbneoDatPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, fbneoDatPath: event.target.value }))} /></label>
+                  <label><span>MAME listxml</span><input value={setupGameCatalog.mameListXmlPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, mameListXmlPath: event.target.value }))} /></label>
+                  <label><span>FBNeo runtime targets</span><input value={setupGameCatalog.fbneoTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, fbneoTargetsPath: event.target.value }))} /></label>
+                  <label><span>MAME runtime targets</span><input value={setupGameCatalog.mameTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, mameTargetsPath: event.target.value }))} /></label>
+                  <label><span>Legacy targets fallback</span><input value={setupGameCatalog.launchTargetsPath} onChange={(event) => setSetupGameCatalog((value) => ({ ...value, launchTargetsPath: event.target.value }))} /></label>
+                </details>
+              </div>
+            </details>
+            <p className="setupHint">{setupCopy.mountHint}</p>
+            <p className="setupNextStep">
+              {setupCopy.nextStepPrefix} <code>{serviceURL}</code> {setupCopy.nextStepSuffix}
             </p>
             {setupError && <span className="authError">{setupError}</span>}
-            <button disabled={(!setupPath.trim() && !setupStatus?.hasLibraries) || !setupToken.trim()}>
-              {setupStatus?.hasLibraries ? "Save setup" : "Initialize"}
+            <button type="submit" disabled={(!setupPath.trim() && !setupStatus?.hasLibraries) || !setupToken.trim()}>
+              {setupStatus?.hasLibraries ? setupCopy.saveSetup : setupCopy.initialize}
             </button>
           </form>
         </div>
@@ -3924,19 +3953,25 @@ export function App() {
           <form className="authPanel" onSubmit={submitAuth}>
             <div>
               <h1 id="auth-title">FolioSpace Library</h1>
-              <small>{authChecked ? "Enter the NAS access token." : authMessage}</small>
+              <small>
+                {authChecked ? setupCopy.authPrompt : authMessage}
+              </small>
             </div>
             {authRequired && (
               <>
-                <input
-                  autoFocus
-                  type="password"
-                  value={authInput}
-                  onChange={(event) => setAuthInput(event.target.value)}
-                  placeholder="Access token"
-                />
+                <label className="authTokenField">
+                  <span>{setupCopy.accessToken}</span>
+                  <input
+                    autoFocus
+                    type="password"
+                    value={authInput}
+                    onChange={(event) => setAuthInput(event.target.value)}
+                    placeholder={setupCopy.accessToken}
+                    autoComplete="current-password"
+                  />
+                </label>
                 {authError && <span className="authError">{authError}</span>}
-                <button disabled={!authInput.trim()}>Unlock</button>
+                <button disabled={!authInput.trim()}>{setupCopy.unlock}</button>
               </>
             )}
             {!authRequired && authError && (

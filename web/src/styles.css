@@ -131,7 +131,61 @@ button:hover {
 }
 
 .setupPanel {
-  width: min(640px, calc(100vw - 32px));
+  width: min(720px, calc(100vw - 32px));
+  margin-block: auto;
+}
+
+.setupOverlay {
+  place-items: start center;
+  overflow: auto;
+  padding-block: 24px;
+}
+
+.setupHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.setupLanguage {
+  min-width: 132px;
+}
+
+.setupPrimer {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #c9dce3;
+  border-radius: 7px;
+  background: #f2f8fa;
+  padding: 14px;
+  color: #304247;
+}
+
+.setupPrimer p,
+.setupPrimer ul {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.setupPrimer ul {
+  display: grid;
+  gap: 4px;
+  padding-left: 18px;
+}
+
+.setupLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.setupLinks a {
+  color: #145b72;
+  font-size: 13px;
+  font-weight: 700;
+  text-underline-offset: 3px;
 }
 
 .setupPanel label {
@@ -172,18 +226,34 @@ button:hover {
 }
 
 .setupRootGrid small,
-.setupHint {
+.setupHint,
+.setupNextStep {
   color: #647177;
 }
 
-.setupHint {
+.setupHint,
+.setupNextStep {
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
 }
 
-.setupHint code {
+.setupHint code,
+.setupNextStep code {
   font-size: 12px;
+}
+
+.setupNextStep {
+  border-left: 3px solid #6c99a8;
+  background: #f7fafb;
+  padding: 10px 12px;
+}
+
+.authTokenField {
+  display: grid;
+  gap: 6px;
+  color: #405056;
+  font-size: 13px;
 }
 
 .authError {
@@ -3782,19 +3852,26 @@ button.danger:hover {
 }
 
 .setupCatalogOptions {
-  display: grid;
-  gap: 10px;
   margin: 0;
   border: 1px solid #d8e0e4;
   border-radius: 6px;
   padding: 12px;
 }
 
-.setupCatalogOptions legend {
-  padding: 0 6px;
+.setupCatalogOptions > summary {
+  cursor: pointer;
   color: #304247;
   font-size: 13px;
   font-weight: 700;
+}
+
+.setupCatalogOptions[open] > summary {
+  margin-bottom: 12px;
+}
+
+.setupCatalogBody {
+  display: grid;
+  gap: 10px;
 }
 
 .setupCatalogOptions .setupCheck {
@@ -3808,22 +3885,36 @@ button.danger:hover {
   margin: 0;
 }
 
-.setupCatalogOptions details {
+.setupPolicyFiles {
   display: grid;
   gap: 10px;
   border-top: 1px solid #e5eaec;
   padding-top: 10px;
 }
 
-.setupCatalogOptions summary {
+.setupPolicyFiles summary {
   cursor: pointer;
   color: #526268;
   font-size: 12px;
   font-weight: 700;
 }
 
-.setupCatalogOptions details[open] summary {
+.setupPolicyFiles[open] summary {
   margin-bottom: 10px;
+}
+
+@media (max-width: 640px) {
+  .setupOverlay {
+    padding-block: 16px;
+  }
+
+  .setupHeader {
+    display: grid;
+  }
+
+  .setupLanguage {
+    min-width: 0;
+  }
 }
 
 .gameCurationPage {

@@ -1,8 +1,8 @@
 # FolioSpace Library
 
-[Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [FolioSpace on the App Store](https://apps.apple.com/app/foliospace/id6765784590) · [Reader](https://reader.foliospace.app/) · [SpatialEMU downloads](https://spatialemu.com/downloads.html) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md)
+[Website](https://foliospace.app/) · [Docker Hub](https://hub.docker.com/r/funland/foliospace-library) · [FolioSpace on the App Store](https://apps.apple.com/app/foliospace/id6765784590) · [Reader](https://reader.foliospace.app/) · [SpatialEMU downloads](https://spatialemu.com/downloads/) · [Client API](docs/api/client-v1.md) · [MCP](docs/mcp/usage.md)
 
-FolioSpace Library is a self-hosted personal digital asset library that runs on a NAS, Docker host, or local server. One service keeps your collection, metadata, progress, and private state available to the web, Vision Pro, iPad, iPhone, SpatialEMU, and MCP agents.
+FolioSpace Library is an optional self-hosted personal digital asset library. It runs with Docker/Compose on a Mac, Windows or Linux computer, or a compatible NAS. One service keeps your collection, metadata, progress, and private state available to the web, Vision Pro, iPad, iPhone, SpatialEMU, and MCP agents.
 
 It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The first priority is personal asset indexing: scanning, identifying, covers/thumbnails, classification, search, favorites, recent access, progress, and private state. Dedicated clients such as a reader app, GameEMU, and Vision Pro experiences own the actual consumption UI.
 
@@ -10,15 +10,27 @@ The current implementation still starts from the FolioSpace Reader codebase and 
 
 Current release: [`0.998`](https://github.com/funland/foliospace-Library/releases/tag/v0.998).
 
+## Start here: SpatialEMU + FolioSpace
+
+FolioSpace is optional for SpatialEMU. SpatialEMU can open supported local files directly without a FolioSpace server.
+
+You do not need a NAS and you do not need to write code. To use the self-hosted catalog, you need Docker, one or more media folders, the FolioSpace service URL, and an access token that you create during first-run web setup.
+
+- [Beginner quick start: Docker to SpatialEMU connection](docs/spatialemu-quickstart.md) · [简体中文](docs/spatialemu-quickstart.zh-CN.md)
+- [SpatialEMU setup guide](https://spatialemu.com/guides/foliospace-connection/) · [简体中文](https://spatialemu.com/zh-cn/guides/foliospace-connection/)
+- [Learn about FolioSpace](https://spatialemu.com/foliospace/) · [简体中文](https://spatialemu.com/zh-cn/foliospace/)
+
+The SpatialEMU macOS app is a client, not the server. FolioSpace Library currently runs from the published Linux Docker image; there is no separate native macOS FolioSpace server app.
+
 ## Quick Answers
 
 ### What is FolioSpace Library?
 
-FolioSpace Library is a self-hosted NAS and Docker service for indexing and accessing user-owned books, comics, games, videos, documents, photos, and other personal digital assets across multiple clients.
+FolioSpace Library is a self-hosted Docker service for indexing and accessing user-owned books, comics, games, videos, documents, photos, and other personal digital assets across multiple clients.
 
 ### Is FolioSpace a cloud storage service?
 
-No. FolioSpace runs on your NAS, Docker host, or local server. Your files remain under your control, and clients receive authenticated service URLs instead of exposed NAS paths.
+No. FolioSpace runs with Docker on a computer or compatible NAS that you control. Your files remain under your control, and clients receive authenticated service URLs instead of exposed host paths.
 
 ### Which clients can connect to FolioSpace?
 
@@ -26,24 +38,24 @@ The same FolioSpace Library service can connect to the web UI, FolioSpace Reader
 
 ### How do I install FolioSpace Library?
 
-The fastest deployment path is the published multi-architecture Docker image. Follow the [Docker setup](#docker), then open `http://<docker-host>:8080` and complete first-run setup.
+The fastest deployment path is the published multi-architecture Docker image. Follow the [beginner quick start](docs/spatialemu-quickstart.md) or [Compose quick start](COMPOSE-QUICKSTART.md), then open `http://<docker-host>:8080` and complete first-run setup.
 
 ### Does FolioSpace distribute books, ROMs, or other media?
 
-No. FolioSpace indexes and serves metadata for files that you already own and store locally. It does not host, share, or provide download sources for copyrighted media.
+No. FolioSpace indexes and serves metadata for files that you already own and store locally. It does not include, host, share, or provide download sources for games, ROMs, BIOS files, firmware, books, or other copyrighted media.
 
 ![FolioSpace Library web reader with English controls](https://raw.githubusercontent.com/funland/foliospace-Library/main/docs/screenshots/web-reader-en.png)
 
 ## Clients and Downloads
 
-FolioSpace Library is the server layer. Your files stay on your own NAS or local server; clients connect to that service instead of turning FolioSpace into a hosted cloud library.
+FolioSpace Library is the server layer. Your files stay on the Docker host or compatible NAS you control; clients connect to that service instead of turning FolioSpace into a hosted cloud library.
 
 - **FolioSpace Reader**: Read EPUB, PDF, and ZIP/CBZ comics on [Vision Pro, iPad, and iPhone through the App Store](https://apps.apple.com/app/foliospace/id6765784590), or open the [Reader web experience](https://reader.foliospace.app/).
-- **SpatialEMU**: Browse the game catalog exposed by FolioSpace and import compatible titles into the native emulator. Download [SpatialEMU](https://spatialemu.com/downloads.html) and see the [FolioSpace connection guide](https://spatialemu.com/foliospace.html#connect).
+- **SpatialEMU**: Open supported local files without FolioSpace, or connect to the optional self-hosted catalog and import compatible titles. Download [SpatialEMU](https://spatialemu.com/downloads/) and use the [connection setup guide](https://spatialemu.com/guides/foliospace-connection/). The separate [FolioSpace product page](https://spatialemu.com/foliospace/) explains the service boundary.
 - **Web UI and API**: Use the built-in web interface or integrate another native client through the [Client API](docs/api/client-v1.md).
 - **AI agents**: Install and configure the local MCP client with the [MCP guide](docs/mcp/usage.md).
 
-FolioSpace Library indexes and serves metadata for user-owned local files. It does not host or distribute books, comics, ROMs, games, or other copyrighted media.
+FolioSpace Library indexes and serves metadata for user-owned local files. It does not host or distribute books, comics, games, ROMs, BIOS files, firmware, or other copyrighted media.
 
 ## Screenshots
 
@@ -70,7 +82,7 @@ FolioSpace Library indexes user-owned local files only. It does not distribute b
 - `/books`, `/games`: optional read-only roots used by the default Docker compose example.
 - `8080`: web UI and HTTP API.
 
-Recommended NAS config root:
+Example NAS config root:
 
 ```text
 /volume1/docker/foliospace-library
