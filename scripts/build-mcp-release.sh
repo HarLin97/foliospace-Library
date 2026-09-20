@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${VERSION:-1.00}"
+VERSION="${VERSION:-1.01}"
 OUT_DIR="${OUT_DIR:-dist/releases}"
 BIN_NAME="foliospace-mcp"
 PACKAGE_PREFIX="foliospace-mcp"

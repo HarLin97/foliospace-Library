@@ -48,6 +48,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/funland/foliospace-Library
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

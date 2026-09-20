@@ -8,7 +8,7 @@ It is not trying to become a complete Plex, Jellyfin, or Immich replacement. The
 
 The current implementation still starts from the FolioSpace Reader codebase and keeps the existing reading MVP operational while the model evolves toward `Asset` / `LibraryItem`.
 
-Current release: [`1.00`](https://github.com/funland/foliospace-Library/releases/tag/v1.00).
+Current release: [`1.01`](https://github.com/funland/foliospace-Library/releases/tag/v1.01).
 
 ## Start here: SpatialEMU + FolioSpace
 
@@ -273,6 +273,19 @@ Release `0.975` is a stability and performance hotfix for large game libraries:
 - Game list sorting and filtering add SQLite expression indexes for title and platform-heavy browsing.
 - Service, Client API, and MCP metadata report version `0.975`.
 
+## Release 1.01
+
+Release `1.01` improves MAME upgrades without reintroducing FBNeo build-identity barriers:
+
+- An audited MAME profile can serve a newer client runtime when official listxml evidence proves that the complete ROM/dependency definition is unchanged. Exact profiles retain priority; cross-version responses echo the requested runtime and include `contentAudit` provenance.
+- The image bundles 1,889 content definitions across MAME 0.287, 0.288, and 0.289 (631 distinct sets). Existing audited profiles are still required; no ROMs, BIOS files, or user catalog records are bundled.
+- Cross-version resolution checks the actual source file checksums and required dependencies. Changed definitions require a fresh audit; unlisted versions are not presumed compatible.
+- The included `foliospace-mame-content-registry` tool lets administrators generate reviewed evidence for later releases. A custom registry remains authoritative and is never overwritten. See [MAME compatibility and upgrade notes](docs/operations/mame-content-equivalence.md).
+- FBNeo `coreSha256` and `coreBuildId` remain diagnostic for supported official clients, as in 1.00. Re-signing or updating an application does not by itself block an otherwise approved FBNeo profile.
+- Existing CIA installation, resumable downloads, bilingual setup, and library APIs remain available. Service and MCP metadata report `1.01`; Docker images support Linux AMD64 and ARM64.
+
+简体中文：1.01 为已有审核档案增加 MAME 跨版本内容兼容支持，内置 0.287 / 0.288 / 0.289 的内容定义证据，并附带管理员生成工具。FBNeo 不恢复 App 指纹或构建标识拦截；现有资料库、CIA 安装与断点下载保持兼容。升级不会自动导入游戏或改写管理员策略。
+
 ## Release 1.00
 
 Release `1.00` makes the optional SpatialEMU + FolioSpace path understandable without requiring NAS or developer knowledge:
@@ -503,7 +516,7 @@ curl -fsSL https://foliospace.app/install-mcp.sh | sh
 Release maintainers can build macOS/Linux MCP packages with:
 
 ```bash
-VERSION=1.00 ./scripts/build-mcp-release.sh
+VERSION=1.01 ./scripts/build-mcp-release.sh
 ```
 
 ## Product Direction
@@ -550,7 +563,7 @@ an access key and lets you choose a container path such as `/library`, `/books`,
 The default deployment currently pins this image:
 
 ```bash
-docker pull funland/foliospace-library:1.00
+docker pull funland/foliospace-library:1.01
 ```
 
 To upgrade later, change `FOLIOSPACE_IMAGE` in `.env`, then run:
@@ -590,7 +603,7 @@ docker run -p 8080:8080 \
   -v /volume2/GameROMS:/games:ro \
   -v /volume2/MovieCollection/Movies:/videos:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games,/videos \
-  funland/foliospace-library:1.00
+  funland/foliospace-library:1.01
 ```
 
 If a directory is missing from the setup page, add its Docker volume mapping
@@ -612,11 +625,11 @@ Docker Hub releases are built by GitHub Actions from Git tags. Configure these r
 Then create and push a version tag:
 
 ```bash
-git tag v1.00
-git push github v1.00
+git tag v1.01
+git push github v1.01
 ```
 
-The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.00` and `funland/foliospace-library:latest`.
+The workflow builds `linux/amd64` and `linux/arm64` images, then pushes `funland/foliospace-library:1.01` and `funland/foliospace-library:latest`.
 
 ## Current MVP Support
 

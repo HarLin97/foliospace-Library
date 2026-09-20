@@ -17,6 +17,17 @@ Start with the [beginner quick start](https://github.com/funland/foliospace-Libr
 
 The published Compose default is port `8080`. Leave `FOLIOSPACE_API_TOKEN` empty for the beginner path, open the web setup page, create a token with at least 8 characters, select a mounted container path such as `/games`, then enter the service URL and the same token in SpatialEMU and select **Connect**.
 
+## 1.01 Release: MAME Content Compatibility
+
+- Reuse existing audited MAME launch profiles across core versions when official listxml evidence proves the complete ROM/dependency definition is unchanged. Exact profiles remain preferred.
+- Includes 1,889 content definitions for 631 sets across MAME 0.287, 0.288, and 0.289, plus the `foliospace-mame-content-registry` administrator tool. No ROMs, BIOS files, or private catalog records are included.
+- Cross-version responses echo the client runtime and expose `contentAudit` provenance; source file checksums and dependencies are verified. Different definitions require a fresh audit.
+- Existing custom evidence files remain authoritative and are not overwritten. The bundled defaults apply only when no custom registry is installed. See the [upgrade notes](https://github.com/funland/foliospace-Library/blob/v1.01/docs/operations/mame-content-equivalence.md).
+- Preserves the 1.00 FBNeo hotfix: supported official clients are not blocked just because their App fingerprint or `coreBuildId` changes.
+- Keeps CIA installation, resumable downloads, and bilingual beginner setup. Available as `funland/foliospace-library:1.01` and `latest` for Linux AMD64 and ARM64.
+
+简体中文：1.01 增加 MAME 跨版本内容兼容、内置证据和管理员生成工具；保留 FBNeo 不按 App 指纹或构建标识拦截的行为，不包含或下载 ROM、BIOS、固件，也不会覆盖已有管理员策略。
+
 ## 1.00 Release: Beginner SpatialEMU Setup
 
 Release `1.00` makes the optional SpatialEMU + FolioSpace workflow approachable on ordinary Docker hosts.
@@ -325,7 +336,7 @@ Example API request after adding new files under a large manga folder:
 ## Quick Start
 
 ```bash
-docker pull funland/foliospace-library:1.00
+docker pull funland/foliospace-library:1.01
 ```
 
 ```bash
@@ -335,7 +346,7 @@ docker run -p 8080:8080 \
   -v /volume2/Books:/books:ro \
   -v /volume2/GameROMS:/games:ro \
   -e FOLIOSPACE_DIRECTORY_ROOTS=/library,/books,/games \
-  funland/foliospace-library:1.00
+  funland/foliospace-library:1.01
 ```
 
 Open `http://localhost:8080`. On a fresh `/config`, FolioSpace Library starts with a setup page for the first access key and first library path.

@@ -295,6 +295,7 @@ type GameLaunchResolvedFile struct {
 }
 
 type GameLaunchResolution struct {
+	ContentAudit    *GameLaunchContentAudit  `json:"contentAudit,omitempty"`
 	LaunchProfileID string                   `json:"launchProfileId"`
 	ProfileRevision int                      `json:"profileRevision"`
 	Runtime         GameRuntimeDescriptor    `json:"runtime"`
@@ -302,6 +303,16 @@ type GameLaunchResolution struct {
 	EntryFile       string                   `json:"entryFile"`
 	Files           []GameLaunchResolvedFile `json:"files"`
 	DOSLaunch       *DOSLaunch               `json:"dosLaunch,omitempty"`
+}
+
+// ContentAudit identifies the unchanged content definition used across MAME builds.
+type GameLaunchContentAudit struct {
+	Method                 string                `json:"method"`
+	Policy                 string                `json:"policy"`
+	SourceRuntime          GameRuntimeDescriptor `json:"sourceRuntime"`
+	SourceListXMLSHA256    string                `json:"sourceListxmlSha256"`
+	RequestedListXMLSHA256 string                `json:"requestedListxmlSha256"`
+	DefinitionSHA256       string                `json:"definitionSha256"`
 }
 
 // GameLaunchProfile is a persisted, runtime-specific launch decision produced

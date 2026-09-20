@@ -13,12 +13,14 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY --from=web-build /src/web/dist ./web/dist
 RUN CGO_ENABLED=0 go build -o /out/foliospace-library ./cmd/foliospace-reader && \
+    CGO_ENABLED=0 go build -o /out/foliospace-mame-content-registry ./cmd/foliospace-mame-content-registry && \
     CGO_ENABLED=0 go build -o /out/foliospace-rebuild-launch-profiles ./cmd/foliospace-rebuild-launch-profiles
 
 FROM alpine:3.20
 WORKDIR /app
 RUN apk add --no-cache ffmpeg poppler-utils su-exec && addgroup -S foliospace && adduser -S foliospace -G foliospace
 COPY --from=go-build /out/foliospace-library /app/foliospace-library
+COPY --from=go-build /out/foliospace-mame-content-registry /app/foliospace-mame-content-registry
 COPY --from=go-build /out/foliospace-rebuild-launch-profiles /app/foliospace-rebuild-launch-profiles
 COPY --from=web-build /src/web/dist /app/web/dist
 COPY scripts/docker-entrypoint.sh /app/docker-entrypoint.sh

@@ -54,6 +54,9 @@ type MAMEBIOSSet struct {
 
 type MAMEROM struct {
 	Name     string
+	SHA1     string
+	Region   string
+	Offset   string
 	BIOS     string
 	Merge    string
 	Size     int64
@@ -92,6 +95,9 @@ type mameBIOSXML struct {
 
 type mameROMXML struct {
 	Name     string `xml:"name,attr"`
+	SHA1     string `xml:"sha1,attr"`
+	Region   string `xml:"region,attr"`
+	Offset   string `xml:"offset,attr"`
 	BIOS     string `xml:"bios,attr"`
 	Merge    string `xml:"merge,attr"`
 	Size     string `xml:"size,attr"`
@@ -289,6 +295,7 @@ func normalizeMAMEMachine(parsed mameMachineXML) (MAMEMachine, error) {
 			return MAMEMachine{}, fmt.Errorf("parse MAME machine %s ROM %s size: %w", machine.Name, item.Name, err)
 		}
 		machine.ROMs = append(machine.ROMs, MAMEROM{
+			SHA1: strings.ToLower(item.SHA1), Region: item.Region, Offset: item.Offset,
 			Name: item.Name, BIOS: strings.ToLower(strings.TrimSpace(item.BIOS)), Merge: item.Merge,
 			Size: size, CRC: strings.ToLower(strings.TrimSpace(item.CRC)), Status: strings.ToLower(strings.TrimSpace(item.Status)),
 			Optional: yesValue(item.Optional),

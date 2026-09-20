@@ -392,8 +392,19 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 		return domain.GameLaunchResolution{}, err
 	}
 	missingDependency := ""
+	// Prefer existing exact profiles; only then reuse a verified content family.
+	registry := s.mameContentRegistry()
+	sort.SliceStable(persistedProfiles, func(i, j int) bool {
+		_, a := matchingPersistedRuntime(persistedProfiles[i], req)
+		_, b := matchingPersistedRuntime(persistedProfiles[j], req)
+		return a && !b
+	})
 	for _, profile := range persistedProfiles {
 		runtime, ok := matchingPersistedRuntime(profile, req)
+		var contentAudit *domain.GameLaunchContentAudit
+		if !ok {
+			runtime, contentAudit, ok = matchingEquivalentMAMERuntime(profile, req, registry)
+		}
 		if !ok || len(profile.Files) == 0 {
 			continue
 		}
@@ -412,6 +423,9 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 				missingDependency = file.Name
 				available = false
 				break
+			}
+			if contentAudit != nil && !equivalentMAMESourceMatches(source.FilePath, file.Size, file.SourceSHA1) {
+				return domain.GameLaunchResolution{}, launchResolveError("content-checksum-mismatch", "A content-equivalent launch file no longer matches its audit.", map[string]any{"gameId": game.ID, "file": file.Name})
 			}
 			resolvedFiles = append(resolvedFiles, domain.GameLaunchResolvedFile{
 				SourceGameID: source.ID, Name: file.Name, Size: file.Size, Role: file.Role, SHA1: file.SourceSHA1,
@@ -432,7 +446,8 @@ func (s *Service) ResolveGameLaunchProfile(gameID int64, req domain.GameLaunchRe
 		resolvedGame.Size = totalSize
 		return domain.GameLaunchResolution{
 			LaunchProfileID: profile.ID, ProfileRevision: profile.Revision, Runtime: runtime,
-			Game: resolvedGame, EntryFile: profile.EntryFile, Files: resolvedFiles,
+			ContentAudit: contentAudit,
+			Game:         resolvedGame, EntryFile: profile.EntryFile, Files: resolvedFiles,
 		}, nil
 	}
 	for _, candidate := range matchingAuditedLaunchCandidates(auditedGameLaunchProfiles, game, req) {

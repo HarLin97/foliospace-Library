@@ -37,7 +37,7 @@ type Options struct {
 }
 
 const authCookieName = "foliospace_api_token"
-const serviceVersion = "1.00"
+const serviceVersion = "1.01"
 
 func New(service *service.Service, static http.Handler) *Server {
 	return NewWithOptions(service, static, Options{})
@@ -2685,10 +2685,11 @@ type clientGameInstallResolutionResponse struct {
 }
 
 type clientGameLaunchResolutionResponse struct {
-	LaunchProfileID string                       `json:"launchProfileId"`
-	ProfileRevision int                          `json:"profileRevision"`
-	Runtime         domain.GameRuntimeDescriptor `json:"runtime"`
-	Manifest        clientGameManifestResponse   `json:"manifest"`
+	ContentAudit    *domain.GameLaunchContentAudit `json:"contentAudit,omitempty"`
+	LaunchProfileID string                         `json:"launchProfileId"`
+	ProfileRevision int                            `json:"profileRevision"`
+	Runtime         domain.GameRuntimeDescriptor   `json:"runtime"`
+	Manifest        clientGameManifestResponse     `json:"manifest"`
 }
 
 type clientGameFile struct {
@@ -3200,6 +3201,7 @@ func clientGameLaunchResolution(resolution domain.GameLaunchResolution) clientGa
 		}
 	}
 	return clientGameLaunchResolutionResponse{
+		ContentAudit:    resolution.ContentAudit,
 		LaunchProfileID: resolution.LaunchProfileID,
 		ProfileRevision: resolution.ProfileRevision,
 		Runtime:         resolution.Runtime,
