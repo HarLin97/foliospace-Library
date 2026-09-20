@@ -1,20 +1,25 @@
-FROM node:22-alpine AS web-build
+# Static web assets are architecture-independent; never run npm under QEMU.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web-build
 WORKDIR /src/web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.22-alpine AS go-build
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS go-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 COPY --from=web-build /src/web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -o /out/foliospace-library ./cmd/foliospace-reader && \
-    CGO_ENABLED=0 go build -o /out/foliospace-mame-content-registry ./cmd/foliospace-mame-content-registry && \
-    CGO_ENABLED=0 go build -o /out/foliospace-rebuild-launch-profiles ./cmd/foliospace-rebuild-launch-profiles
+ARG TARGETOS
+ARG TARGETARCH
+RUN export CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" && \
+    go build -o /out/foliospace-library ./cmd/foliospace-reader && \
+    go build -o /out/foliospace-mame-content-registry ./cmd/foliospace-mame-content-registry && \
+    go build -o /out/foliospace-rebuild-launch-profiles ./cmd/foliospace-rebuild-launch-profiles && \
+    go version -m /out/foliospace-library
 
 FROM alpine:3.20
 WORKDIR /app
